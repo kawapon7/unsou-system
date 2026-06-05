@@ -543,29 +543,53 @@ export type Database = {
       }
       projects: {
         Row: {
+          buy_amount: number | null
           client_id: string
+          contractor_id: string | null
           created_at: string
+          destination: string | null
           id: string
+          operation_end: string | null
+          operation_start: string | null
+          origin: string | null
           project_code: string
           project_name: string
+          sale_amount: number
+          status: string
           unit_type: string
           updated_at: string
         }
         Insert: {
+          buy_amount?: number | null
           client_id: string
+          contractor_id?: string | null
           created_at?: string
+          destination?: string | null
           id?: string
+          operation_end?: string | null
+          operation_start?: string | null
+          origin?: string | null
           project_code: string
           project_name: string
+          sale_amount?: number
+          status?: string
           unit_type?: string
           updated_at?: string
         }
         Update: {
+          buy_amount?: number | null
           client_id?: string
+          contractor_id?: string | null
           created_at?: string
+          destination?: string | null
           id?: string
+          operation_end?: string | null
+          operation_start?: string | null
+          origin?: string | null
           project_code?: string
           project_name?: string
+          sale_amount?: number
+          status?: string
           unit_type?: string
           updated_at?: string
         }
@@ -575,6 +599,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "projects_contractor_id_fkey"
+            columns: ["contractor_id"]
+            isOneToOne: false
+            referencedRelation: "contractors"
             referencedColumns: ["id"]
           },
         ]
