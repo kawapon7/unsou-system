@@ -12,7 +12,10 @@ export async function login(formData: FormData) {
   })
 
   if (error) {
-    return { error: error.message }
+    const msg = error.message === 'Invalid login credentials'
+      ? 'メールアドレスまたはパスワードが正しくありません'
+      : error.message
+    return { error: msg }
   }
 
   const { data: { user } } = await supabase.auth.getUser()
