@@ -1,7 +1,291 @@
-export default function KobunDashboard() {
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import {
+  fetchMyContractor,
+  fetchMyProjects,
+  updateProjectStatus,
+  type AssignedProject,
+} from './actions'
+import type { Database } from '@/types/supabase'
+
+type ContractorRow = Database['public']['Tables']['contractors']['Row']
+
+// ── ステータス定義 ─────────────────────────────────────────
+
+const STATUSES = [
+  { value: 'accepted',   label: '受託',       color: 'bg-blue-100 text-blue-700',   dot: 'bg-blue-400'   },
+  { value: 'dispatched', label: '配車済',     color: 'bg-amber-100 text-amber-700', dot: 'bg-amber-400'  },
+  { value: 'in_transit', label: '運行中',     color: 'bg-green-100 text-green-700', dot: 'bg-green-400'  },
+  { value: 'completed',  label: '完了',       color: 'bg-zinc-100 text-zinc-500',   dot: 'bg-zinc-300'   },
+  { value: 'cancelled',  label: 'キャンセル', color: 'bg-red-100 text-red-500',     dot: 'bg-red-300'    },
+] as const
+
+type StatusValue = (typeof STATUSES)[number]['value']
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUSES.find(s => s.value === status)
   return (
-    <div className="min-h-screen flex items-center justify-center bg-zinc-50">
-      <h1 className="text-2xl font-semibold text-zinc-900">子分ダッシュボード（仮）</h1>
+    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${s?.color ?? 'bg-zinc-100 text-zinc-500'}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s?.dot ?? 'bg-zinc-300'}`} />
+      {s?.label ?? status}
+    </span>
+  )
+}
+
+// 子分が自分で変えられるステータス遷移
+const NEXT_STATUS: Partial<Record<StatusValue, { value: StatusValue; label: string; btnCls: string }>> = {
+  dispatched: {
+    value: 'in_transit',
+    label: '運行開始',
+    btnCls: 'bg-green-600 hover:bg-green-500 text-white',
+  },
+  in_transit: {
+    value: 'completed',
+    label: '配送完了',
+    btnCls: 'bg-zinc-800 hover:bg-zinc-700 text-white',
+  },
+}
+
+// ── 日時フォーマット ───────────────────────────────────────
+
+function fmt(iso: string | null) {
+  if (!iso) return null
+  const d = new Date(iso)
+  return d.toLocaleDateString('ja-JP', {
+    month: 'numeric',
+    day: 'numeric',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function DateRange({ start, end }: { start: string | null; end: string | null }) {
+  const s = fmt(start)
+  const e = fmt(end)
+  if (!s && !e) return <span className="text-zinc-400">日時未定</span>
+  return (
+    <span className="tabular-nums">
+      {s ?? '—'}{e ? <span className="text-zinc-400"> 〜 {e}</span> : ''}
+    </span>
+  )
+}
+
+// ── 案件カード ────────────────────────────────────────────
+
+function ProjectCard({
+  project,
+  onStatusUpdate,
+}: {
+  project: AssignedProject
+  onStatusUpdate: (id: string, status: StatusValue) => Promise<void>
+}) {
+  const [updating, setUpdating] = useState(false)
+  const next = NEXT_STATUS[project.status as StatusValue]
+
+  async function handleClick() {
+    if (!next) return
+    setUpdating(true)
+    await onStatusUpdate(project.id, next.value)
+    setUpdating(false)
+  }
+
+  const isActive = project.status === 'in_transit'
+  const isDone   = project.status === 'completed' || project.status === 'cancelled'
+
+  return (
+    <div className={`rounded-xl border bg-white p-5 shadow-sm transition ${isActive ? 'border-green-300 ring-1 ring-green-200' : 'border-zinc-200'} ${isDone ? 'opacity-60' : ''}`}>
+      {/* ヘッダ行 */}
+      <div className="flex items-start justify-between gap-3 mb-3">
+        <div className="min-w-0">
+          <p className="font-mono text-xs text-zinc-400 mb-0.5">{project.project_code}</p>
+          <h3 className="font-semibold text-zinc-900 truncate">{project.project_name}</h3>
+        </div>
+        <StatusBadge status={project.status} />
+      </div>
+
+      {/* 荷主 */}
+      <p className="text-xs text-zinc-500 mb-3">
+        荷主: <span className="text-zinc-700 font-medium">{project.client_name ?? '—'}</span>
+      </p>
+
+      {/* ルート */}
+      {(project.origin || project.destination) && (
+        <div className="flex items-center gap-2 text-sm text-zinc-700 bg-zinc-50 rounded-lg px-3 py-2 mb-3">
+          <span className="font-medium truncate">{project.origin ?? '—'}</span>
+          <span className="text-zinc-400 shrink-0">→</span>
+          <span className="font-medium truncate">{project.destination ?? '—'}</span>
+        </div>
+      )}
+
+      {/* 日時 */}
+      <div className="text-xs text-zinc-500 mb-4">
+        <DateRange start={project.operation_start} end={project.operation_end} />
+      </div>
+
+      {/* 運賃 */}
+      <div className="flex items-center justify-between text-sm mb-4">
+        <span className="text-zinc-500">支払運賃</span>
+        <span className="font-semibold text-zinc-900">
+          {project.buy_amount != null
+            ? `¥${project.buy_amount.toLocaleString()}`
+            : <span className="text-zinc-400 font-normal">未確定</span>}
+        </span>
+      </div>
+
+      {/* アクションボタン */}
+      {next && (
+        <button
+          onClick={handleClick}
+          disabled={updating}
+          className={`w-full rounded-lg py-2 text-sm font-medium transition disabled:opacity-50 ${next.btnCls}`}
+        >
+          {updating ? '更新中...' : next.label}
+        </button>
+      )}
+    </div>
+  )
+}
+
+// ── メインページ ──────────────────────────────────────────
+
+export default function KobunDashboard() {
+  const [contractor, setContractor] = useState<ContractorRow | null>(null)
+  const [projects, setProjects]     = useState<AssignedProject[]>([])
+  const [loading, setLoading]       = useState(true)
+  const [error, setError]           = useState<string | null>(null)
+  const [filterStatus, setFilterStatus] = useState<string>('active')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+
+    const cRes = await fetchMyContractor()
+    if (cRes.error || !cRes.data) {
+      setError(cRes.error ?? '委託先が見つかりません')
+      setLoading(false)
+      return
+    }
+    const contractorData = cRes.data
+    setContractor(contractorData)
+
+    const pRes = await fetchMyProjects(contractorData.id)
+    if (pRes.error) {
+      setError(pRes.error)
+    } else {
+      setProjects(pRes.data ?? [])
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  async function handleStatusUpdate(id: string, status: StatusValue) {
+    const res = await updateProjectStatus(id, status)
+    if (res.error) {
+      setError(res.error)
+    } else {
+      setProjects(prev =>
+        prev.map(p => p.id === id ? { ...p, status } : p)
+      )
+    }
+  }
+
+  const FILTER_OPTIONS = [
+    { key: 'active',    label: '進行中' },
+    { key: 'all',       label: 'すべて' },
+    { key: 'completed', label: '完了済み' },
+  ] as const
+
+  const filtered = (() => {
+    if (filterStatus === 'active')
+      return projects.filter(p => p.status !== 'completed' && p.status !== 'cancelled')
+    if (filterStatus === 'completed')
+      return projects.filter(p => p.status === 'completed' || p.status === 'cancelled')
+    return projects
+  })()
+
+  // 統計
+  const stats = {
+    total:     projects.length,
+    active:    projects.filter(p => p.status === 'in_transit').length,
+    dispatched: projects.filter(p => p.status === 'dispatched').length,
+    completed: projects.filter(p => p.status === 'completed').length,
+  }
+
+  return (
+    <div className="min-h-screen bg-zinc-50">
+      <div className="mx-auto max-w-5xl px-4 py-8">
+
+        {/* ヘッダ */}
+        <div className="mb-6">
+          <h1 className="text-xl font-semibold text-zinc-900">
+            {contractor ? `${contractor.name} さんのダッシュボード` : 'ダッシュボード'}
+          </h1>
+          {contractor && (
+            <p className="text-sm text-zinc-500 mt-1">{contractor.email ?? contractor.login_email}</p>
+          )}
+        </div>
+
+        {/* 統計カード */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+          {[
+            { label: '担当案件',  value: stats.total,      color: 'text-zinc-900' },
+            { label: '運行中',    value: stats.active,     color: 'text-green-600' },
+            { label: '配車済',    value: stats.dispatched, color: 'text-amber-600' },
+            { label: '完了',      value: stats.completed,  color: 'text-zinc-400' },
+          ].map(s => (
+            <div key={s.label} className="rounded-xl bg-white border border-zinc-200 px-4 py-3">
+              <p className="text-xs text-zinc-500 mb-1">{s.label}</p>
+              <p className={`text-2xl font-bold tabular-nums ${s.color}`}>{s.value}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* フィルタ */}
+        <div className="flex gap-1 mb-5">
+          {FILTER_OPTIONS.map(opt => (
+            <button
+              key={opt.key}
+              onClick={() => setFilterStatus(opt.key)}
+              className={`rounded-full px-4 py-1.5 text-xs font-medium transition ${
+                filterStatus === opt.key
+                  ? 'bg-zinc-900 text-white'
+                  : 'bg-white border border-zinc-300 text-zinc-600 hover:bg-zinc-50'
+              }`}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+
+        {/* エラー */}
+        {error && (
+          <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+            {error}
+          </div>
+        )}
+
+        {/* コンテンツ */}
+        {loading ? (
+          <div className="py-24 text-center text-sm text-zinc-400">読み込み中...</div>
+        ) : filtered.length === 0 ? (
+          <div className="py-24 text-center text-sm text-zinc-400">
+            {filterStatus === 'active' ? '進行中の案件はありません' : 'データがありません'}
+          </div>
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {filtered.map(p => (
+              <ProjectCard
+                key={p.id}
+                project={p}
+                onStatusUpdate={handleStatusUpdate}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   )
 }
