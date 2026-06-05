@@ -1,0 +1,1139 @@
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;}
+html,body{height:100%;overflow:hidden;}
+body{font-family:'Hiragino Kaku Gothic ProN','Meiryo',sans-serif;background:#f0f2f5;font-size:14px;display:flex;flex-direction:column;height:100vh;}
+.hdr{background:#1a56db;color:white;padding:12px 20px;display:flex;align-items:center;gap:12px;flex-shrink:0;}
+.hdr h1{font-size:16px;font-weight:700;}
+.bdg{background:rgba(255,255,255,0.2);padding:2px 8px;border-radius:99px;font-size:11px;}
+.tabs{background:#fff;border-bottom:1px solid #e5e7eb;display:flex;flex-shrink:0;flex-wrap:wrap;}
+.tab{padding:12px 20px;border:none;background:transparent;cursor:pointer;font-size:14px;color:#6b7280;border-bottom:3px solid transparent;}
+.tab.active{color:#1a56db;border-bottom-color:#1a56db;font-weight:600;}
+#scroll-root{flex:1;overflow-y:auto;min-height:0;}
+.wrap{padding:20px;max-width:1100px;margin:0 auto;}
+.pnl{display:none;}.pnl.active{display:block;}
+.card{background:#fff;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1);padding:20px;margin-bottom:16px;}
+.card h2{font-size:15px;font-weight:700;margin-bottom:14px;}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:20px;}
+.box{background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:16px;text-align:center;}
+.box .l{font-size:12px;color:#6b7280;margin-bottom:4px;}
+.box .v{font-size:22px;font-weight:700;color:#1a56db;}
+.box .v.r{color:#e02424;}.box .v.g{color:#0e9f6e;}
+table{width:100%;border-collapse:collapse;}
+th{padding:10px 12px;text-align:left;font-size:12px;color:#6b7280;font-weight:600;border-bottom:1px solid #e5e7eb;background:#f9fafb;white-space:nowrap;}
+td{padding:10px 12px;border-bottom:1px solid #e5e7eb;font-size:13px;}
+tr:last-child td{border-bottom:none;}
+tr:hover td{background:#f9fafb;}
+.tr{text-align:right;}.tc{text-align:center;}
+.ok{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;background:#def7ec;color:#03543f;}
+.ng{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;background:#fde8e8;color:#9b1c1c;}
+.iok{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;background:#dbeafe;color:#1e40af;}
+.ing{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;background:#fee2e2;color:#991b1b;}
+.note{background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;font-size:12px;color:#92400e;margin-bottom:16px;}
+.row{display:flex;justify-content:space-between;padding:7px 0;border-bottom:1px solid #f3f4f6;font-size:13px;}
+.row:last-child{border-bottom:none;}
+.tot{font-weight:700;font-size:16px;color:#1a56db;border-top:2px solid #1a56db;padding-top:10px;margin-top:6px;display:flex;justify-content:space-between;}
+.ded{color:#e02424;}
+.btn-appr{padding:4px 12px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;background:#0e9f6e;color:#fff;}
+.btn-revk{padding:4px 12px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;background:#e02424;color:#fff;}
+.appr-log{margin-top:14px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:12px;}
+.appr-log h3{font-size:12px;font-weight:700;color:#374151;margin-bottom:6px;}
+.appr-log table{font-size:11px;}
+.appr-log th{background:#f3f4f6;font-size:11px;}
+.btn-bulk-appr{padding:5px 14px;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;background:#1a56db;color:#fff;margin-left:10px;}
+.btn-daily-appr{padding:3px 10px;border:1px solid #0e9f6e;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:#fff;color:#0e9f6e;}
+.btn-daily-appr:hover{background:#0e9f6e;color:#fff;}
+.btn-daily-done{padding:3px 10px;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;background:#0e9f6e;color:#fff;min-width:44px;}
+.btn-daily-done .t-hover{display:none;}
+.btn-daily-done:hover{background:#c81e1e;}
+.btn-daily-done:hover .t-normal{display:none;}
+.btn-daily-done:hover .t-hover{display:inline;}
+.monthly-ok{padding:2px 8px;border-radius:99px;font-size:11px;font-weight:600;background:#def7ec;color:#03543f;}
+.monthly-ng{font-size:11px;color:#9ca3af;}
+.con-hdr td{font-weight:700;color:#1e40af;padding:8px 12px;background:#eff6ff;}
+.toggle-sw{position:relative;display:inline-block;width:46px;height:24px;}
+.toggle-sw input{opacity:0;width:0;height:0;}
+.toggle-sl{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background:#d1d5db;border-radius:24px;transition:.25s;}
+.toggle-sl:before{position:absolute;content:"";height:18px;width:18px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.25s;}
+input:checked+.toggle-sl{background:#1a56db;}
+input:checked+.toggle-sl:before{transform:translateX(22px);}
+</style>
+
+<div class="hdr"><h1>🚚 運送業務管理システム</h1><span class="bdg">GASプロトタイプ v1.0</span></div>
+<div class="tabs">
+  <button class="tab active" onclick="sw('sales',this)">📊 売上管理</button>
+  <button class="tab" onclick="sw('payment',this)">📄 支払通知書</button>
+  <button class="tab" onclick="sw('invoice',this)">🧾 請求書</button>
+  <button class="tab" onclick="sw('contractors',this)">👥 取引先一覧</button>
+  <button class="tab" onclick="sw('settings',this)">⚙️ システム管理</button>
+  <button class="tab" onclick="sw('payees',this)">🔗 案件支払先設定</button>
+  <button class="tab" onclick="sw('locktest',this)">🔒 承認ロック検証</button>
+  <button class="tab" onclick="sw('spotguard',this)">🚚 スポットガードレール</button>
+  <button class="tab" onclick="sw('exptest',this)">💸 立替金検証</button>
+</div>
+<div id="scroll-root"><div class="wrap">
+  <div class="note">⚠️ GASプロトタイプ。計算ロジック・画面フローの検証用です。</div>
+
+<!-- 月選択UI -->
+<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+  <label style="font-size:14px;font-weight:600;color:#374151;">対象月</label>
+  <select id="sel-month" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;color:#111827;">
+    <option value="2026-05">2026年5月</option>
+    <option value="2026-04">2026年4月</option>
+    <option value="2026-03">2026年3月</option>
+  </select>
+  <button onclick="changeMonth()" style="padding:8px 16px;background:#1a56db;color:white;border:none;border-radius:6px;font-size:14px;cursor:pointer;font-weight:600;">
+    表示
+  </button>
+</div>
+
+<div id="loading" style="text-align:center;padding:40px;font-size:16px;color:#1a56db;display:none;">
+  ⏳ データを読み込み中...
+</div>
+
+  <div id="p-sales" class="pnl active">
+    <div class="grid" id="g-sum"></div>
+    <div class="card"><h2>🏢 荷主別集計</h2>
+      <div style="overflow-x:auto;"><table>
+        <thead><tr><th>荷主名</th><th class="tr">売上（税抜）</th><th class="tr">支払（税抜）</th><th class="tr">粗利</th><th class="tr">粗利率</th></tr></thead>
+        <tbody id="t-cli"></tbody>
+      </table></div>
+    </div>
+    <div class="card"><h2>📋 勤務記録明細</h2>
+      <div style="overflow-x:auto;"><table>
+        <thead><tr><th>勤務日</th><th>荷主</th><th>案件</th><th>委託先</th><th>インボイス</th><th>単価方式</th><th class="tr">個数</th><th class="tr">売上</th><th class="tr">支払</th><th class="tr">粗利</th><th class="tc">承認</th></tr></thead>
+        <tbody id="t-rec"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div id="p-payment" class="pnl"><div id="pw"></div></div>
+  <div id="p-invoice" class="pnl"><div id="iw"></div></div>
+
+  <div id="p-contractors" class="pnl">
+    <div class="card"><h2>👥 取引先一覧</h2>
+      <div style="overflow-x:auto;"><table>
+        <thead><tr><th>委託先ID</th><th>氏名</th><th>インボイス区分</th><th>個別稼働承認モード</th></tr></thead>
+        <tbody id="contractors-list"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div id="p-payees" class="pnl">
+    <div class="card">
+      <h2>🔗 案件支払先設定</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;margin-bottom:16px;align-items:start;">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">案件</label>
+          <select id="pp-proj-id" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">支払先委託先（payee）</label>
+          <select id="pp-payee-id" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">業者経由スイッチ</label>
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+            <label class="toggle-sw">
+              <input type="checkbox" id="pp-via-toggle" onchange="onViaToggle()">
+              <span class="toggle-sl"></span>
+            </label>
+            <span id="pp-via-label" style="font-size:12px;color:#6b7280;">OFF</span>
+          </div>
+          <div id="pp-via-area"><span style="font-size:12px;color:#6b7280;display:block;">（なし・自社直接委託）</span></div>
+        </div>
+      </div>
+      <button onclick="savePayeeSetting()" style="padding:8px 20px;background:#1a56db;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:20px;">保存</button>
+      <h3 style="font-size:13px;font-weight:700;margin-bottom:10px;color:#374151;">設定済み一覧</h3>
+      <div style="overflow-x:auto;"><table>
+        <thead><tr><th>案件名</th><th>業者経由（via）</th><th>支払先（payee）</th></tr></thead>
+        <tbody id="pp-list"></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div id="p-locktest" class="pnl">
+    <div class="card">
+      <h2>🔒 子分承認（確定ロック起動）</h2>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+        <label style="font-size:12px;font-weight:600;color:#374151;">対象の支払通知書</label>
+        <select id="lt-notice-sel" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-width:180px;"></select>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+        <button onclick="doApprovePaymentNotice()" style="padding:8px 18px;background:#0e9f6e;color:white;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">承認＋ロック起動</button>
+        <button onclick="doCheckLock()" style="padding:8px 18px;background:#6b7280;color:white;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">ロック状態確認</button>
+        <button onclick="doEditLockedRecord()" style="padding:8px 18px;background:#e02424;color:white;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;">🔐 ロック済み編集試行（エラー検証）</button>
+      </div>
+      <div id="lt-lock-result" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:13px;min-height:40px;color:#374151;"></div>
+    </div>
+
+    <div class="card">
+      <h2>📅 翌月調整枠の登録</h2>
+      <div class="note">ロック済みレコードへの修正は直接編集不可。翌月への調整エントリとして記録します。</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px;">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">委託先</label>
+          <select id="lt-adj-contractor" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">調整金額（円・マイナス可）</label>
+          <input type="number" id="lt-adj-amount" placeholder="例：-5000" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+        </div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">調整理由</label>
+        <input type="text" id="lt-adj-reason" placeholder="例：5月分の計上漏れ分を翌月に加算" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+      </div>
+      <button onclick="doApplyAdjustment()" style="padding:8px 20px;background:#1a56db;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">翌月調整枠を登録</button>
+      <div id="lt-adj-result" style="margin-top:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:13px;min-height:40px;color:#374151;"></div>
+    </div>
+
+    <div class="card">
+      <h2>🔑 開発者アンロック</h2>
+      <div class="note">⚠️ 理由入力が必須です。アンロック前に approval_history へ強制書き込みされます。この操作は監査ログに残ります。</div>
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+        <label style="font-size:12px;font-weight:600;color:#374151;">対象の支払通知書</label>
+        <select id="lt-unlock-notice-sel" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;min-width:180px;"></select>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">アンロック理由 <span style="color:#e02424;">（必須）</span></label>
+        <input type="text" id="lt-unlock-reason" placeholder="例：支払額の誤りを確認済みのため修正" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+      </div>
+      <button onclick="doDeveloperUnlock()" style="padding:8px 20px;background:#dc2626;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">🔑 開発者アンロック実行</button>
+      <div id="lt-unlock-result" style="margin-top:12px;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:13px;min-height:40px;color:#374151;"></div>
+    </div>
+
+    <div class="card">
+      <h2>📋 承認ロック履歴</h2>
+      <button onclick="loadLockHistory()" style="padding:6px 14px;background:#6b7280;color:white;border:none;border-radius:6px;font-size:13px;cursor:pointer;margin-bottom:12px;">履歴を更新</button>
+      <div id="lt-history" style="overflow-x:auto;"></div>
+    </div>
+  </div>
+
+  <div id="p-spotguard" class="pnl">
+    <div class="card">
+      <h2>🚚 未登録スポット案件の検知</h2>
+      <div class="note">SPOT_GENERIC / 汎用スポット など仮IDのままの勤務記録、または案件マスタに存在しないIDの記録を検知します。</div>
+      <button onclick="loadUnregisteredSpots()" style="padding:8px 20px;background:#1a56db;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:14px;">未登録スポット案件を検知</button>
+      <div id="sg-list" style="overflow-x:auto;"></div>
+    </div>
+
+    <div class="card" id="sg-promote-card" style="display:none;">
+      <h2>📋 マスタ登録＆実績一括更新</h2>
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;padding:10px 14px;margin-bottom:16px;font-size:13px;color:#1e40af;">
+        対象スポット名：<strong id="sg-target-name"></strong>（<span id="sg-target-count"></span>件）
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:14px;">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">荷主（クライアント）</label>
+          <select id="sg-client-id" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">計算方式</label>
+          <select id="sg-calc-type" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+            <option value="個数制">個数制</option>
+            <option value="時給制">時給制</option>
+            <option value="固定制">固定制</option>
+            <option value="混合制">混合制</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">請求単価・売値（税抜）</label>
+          <input type="number" id="sg-sale-price" placeholder="例：3000" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:6px;">支払単価・買値（税抜）</label>
+          <input type="number" id="sg-buy-price" placeholder="例：2500" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;margin-bottom:12px;">
+        <button onclick="doPromoteSpot()" style="padding:8px 20px;background:#0e9f6e;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">マスタ登録＆実績一括更新を実行</button>
+        <button onclick="document.getElementById('sg-promote-card').style.display='none'" style="padding:8px 16px;background:#6b7280;color:white;border:none;border-radius:6px;font-size:13px;cursor:pointer;">キャンセル</button>
+      </div>
+      <div id="sg-promote-result" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:10px;font-size:13px;min-height:40px;display:none;"></div>
+    </div>
+  </div>
+
+  <div id="p-exptest" class="pnl">
+
+    <div class="card">
+      <h2>① 子分モック入力（立替金の記録）</h2>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px;">
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px;">委託先</label>
+          <select id="exp-contractor-sel" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;"></select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px;">日付</label>
+          <input type="date" id="exp-date" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px;">種別</label>
+          <select id="exp-type" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+            <option value="高速道路料金">高速道路料金</option>
+            <option value="駐車場代">駐車場代</option>
+            <option value="燃料費補助">燃料費補助</option>
+            <option value="その他">その他</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px;">金額（実費・税込）</label>
+          <input type="number" id="exp-amount" placeholder="例：1500" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+        </div>
+      </div>
+      <div style="margin-bottom:14px;">
+        <label style="font-size:12px;font-weight:600;color:#374151;display:block;margin-bottom:5px;">備考</label>
+        <input type="text" id="exp-remarks" placeholder="例：○○IC〜△△IC" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">
+      </div>
+      <button onclick="submitExpenseMock()" style="padding:8px 20px;background:#f59e0b;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;">📱 子分モックとして記録する</button>
+      <span id="exp-submit-result" style="margin-left:12px;font-size:13px;"></span>
+    </div>
+
+    <div class="card">
+      <h2>② 親分確認・承認</h2>
+      <button onclick="loadExpenseRecords()" style="padding:6px 14px;background:#6b7280;color:white;border:none;border-radius:6px;font-size:13px;cursor:pointer;margin-bottom:12px;">未承認一覧を更新</button>
+      <div id="exp-list" style="overflow-x:auto;"><div style="padding:16px;color:#9ca3af;text-align:center;">「未承認一覧を更新」を押してください</div></div>
+    </div>
+
+    <div class="card">
+      <h2>③ 支払通知書プレビュー（立替金別行合算）</h2>
+      <div class="note">承認済みの立替金が「報酬」とは別行で計上され、最終支払金額に加算されます。消費税は立替金に一律10%（四捨五入）。</div>
+      <button onclick="loadExpensePreview()" style="padding:8px 20px;background:#1a56db;color:white;border:none;border-radius:6px;font-size:14px;font-weight:600;cursor:pointer;margin-bottom:14px;">支払通知書プレビューを更新</button>
+      <div id="exp-preview"></div>
+    </div>
+
+  </div>
+
+  <div id="p-settings" class="pnl">
+    <div class="card"><h2>⚙️ システム設定</h2>
+      <div style="margin-bottom:16px;">
+        <label style="font-size:14px;font-weight:600;display:block;margin-bottom:8px;">会社全体のデフォルト稼働承認モード</label>
+        <select id="sys-default-mode" onchange="updateSystemDefaultMode(this.value)" style="padding:8px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;">
+          <option value="daily">日次承認（毎日ロック）</option>
+          <option value="monthly">月次一括承認（月末ロック）</option>
+          <option value="off">承認機能OFF（ロックなし）</option>
+        </select>
+      </div>
+      <div class="note">⚠️ 取引先の個別設定が「システム既定に従う」の場合にこの設定が適用されます。</div>
+    </div>
+  </div>
+</div></div>
+
+<script>
+var SD = null, PV = null, IV = null, CONTRACTORS = null, SYS_SETTINGS = null;
+var PROJECTS = null, PROJECT_PAYEES = null, CLIENTS = null;
+var currentMonth = '2026-05';
+var currentSpotForPromotion = null;
+var EXPENSE_RECORDS = [];
+
+function f(n){return '¥'+Number(n||0).toLocaleString('ja-JP');}
+
+function sw(id,btn){
+  document.querySelectorAll('.pnl').forEach(function(p){p.classList.remove('active');});
+  document.querySelectorAll('.tab').forEach(function(b){b.classList.remove('active');});
+  document.getElementById('p-'+id).classList.add('active');
+  btn.classList.add('active');
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  document.getElementById('loading').style.display = 'block';
+  currentMonth = document.getElementById('sel-month').value;
+  google.script.run
+    .withSuccessHandler(function (data) {
+      SD = data.sales; PV = data.payment; IV = data.invoice;
+      CONTRACTORS = data.contractors || [];
+      PROJECTS = data.projects || [];
+      PROJECT_PAYEES = data.projectPayees || [];
+      CLIENTS = data.clients || [];
+      SYS_SETTINGS = data.systemSettings || { defaultApprovalMode: 'daily' };
+      document.getElementById('loading').style.display = 'none';
+      renderAll();
+    })
+    .withFailureHandler(function (err) {
+      document.getElementById('loading').innerHTML =
+        '<span style="color:red;">❌ データ取得失敗：' + err.message + '</span>';
+    })
+    .getAllData('2026-05');
+});
+
+function changeMonth() {
+  currentMonth = document.getElementById('sel-month').value;
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('g-sum').innerHTML = '';
+  document.getElementById('t-cli').innerHTML = '';
+  document.getElementById('t-rec').innerHTML = '';
+  document.getElementById('pw').innerHTML = '';
+  document.getElementById('iw').innerHTML = '';
+  google.script.run
+    .withSuccessHandler(function (data) {
+      SD = data.sales; PV = data.payment; IV = data.invoice;
+      CONTRACTORS = data.contractors || [];
+      PROJECTS = data.projects || [];
+      PROJECT_PAYEES = data.projectPayees || [];
+      CLIENTS = data.clients || [];
+      SYS_SETTINGS = data.systemSettings || { defaultApprovalMode: 'daily' };
+      document.getElementById('loading').style.display = 'none';
+      renderAll();
+    })
+    .withFailureHandler(function (err) {
+      document.getElementById('loading').innerHTML =
+        '<span style="color:red;">❌ データ取得失敗：' + err.message + '</span>';
+    })
+    .getAllData(currentMonth);
+}
+
+function renderAll() {
+  var ts=0,tp=0,tpr=0;
+  Object.values(SD.summary).forEach(function(s){
+    ts+=s.totalSales; tp+=s.totalPayment; tpr+=s.totalProfit;
+  });
+  document.getElementById('g-sum').innerHTML=
+    '<div class="box"><div class="l">売上合計（税抜）</div><div class="v">'+f(ts)+'</div></div>'+
+    '<div class="box"><div class="l">支払合計（税抜）</div><div class="v r">'+f(tp)+'</div></div>'+
+    '<div class="box"><div class="l">粗利（税抜）</div><div class="v g">'+f(tpr)+'</div></div>'+
+    '<div class="box"><div class="l">粗利率</div><div class="v">'+(ts>0?((tpr/ts)*100).toFixed(1):0)+'%</div></div>';
+
+  document.getElementById('t-cli').innerHTML=Object.entries(SD.summary).map(function(e){
+    var n=e[0],v=e[1],r=v.totalSales>0?((v.totalProfit/v.totalSales)*100).toFixed(1):0;
+    return '<tr><td>'+n+'</td><td class="tr">'+f(v.totalSales)+'</td><td class="tr">'+f(v.totalPayment)+'</td>'+
+      '<td class="tr" style="color:#0e9f6e;font-weight:600;">'+f(v.totalProfit)+'</td><td class="tr">'+r+'%</td></tr>';
+  }).join('');
+
+  renderSalesRecords();
+  renderPayment();
+  renderInvoice();
+  renderContractors();
+  renderSystemSettings();
+  renderProjectPayees();
+  renderLockTestPanel();
+  renderSpotPanel();
+  renderExpensePanel();
+}
+
+function escQ(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+
+function getEffectiveMode(contractorName) {
+  if (CONTRACTORS) {
+    var con = CONTRACTORS.find(function(c){ return c.name === contractorName; });
+    if (con) return con.approvalMode === 'inherit' ? SYS_SETTINGS.defaultApprovalMode : con.approvalMode;
+  }
+  var rec = SD.records.find(function(r){ return r.contractorName === contractorName; });
+  return rec ? (rec.approvalMode || SYS_SETTINGS.defaultApprovalMode) : SYS_SETTINGS.defaultApprovalMode;
+}
+
+function renderSalesRecords() {
+  var tbody = document.getElementById('t-rec');
+  if (SD.records.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;padding:30px;color:#6b7280;">データなし</td></tr>';
+    return;
+  }
+  var groups = {}, order = [];
+  SD.records.forEach(function(r) {
+    if (!groups[r.contractorName]) { groups[r.contractorName] = []; order.push(r.contractorName); }
+    groups[r.contractorName].push(r);
+  });
+  var monthNum = parseInt(currentMonth.split('-')[1], 10);
+  var html = '';
+  order.forEach(function(cName) {
+    var recs = groups[cName];
+    var mode = getEffectiveMode(cName);
+    var allApproved = recs.every(function(r){ return r.approvalStatus === '承認済'; });
+    var modeTag = mode==='daily'?'（日次）':mode==='monthly'?'（月次）':'（承認OFF）';
+    var bulkBtn = '';
+    if (mode === 'monthly') {
+      var bCls = allApproved ? 'btn-revk' : 'btn-bulk-appr';
+      var bLbl = allApproved ? monthNum+'月分の一括承認取消' : monthNum+'月分の稼働実績を一括承認';
+      var bSt  = allApproved ? '承認済' : '未承認';
+      bulkBtn = ' <button class="'+bCls+'" onclick="doMonthlyApproval(\''+escQ(cName)+'\',\''+bSt+'\')">'+bLbl+'</button>';
+    }
+    html += '<tr class="con-hdr"><td colspan="11">👤 '+cName+
+      '<span style="font-size:11px;color:#6b7280;margin-left:6px;">'+modeTag+'</span>'+bulkBtn+'</td></tr>';
+    recs.forEach(function(r) {
+      var apCell = '';
+      if (mode === 'daily') {
+        apCell = r.approvalStatus === '承認済'
+          ? '<button class="btn-daily-done" onclick="doDailyToggle('+r.rowIndex+',\''+escQ(r.contractorName)+'\',\''+r.date+'\',\'承認済\')"><span class="t-normal">承認済</span><span class="t-hover">取消</span></button>'
+          : '<button class="btn-daily-appr" onclick="doDailyToggle('+r.rowIndex+',\''+escQ(r.contractorName)+'\',\''+r.date+'\',\'未承認\')">承認</button>';
+      } else if (mode === 'monthly') {
+        apCell = r.approvalStatus==='承認済'?'<span class="monthly-ok">承認済</span>':'<span class="monthly-ng">未承認</span>';
+      } else {
+        apCell = '<span style="color:#9ca3af;font-size:11px;">－</span>';
+      }
+      html += '<tr>'+
+        '<td>'+r.date+'</td>'+
+        '<td>'+r.clientName+'</td>'+
+        '<td>'+r.projectName+'</td>'+
+        '<td>'+r.contractorName+'</td>'+
+        '<td>'+(r.invoiceStatus==='登録あり'?'<span class="iok">登録あり</span>':'<span class="ing">未登録</span>')+'</td>'+
+        '<td>'+r.unitType+'</td>'+
+        '<td class="tr">'+(r.quantity||'-')+'</td>'+
+        '<td class="tr">'+f(r.taxExcludedSales)+'</td>'+
+        '<td class="tr">'+f(r.taxExcludedPayment)+'</td>'+
+        '<td class="tr" style="color:#0e9f6e;">'+f(r.grossProfit)+'</td>'+
+        '<td class="tc">'+apCell+'</td>'+
+      '</tr>';
+    });
+  });
+  tbody.innerHTML = html;
+}
+
+function doMonthlyApproval(contractorName, curStatus) {
+  if (curStatus === '承認済') {
+    if (!confirm('【警告】承認済データの取り消しを実行しますか？')) return;
+  }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      SD.records.forEach(function(r) {
+        if (r.contractorName === contractorName) r.approvalStatus = res.newStatus;
+      });
+      renderSalesRecords();
+    })
+    .withFailureHandler(function(err){ alert('エラー：' + err.message); })
+    .toggleApprovalStatus('勤務記録', contractorName, currentMonth, curStatus, 'system');
+}
+
+function doDailyToggle(rowIndex, contractorName, date, curStatus) {
+  if (curStatus === '承認済') {
+    if (!confirm('この日の承認を取り消しますか？')) return;
+  }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      SD.records.forEach(function(r) {
+        if (r.rowIndex === rowIndex) r.approvalStatus = res.newStatus;
+      });
+      renderSalesRecords();
+    })
+    .withFailureHandler(function(err){ alert('エラー：' + err.message); })
+    .toggleDailyApprovalStatus(rowIndex, contractorName, date, curStatus, 'system');
+}
+
+function renderPayment() {
+  var pw=document.getElementById('pw');
+  pw.innerHTML='';
+  PV.forEach(function(p,idx){
+    var statusId='pv-status-'+idx;
+    var cardId='pv-card-'+idx;
+    var st=p.approvalStatus||'未承認';
+    var stBadge=st==='承認済'?'<span class="ok">✅承認済</span>':'<span class="ng">🔴未承認</span>';
+    var h='<div class="card" id="'+cardId+'"><h2 style="display:flex;align-items:center;gap:10px;">📄 '+p.name+'（'+p.invoiceStatus+'）';
+    h+='<span id="'+statusId+'">'+stBadge+'</span>';
+    h+='<button class="btn-appr" onclick="doApprove('+idx+',\''+p.name+'\')">承認</button>';
+    h+='<button class="btn-revk" onclick="doRevoke('+idx+',\''+p.name+'\')">承認取り消し</button>';
+    h+='</h2>';
+    h+='<div class="row"><span>税抜き合計</span><span>'+f(p.sum)+'</span></div>';
+    h+='<div class="row"><span>消費税（10%）</span><span>＋'+f(p.tax)+'</span></div>';
+    if(!p.isReg){
+      h+='<div class="row ded"><span>経過措置控除（'+(p.deductionRate*100).toFixed(0)+'%）</span><span>－'+f(p.deduction)+'</span></div>';
+    }
+    h+='<div class="tot"><span>✅ 合計支払額</span><span>'+f(p.total)+'</span></div>';
+    h+='<div style="margin-top:16px;overflow-x:auto;"><table>'+
+      '<thead><tr><th>勤務日</th><th>案件名</th><th class="tr">個数</th><th class="tr">税抜き金額</th></tr></thead><tbody>';
+    p.details.forEach(function(d){
+      h+='<tr><td>'+d.date+'</td><td>'+d.projectName+'</td>'+
+        '<td class="tr">'+(d.quantity||'-')+'</td>'+
+        '<td class="tr">'+f(d.amount)+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+    h+='<div class="appr-log" id="log-'+idx+'"><h3>📋 承認履歴ログ</h3><div id="log-body-'+idx+'">（履歴なし）</div></div>';
+    h+='</div>';
+    pw.innerHTML+=h;
+    PV[idx].approvalStatus=st;
+  });
+  loadApprovalLog();
+}
+
+function renderInvoice() {
+  var iw=document.getElementById('iw');
+  iw.innerHTML='';
+  IV.forEach(function(inv){
+    var h='<div class="card" style="border:2px solid #1a56db;">';
+    h+='<div style="font-size:22px;font-weight:700;color:#1a56db;margin-bottom:8px;">請 求 書</div>';
+    h+='<div style="font-size:18px;font-weight:700;margin-bottom:16px;">'+inv.clientName+' 御中</div>';
+    h+='<div style="background:#eff6ff;padding:16px;border-radius:8px;margin-bottom:16px;">';
+    h+='<div style="font-size:12px;color:#6b7280;">請求金額</div>';
+    h+='<div style="font-size:28px;font-weight:700;color:#1a56db;">'+f(inv.total)+'</div>';
+    h+='<div style="font-size:12px;color:#6b7280;">税抜 '+f(inv.totalExcl)+' ＋ 消費税 '+f(inv.tax)+'</div>';
+    h+='<div style="font-size:12px;color:#e02424;margin-top:4px;">入金期限：'+inv.dueDate+'</div></div>';
+    h+='<table><thead><tr><th>勤務日</th><th>案件名</th><th class="tr">個数</th><th class="tr">税抜き金額</th></tr></thead><tbody>';
+    inv.details.forEach(function(d){
+      h+='<tr><td>'+d.date+'</td><td>'+d.projectName+'</td>'+
+        '<td class="tr">'+(d.quantity||'-')+'</td>'+
+        '<td class="tr">'+f(d.amount)+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+    iw.innerHTML+=h;
+  });
+}
+
+function renderContractors() {
+  var tbody = document.getElementById('contractors-list');
+  if (!CONTRACTORS || !CONTRACTORS.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;padding:20px;color:#6b7280;">データなし</td></tr>';
+    return;
+  }
+  var modeLabels = { 'inherit':'システム既定に従う', 'daily':'日次承認（毎日）', 'monthly':'月次一括承認', 'off':'承認機能OFF' };
+  tbody.innerHTML = CONTRACTORS.map(function(co, idx) {
+    var opts = ['inherit','daily','monthly','off'].map(function(m){
+      return '<option value="'+m+'"'+(co.approvalMode===m?' selected':'')+'>'+modeLabels[m]+'</option>';
+    }).join('');
+    return '<tr>'+
+      '<td>'+co.id+'</td>'+
+      '<td>'+co.name+'</td>'+
+      '<td>'+(co.invoiceStatus==='登録あり'?'<span class="iok">登録あり</span>':'<span class="ing">未登録</span>')+'</td>'+
+      '<td><select onchange="updateContractorMode('+idx+', this.value)" style="padding:4px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:12px;">'+opts+'</select></td>'+
+    '</tr>';
+  }).join('');
+}
+
+function updateContractorMode(idx, newMode) {
+  CONTRACTORS[idx].approvalMode = newMode;
+  renderSalesRecords();
+}
+
+function renderSystemSettings() {
+  var sel = document.getElementById('sys-default-mode');
+  if (sel && SYS_SETTINGS) sel.value = SYS_SETTINGS.defaultApprovalMode;
+}
+
+function updateSystemDefaultMode(val) {
+  SYS_SETTINGS.defaultApprovalMode = val;
+  renderSalesRecords();
+}
+
+function doApprove(idx, name) { _toggleApproval(idx, name, '未承認'); }
+function doRevoke(idx, name)  { _toggleApproval(idx, name, '承認済'); }
+
+function _toggleApproval(idx, name, expectedCurrent) {
+  var cur = PV[idx].approvalStatus || '未承認';
+  if (cur !== expectedCurrent) {
+    alert('ステータスが既に変更されています（現在：' + cur + '）');
+    return;
+  }
+  if (cur === '承認済') {
+    if (!confirm('【警告】承認済の支払通知書です。取り消すと金額・分類の変更がブロックされた状態が解除されます。取り消しますか？')) return;
+  }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      PV[idx].approvalStatus = res.newStatus;
+      var badge = res.newStatus === '承認済'
+        ? '<span class="ok">✅承認済</span>'
+        : '<span class="ng">🔴未承認</span>';
+      document.getElementById('pv-status-'+idx).innerHTML = badge;
+      if (res.locked) {
+        var card = document.getElementById('pv-card-'+idx);
+        if (card && !card.querySelector('.lock-banner')) {
+          var b = document.createElement('div');
+          b.className = 'lock-banner';
+          b.style.cssText = 'background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:8px 12px;font-size:12px;color:#92400e;margin-top:8px;';
+          b.textContent = '🔒 承認済のため金額・分類の変更はブロックされています';
+          card.insertBefore(b, card.querySelector('.appr-log'));
+        }
+      }
+      loadApprovalLog();
+    })
+    .withFailureHandler(function(err) {
+      alert('エラー：' + err.message);
+    })
+    .toggleApprovalStatus('支払通知書', name, currentMonth, cur, 'system');
+}
+
+function onViaToggle() {
+  var checked = document.getElementById('pp-via-toggle').checked;
+  document.getElementById('pp-via-label').textContent = checked ? 'ON' : 'OFF';
+  var area = document.getElementById('pp-via-area');
+  if (checked) {
+    var opts = (CONTRACTORS || []).map(function(c) {
+      return '<option value="'+c.id+'">'+c.name+'</option>';
+    }).join('');
+    area.innerHTML = '<select id="pp-via-id" style="width:100%;padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">'+opts+'</select>';
+  } else {
+    area.innerHTML = '<span style="font-size:12px;color:#6b7280;display:block;">（なし・自社直接委託）</span>';
+  }
+}
+
+function renderProjectPayees() {
+  var projSel  = document.getElementById('pp-proj-id');
+  var payeeSel = document.getElementById('pp-payee-id');
+  if (!projSel || !payeeSel || !PROJECTS || !CONTRACTORS) return;
+  projSel.innerHTML = PROJECTS.map(function(p) {
+    return '<option value="'+p.id+'">'+p.name+'</option>';
+  }).join('');
+  payeeSel.innerHTML = CONTRACTORS.map(function(c) {
+    return '<option value="'+c.id+'">'+c.name+'</option>';
+  }).join('');
+  renderProjectPayeesList();
+}
+
+function renderProjectPayeesList() {
+  var tbody = document.getElementById('pp-list');
+  if (!tbody) return;
+  if (!PROJECT_PAYEES || !PROJECT_PAYEES.length) {
+    tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;padding:20px;color:#6b7280;">未設定</td></tr>';
+    return;
+  }
+  tbody.innerHTML = PROJECT_PAYEES.map(function(pp) {
+    var proj  = PROJECTS   ? PROJECTS.find(function(p){ return p.id === pp['案件ID']; })               : null;
+    var payee = CONTRACTORS? CONTRACTORS.find(function(c){ return c.id === pp['payee_contractor_id']; }): null;
+    var via   = pp['via_contractor_id'] ? CONTRACTORS.find(function(c){ return c.id === pp['via_contractor_id']; }) : null;
+    return '<tr>'+
+      '<td>'+(proj  ? proj.name  : pp['案件ID'])+'</td>'+
+      '<td>'+(via   ? via.name   : '<span style="color:#6b7280;">（なし・自社直接委託）</span>')+'</td>'+
+      '<td>'+(payee ? payee.name : pp['payee_contractor_id'])+'</td>'+
+    '</tr>';
+  }).join('');
+}
+
+function savePayeeSetting() {
+  var projId  = document.getElementById('pp-proj-id').value;
+  var payeeId = document.getElementById('pp-payee-id').value;
+  var checked = document.getElementById('pp-via-toggle').checked;
+  var viaEl   = document.getElementById('pp-via-id');
+  var viaId   = (checked && viaEl) ? viaEl.value : null;
+  if (!projId || !payeeId) { alert('案件と支払先委託先は必須です'); return; }
+  google.script.run
+    .withSuccessHandler(function(res) {
+      google.script.run
+        .withSuccessHandler(function(rows) {
+          PROJECT_PAYEES = rows;
+          renderProjectPayeesList();
+        })
+        .withFailureHandler(function(err){ alert('再読み込みエラー: ' + err.message); })
+        .getProjectPayees();
+    })
+    .withFailureHandler(function(err){ alert('保存エラー：' + err.message); })
+    .saveProjectPayee(projId, viaId, payeeId);
+}
+
+function renderLockTestPanel() {
+  var noticeSel       = document.getElementById('lt-notice-sel');
+  var unlockNoticeSel = document.getElementById('lt-unlock-notice-sel');
+  var adjContractor   = document.getElementById('lt-adj-contractor');
+  if (!noticeSel) return;
+  var noticeOpts = (PV || []).map(function(p) {
+    return '<option value="'+escQ(p.name)+'">'+p.name+'</option>';
+  }).join('');
+  noticeSel.innerHTML       = noticeOpts;
+  unlockNoticeSel.innerHTML = noticeOpts;
+  if (adjContractor && CONTRACTORS) {
+    adjContractor.innerHTML = CONTRACTORS.map(function(c) {
+      return '<option value="'+c.id+'">'+c.name+'</option>';
+    }).join('');
+  }
+}
+
+function doApprovePaymentNotice() {
+  var noticeId = document.getElementById('lt-notice-sel').value;
+  if (!noticeId) { alert('支払通知書を選択してください'); return; }
+  if (!confirm('【'+noticeId+'】を承認し確定ロックを起動します。\nロック後は開発者アンロックなしに編集できなくなります。続行しますか？')) return;
+  var el = document.getElementById('lt-lock-result');
+  el.innerHTML = '⏳ 処理中...'; el.style.background='#f9fafb'; el.style.borderColor='#e5e7eb';
+  google.script.run
+    .withSuccessHandler(function() {
+      el.innerHTML = '✅ <strong>承認・確定ロック完了：</strong>'+noticeId;
+      el.style.background='#def7ec'; el.style.borderColor='#0e9f6e';
+      loadLockHistory();
+    })
+    .withFailureHandler(function(err) {
+      el.innerHTML = '❌ '+err.message;
+      el.style.background='#fde8e8'; el.style.borderColor='#e02424';
+    })
+    .approvePaymentNotice(noticeId, currentMonth);
+}
+
+function doCheckLock() {
+  var noticeId = document.getElementById('lt-notice-sel').value;
+  if (!noticeId) { alert('支払通知書を選択してください'); return; }
+  var el = document.getElementById('lt-lock-result');
+  el.innerHTML = '⏳ 確認中...'; el.style.background='#f9fafb'; el.style.borderColor='#e5e7eb';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res.isLocked) {
+        el.innerHTML = '🔒 <strong>ロック中：</strong>'+noticeId+' は確定ロック状態です。';
+        el.style.background='#fef3c7'; el.style.borderColor='#fcd34d';
+      } else {
+        el.innerHTML = '🔓 <strong>未ロック：</strong>'+noticeId+' はロックされていません。';
+        el.style.background='#f9fafb'; el.style.borderColor='#e5e7eb';
+      }
+    })
+    .withFailureHandler(function(err) { el.innerHTML='❌ '+err.message; })
+    .checkLockStatus('支払通知書', noticeId);
+}
+
+function doEditLockedRecord() {
+  var noticeId = document.getElementById('lt-notice-sel').value;
+  if (!noticeId) { alert('支払通知書を選択してください'); return; }
+  var el = document.getElementById('lt-lock-result');
+  google.script.run
+    .withSuccessHandler(function(res) {
+      if (res.isLocked) {
+        el.innerHTML = '🚫 <strong>【編集ブロック】</strong>「'+noticeId+'」はロック済みのため編集操作をブロックしました。<br>'+
+          '修正が必要な場合：軽微な修正 → 翌月調整枠 ／ 重大な誤り → 開発者アンロック';
+        el.style.background='#fde8e8'; el.style.borderColor='#e02424';
+        alert('【警告】\n「'+noticeId+'」は確定ロック済みです。\n直接編集は不可能です。\n\n・軽微な修正 → 翌月調整枠\n・重大な誤り → 開発者アンロック');
+      } else {
+        el.innerHTML = '🔓 未ロックのため編集可能な状態です。';
+        el.style.background='#f9fafb'; el.style.borderColor='#e5e7eb';
+      }
+    })
+    .withFailureHandler(function(err) { el.innerHTML='❌ '+err.message; })
+    .checkLockStatus('支払通知書', noticeId);
+}
+
+function doApplyAdjustment() {
+  var contractorId = document.getElementById('lt-adj-contractor').value;
+  var amount       = document.getElementById('lt-adj-amount').value;
+  var reason       = document.getElementById('lt-adj-reason').value;
+  if (!contractorId || amount === '' || !reason) { alert('委託先、調整金額、理由はすべて必須です'); return; }
+  var el = document.getElementById('lt-adj-result');
+  el.innerHTML = '⏳ 登録中...'; el.style.background='#f9fafb'; el.style.borderColor='#e5e7eb';
+  google.script.run
+    .withSuccessHandler(function(res) {
+      el.innerHTML = '✅ <strong>翌月調整枠を登録しました</strong><br>'+
+        '委託先ID: '+res.contractorId+'　調整金額: ¥'+Number(res.amount).toLocaleString('ja-JP')+'　対象月: '+res.targetMonth;
+      el.style.background='#def7ec'; el.style.borderColor='#0e9f6e';
+      document.getElementById('lt-adj-amount').value='';
+      document.getElementById('lt-adj-reason').value='';
+    })
+    .withFailureHandler(function(err) {
+      el.innerHTML='❌ '+err.message;
+      el.style.background='#fde8e8'; el.style.borderColor='#e02424';
+    })
+    .applyNextMonthAdjustment(contractorId, Number(amount), reason);
+}
+
+function doDeveloperUnlock() {
+  var noticeId = document.getElementById('lt-unlock-notice-sel').value;
+  var reason   = document.getElementById('lt-unlock-reason').value;
+  if (!noticeId) { alert('対象の支払通知書を選択してください'); return; }
+  if (!reason || !reason.trim()) {
+    alert('アンロック理由は必須です'); document.getElementById('lt-unlock-reason').focus(); return;
+  }
+  if (!confirm('【重要】開発者アンロックを実行します。\n\n対象: '+noticeId+'\n理由: '+reason+'\n\nこの操作はログに記録されます。続行しますか？')) return;
+  var el = document.getElementById('lt-unlock-result');
+  el.innerHTML = '⏳ ログ書き込み中 → ロック解除中...'; el.style.background='#f9fafb'; el.style.borderColor='#e5e7eb';
+  google.script.run
+    .withSuccessHandler(function() {
+      el.innerHTML = '🔓 <strong>アンロック完了：</strong>'+noticeId+'<br>理由はapproval_historyに記録されました。';
+      el.style.background='#def7ec'; el.style.borderColor='#0e9f6e';
+      document.getElementById('lt-unlock-reason').value='';
+      loadLockHistory();
+    })
+    .withFailureHandler(function(err) {
+      el.innerHTML='❌ '+err.message;
+      el.style.background='#fde8e8'; el.style.borderColor='#e02424';
+    })
+    .developerUnlock('支払通知書', noticeId, reason);
+}
+
+function loadLockHistory() {
+  var el = document.getElementById('lt-history');
+  if (!el) return;
+  el.innerHTML = '⏳ 読み込み中...';
+  google.script.run
+    .withSuccessHandler(function(rows) {
+      var filtered = (rows||[]).filter(function(r) {
+        return r['アクション']==='確定ロック' || r['アクション']==='開発者アンロック';
+      });
+      if (!filtered.length) { el.innerHTML='<span style="color:#6b7280;">ロック関連の履歴なし</span>'; return; }
+      var t='<table><thead><tr><th>日時</th><th>対象種別</th><th>対象ID</th><th>アクション</th><th>操作者</th><th>メモ</th></tr></thead><tbody>';
+      filtered.slice().reverse().forEach(function(r) {
+        var cls = r['アクション']==='確定ロック'?'ok':'ng';
+        t+='<tr>'+
+          '<td>'+r['記録日時']+'</td>'+
+          '<td>'+r['対象種別']+'</td>'+
+          '<td>'+r['対象ID']+'</td>'+
+          '<td><span class="'+cls+'">'+r['アクション']+'</span></td>'+
+          '<td>'+r['操作者ID']+'</td>'+
+          '<td>'+(r['メモ']||'')+'</td>'+
+        '</tr>';
+      });
+      t+='</tbody></table>';
+      el.innerHTML=t;
+    })
+    .withFailureHandler(function(err){ el.innerHTML='<span style="color:#e02424;">取得エラー: '+err.message+'</span>'; })
+    .getApprovalHistory();
+}
+
+function renderSpotPanel() {
+  var clientSel = document.getElementById('sg-client-id');
+  if (!clientSel || !CLIENTS) return;
+  clientSel.innerHTML = CLIENTS.map(function(c) {
+    return '<option value="'+c.id+'">'+c.name+'</option>';
+  }).join('');
+}
+
+function loadUnregisteredSpots() {
+  var el = document.getElementById('sg-list');
+  el.innerHTML = '⏳ 検知中...';
+  document.getElementById('sg-promote-card').style.display = 'none';
+  google.script.run
+    .withSuccessHandler(function(spots) {
+      if (!spots || !spots.length) {
+        el.innerHTML = '<div style="padding:20px;color:#6b7280;text-align:center;">未登録のスポット案件は見つかりませんでした。</div>';
+        return;
+      }
+      var t = '<table><thead><tr><th>仮案件名</th><th class="tc">件数</th><th class="tr">支払合計</th><th>期間</th><th class="tc">操作</th></tr></thead><tbody>';
+      spots.forEach(function(sp) {
+        var safeKey = escQ(sp.tempSpotName);
+        t += '<tr>'+
+          '<td><strong>'+sp.tempSpotName+'</strong></td>'+
+          '<td class="tc">'+sp.recordCount+'件</td>'+
+          '<td class="tr">'+f(sp.totalPayment)+'</td>'+
+          '<td style="font-size:12px;color:#6b7280;">'+sp.firstDate+' 〜 '+sp.lastDate+'</td>'+
+          '<td class="tc"><button onclick="selectSpotForPromotion(\''+safeKey+'\','+sp.recordCount+')" '+
+            'style="padding:4px 12px;background:#f59e0b;color:white;border:none;border-radius:4px;font-size:12px;font-weight:600;cursor:pointer;">'+
+            'マスタ化して紐付け</button></td>'+
+        '</tr>';
+      });
+      t += '</tbody></table>';
+      el.innerHTML = t;
+    })
+    .withFailureHandler(function(err) {
+      el.innerHTML = '<span style="color:#e02424;">エラー: '+err.message+'</span>';
+    })
+    .getUnregisteredSpots();
+}
+
+function selectSpotForPromotion(tempSpotName, count) {
+  currentSpotForPromotion = tempSpotName;
+  document.getElementById('sg-target-name').textContent = tempSpotName;
+  document.getElementById('sg-target-count').textContent = count;
+  document.getElementById('sg-promote-result').style.display = 'none';
+  document.getElementById('sg-sale-price').value = '';
+  document.getElementById('sg-buy-price').value = '';
+  var card = document.getElementById('sg-promote-card');
+  card.style.display = 'block';
+  card.scrollIntoView({ behavior: 'smooth' });
+}
+
+function doPromoteSpot() {
+  if (!currentSpotForPromotion) return;
+  var clientId  = document.getElementById('sg-client-id').value;
+  var salePrice = document.getElementById('sg-sale-price').value;
+  var buyPrice  = document.getElementById('sg-buy-price').value;
+  var calcType  = document.getElementById('sg-calc-type').value;
+  if (!clientId) { alert('荷主を選択してください'); return; }
+  if (salePrice === '' || buyPrice === '') { alert('売値・買値を入力してください'); return; }
+  if (!confirm('【'+currentSpotForPromotion+'】を案件マスタに登録し、関連する勤務記録の案件IDを一括更新します。\n続行しますか？')) return;
+
+  var resEl = document.getElementById('sg-promote-result');
+  resEl.style.display = 'block';
+  resEl.innerHTML = '⏳ マスタ登録・勤務記録更新中...';
+  resEl.style.background = '#f9fafb'; resEl.style.borderColor = '#e5e7eb';
+
+  var spotName = currentSpotForPromotion;
+  google.script.run
+    .withSuccessHandler(function(res) {
+      resEl.innerHTML = '✅ <strong>マスタ登録完了</strong><br>'+
+        '発行された案件ID: <code>'+res.newProjectId+'</code><br>'+
+        '案件名: '+res.projectName+'<br>'+
+        '更新した勤務記録: '+res.updatedRecords+'件';
+      resEl.style.background = '#def7ec'; resEl.style.borderColor = '#0e9f6e';
+      currentSpotForPromotion = null;
+      // 売上データを再取得して全体を更新
+      google.script.run
+        .withSuccessHandler(function(data) {
+          SD = data.sales; PV = data.payment; IV = data.invoice;
+          CONTRACTORS = data.contractors || [];
+          PROJECTS = data.projects || [];
+          PROJECT_PAYEES = data.projectPayees || [];
+          CLIENTS = data.clients || [];
+          SYS_SETTINGS = data.systemSettings || { defaultApprovalMode: 'daily' };
+          renderSalesRecords();
+          renderProjectPayees();
+          renderSpotPanel();
+          loadUnregisteredSpots();
+        })
+        .withFailureHandler(function(){})
+        .getAllData(currentMonth);
+    })
+    .withFailureHandler(function(err) {
+      resEl.innerHTML = '❌ '+err.message;
+      resEl.style.background = '#fde8e8'; resEl.style.borderColor = '#e02424';
+    })
+    .promoteSpotToMaster(spotName, clientId, Number(salePrice), Number(buyPrice), calcType);
+}
+
+function renderExpensePanel() {
+  var sel = document.getElementById('exp-contractor-sel');
+  if (sel && CONTRACTORS) {
+    sel.innerHTML = CONTRACTORS.map(function(c) {
+      return '<option value="'+c.id+'">'+c.name+'</option>';
+    }).join('');
+  }
+  var dateEl = document.getElementById('exp-date');
+  if (dateEl && !dateEl.value) dateEl.value = currentMonth + '-01';
+}
+
+function submitExpenseMock() {
+  var contractorId = document.getElementById('exp-contractor-sel').value;
+  var date         = document.getElementById('exp-date').value;
+  var type         = document.getElementById('exp-type').value;
+  var amount       = document.getElementById('exp-amount').value;
+  var remarks      = document.getElementById('exp-remarks').value;
+  if (!contractorId || !date || !type || amount === '') { alert('委託先、日付、種別、金額は必須です'); return; }
+  var resEl = document.getElementById('exp-submit-result');
+  resEl.textContent = '⏳ 記録中...'; resEl.style.color = '#6b7280';
+  google.script.run
+    .withSuccessHandler(function() {
+      resEl.textContent = '✅ 記録しました（ステータス：未承認）';
+      resEl.style.color = '#0e9f6e';
+      document.getElementById('exp-amount').value = '';
+      document.getElementById('exp-remarks').value = '';
+      loadExpenseRecords();
+    })
+    .withFailureHandler(function(err) {
+      resEl.textContent = '❌ ' + err.message;
+      resEl.style.color = '#e02424';
+    })
+    .addExpenseRecordMock(contractorId, date, type, Number(amount), remarks);
+}
+
+function loadExpenseRecords() {
+  var el = document.getElementById('exp-list');
+  el.innerHTML = '⏳ 読み込み中...';
+  google.script.run
+    .withSuccessHandler(function(records) {
+      EXPENSE_RECORDS = records;
+      renderExpenseList(records);
+    })
+    .withFailureHandler(function(err) {
+      el.innerHTML = '<span style="color:#e02424;">エラー: '+err.message+'</span>';
+    })
+    .getExpenseRecords(currentMonth);
+}
+
+function renderExpenseList(records) {
+  var el = document.getElementById('exp-list');
+  var all = records || [];
+  var unapproved = all.filter(function(r) { return r['ステータス'] !== '承認済'; });
+  var approved   = all.filter(function(r) { return r['ステータス'] === '承認済'; });
+  if (!all.length) {
+    el.innerHTML = '<div style="padding:16px;color:#9ca3af;text-align:center;">'+currentMonth+'の立替金記録なし</div>';
+    return;
+  }
+  var nameOf = function(cid) {
+    if (!CONTRACTORS) return cid;
+    var co = CONTRACTORS.find(function(c) { return c.id === cid; });
+    return co ? co.name : cid;
+  };
+  var rows = function(list) {
+    return list.map(function(r) {
+      var st = r['ステータス'] === '承認済'
+        ? '<span class="ok">承認済</span>'
+        : '<span class="ng">未承認</span>';
+      var btn = r['ステータス'] !== '承認済'
+        ? '<button onclick="approveExpense('+r._rowIndex+')" style="padding:3px 10px;background:#0e9f6e;color:white;border:none;border-radius:4px;font-size:11px;font-weight:600;cursor:pointer;">承認</button>'
+        : '－';
+      return '<tr>'+
+        '<td>'+r['日付']+'</td>'+
+        '<td>'+nameOf(r['委託先ID'])+'</td>'+
+        '<td>'+r['種別']+'</td>'+
+        '<td class="tr">'+f(r['金額'])+'</td>'+
+        '<td style="font-size:12px;color:#6b7280;">'+r['備考']+'</td>'+
+        '<td>'+st+'</td>'+
+        '<td class="tc">'+btn+'</td>'+
+      '</tr>';
+    }).join('');
+  };
+  var t = '<table><thead><tr><th>日付</th><th>委託先</th><th>種別</th><th class="tr">金額</th><th>備考</th><th>ステータス</th><th class="tc">操作</th></tr></thead>';
+  t += '<tbody>' + rows(unapproved) + rows(approved) + '</tbody></table>';
+  if (unapproved.length === 0) {
+    t = '<div style="padding:8px 0;font-size:12px;color:#0e9f6e;margin-bottom:8px;">✅ 未承認の立替金はありません</div>' + t;
+  }
+  el.innerHTML = t;
+}
+
+function approveExpense(rowIndex) {
+  google.script.run
+    .withSuccessHandler(function() {
+      loadExpenseRecords();
+      var prevEl = document.getElementById('exp-preview');
+      if (prevEl && prevEl.children.length) loadExpensePreview();
+    })
+    .withFailureHandler(function(err) { alert('承認エラー: ' + err.message); })
+    .approveExpenseRecord(rowIndex);
+}
+
+function loadExpensePreview() {
+  var el = document.getElementById('exp-preview');
+  el.innerHTML = '⏳ プレビュー生成中...';
+  google.script.run
+    .withSuccessHandler(renderExpensePreview)
+    .withFailureHandler(function(err) {
+      el.innerHTML = '<span style="color:#e02424;">エラー: '+err.message+'</span>';
+    })
+    .getPaymentWithExpenses(currentMonth);
+}
+
+function renderExpensePreview(notices) {
+  var el = document.getElementById('exp-preview');
+  if (!notices || !notices.length) {
+    el.innerHTML = '<div style="padding:16px;color:#9ca3af;">対象データなし</div>';
+    return;
+  }
+  var html = '';
+  notices.forEach(function(n) {
+    html += '<div style="border:1px solid #e5e7eb;border-radius:8px;padding:16px;margin-bottom:16px;">';
+    html += '<div style="font-size:15px;font-weight:700;color:#1e40af;margin-bottom:12px;">📄 '+n.name+'（'+n.invoiceStatus+'）</div>';
+
+    html += '<div style="font-size:12px;font-weight:600;color:#374151;padding:4px 8px;background:#f3f4f6;border-radius:4px;margin-bottom:8px;">【報酬】</div>';
+    html += '<div style="overflow-x:auto;margin-bottom:8px;"><table>';
+    html += '<thead><tr><th>勤務日</th><th>案件名</th><th class="tr">個数</th><th class="tr">金額</th></tr></thead><tbody>';
+    (n.details||[]).forEach(function(d) {
+      html += '<tr><td>'+d.date+'</td><td>'+d.projectName+'</td><td class="tr">'+(d.quantity||'-')+'</td><td class="tr">'+f(d.amount)+'</td></tr>';
+    });
+    html += '</tbody></table></div>';
+    html += '<div class="row"><span>報酬小計（税抜）</span><span>'+f(n.sum)+'</span></div>';
+    html += '<div class="row"><span>消費税（10%）</span><span>＋'+f(n.tax)+'</span></div>';
+    if (!n.isReg) {
+      html += '<div class="row ded"><span>経過措置控除（'+(n.deductionRate*100).toFixed(0)+'%）</span><span>－'+f(n.deduction)+'</span></div>';
+    }
+    html += '<div class="row" style="font-weight:600;border-bottom:1px solid #e5e7eb;padding-bottom:8px;"><span>報酬合計</span><span>'+f(n.laborTotal)+'</span></div>';
+
+    html += '<div style="font-size:12px;font-weight:600;color:#374151;padding:4px 8px;background:#fef3c7;border-radius:4px;margin:10px 0 8px;">【立替金（別行）】</div>';
+    if (n.expenseTotal > 0) {
+      html += '<div style="overflow-x:auto;margin-bottom:8px;"><table>';
+      html += '<thead><tr><th>日付</th><th>種別</th><th class="tr">実費金額</th><th>備考</th></tr></thead><tbody>';
+      (n.expenses||[]).forEach(function(e) {
+        html += '<tr><td>'+e.date+'</td><td>'+e.type+'</td><td class="tr">'+f(e.amount)+'</td><td style="font-size:12px;color:#6b7280;">'+e.remarks+'</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      html += '<div class="row"><span>立替金小計（税抜）</span><span>'+f(n.expenseTotal)+'</span></div>';
+      html += '<div class="row"><span>消費税（10%・課税一律・四捨五入）</span><span>＋'+f(n.expenseTax)+'</span></div>';
+      html += '<div class="row" style="font-weight:600;border-bottom:1px solid #e5e7eb;padding-bottom:8px;"><span>立替金合計</span><span>'+f(n.expenseTotal + n.expenseTax)+'</span></div>';
+    } else {
+      html += '<div style="font-size:12px;color:#9ca3af;margin-bottom:8px;">（承認済み立替金なし）</div>';
+    }
+
+    html += '<div class="tot"><span>✅ 合計支払金額</span><span>'+f(n.grandTotal)+'</span></div>';
+    html += '</div>';
+  });
+  el.innerHTML = html;
+}
+
+function loadApprovalLog() {
+  google.script.run
+    .withSuccessHandler(function(rows) {
+      if (!PV) return;
+      PV.forEach(function(p, idx) {
+        var filtered = rows.filter(function(r) {
+          return r['対象種別'] === '支払通知書' && r['対象ID'] === p.name;
+        });
+        var el = document.getElementById('log-body-'+idx);
+        if (!el) return;
+        if (!filtered.length) { el.innerHTML='（履歴なし）'; return; }
+        var t='<table style="width:100%;border-collapse:collapse;">'
+          +'<thead><tr><th>日時</th><th>アクション</th><th>操作者</th></tr></thead><tbody>';
+        filtered.slice().reverse().forEach(function(r) {
+          t+='<tr><td>'+r['記録日時']+'</td><td>'+r['アクション']+'</td><td>'+r['操作者ID']+'</td></tr>';
+        });
+        t+='</tbody></table>';
+        el.innerHTML=t;
+      });
+    })
+    .withFailureHandler(function(){})
+    .getApprovalHistory();
+}
+</script>
