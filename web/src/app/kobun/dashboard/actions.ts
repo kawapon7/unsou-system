@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 
 type ProjectRow    = Database['public']['Tables']['projects']['Row']
@@ -27,17 +28,19 @@ export async function fetchMyContractor(): Promise<ActionResult<ContractorRow>> 
     .single()
 
   if (userErr || !userRow?.contractor_id) {
-    // フォールバック: login_email または email で contractors を直接検索
-    const { data: contractor, error: cErr } = await supabase
+    // フォールバック: email で contractors を直接検索（service_role 必須）
+    const service = createServiceClient()
+    const { data: contractor, error: cErr } = await service
       .from('contractors')
       .select('*')
-      .or(`login_email.eq.${user.email},email.eq.${user.email}`)
+      .eq('email', user.email ?? '')
       .single()
     if (cErr || !contractor) return { data: null, error: '委託先レコードが見つかりません' }
     return { data: contractor, error: null }
   }
 
-  const { data: contractor, error: cErr } = await supabase
+  const service = createServiceClient()
+  const { data: contractor, error: cErr } = await service
     .from('contractors')
     .select('*')
     .eq('id', userRow.contractor_id)

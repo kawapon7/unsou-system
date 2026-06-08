@@ -8,10 +8,11 @@ import {
   updateClient,
   createContractor,
   updateContractor,
-  type ClientRow,
-  type ContractorRow,
 } from './actions'
 import type { Database } from '@/types/supabase'
+
+type ClientRow = Database['public']['Tables']['clients']['Row']
+type ContractorRow = Database['public']['Tables']['contractors']['Row']
 
 type ClientInsert = Database['public']['Tables']['clients']['Insert']
 type ContractorInsert = Database['public']['Tables']['contractors']['Insert']

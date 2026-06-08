@@ -8,10 +8,11 @@ import {
   createProject,
   updateProject,
   type ProjectWithRelations,
-  type ClientRow,
-  type ContractorRow,
 } from './actions'
 import type { Database } from '@/types/supabase'
+
+type ClientRow = Database['public']['Tables']['clients']['Row']
+type ContractorRow = Database['public']['Tables']['contractors']['Row']
 
 type ProjectInsert = Database['public']['Tables']['projects']['Insert']
 
@@ -411,7 +412,7 @@ export default function ProjectsPage() {
                     </td>
                     <td className="px-4 py-3 text-zinc-600 whitespace-nowrap">{fmt(row.operation_start)}</td>
                     <td className="px-4 py-3 text-right text-zinc-900 font-medium">
-                      ¥{row.sale_amount.toLocaleString()}
+                      ¥{row.selling_price?.toLocaleString() ?? '0'}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <button

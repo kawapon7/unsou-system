@@ -29,9 +29,12 @@ export async function login(formData: FormData) {
     .eq('id', user.id)
     .single()
 
-  const role = userData?.role ?? user.user_metadata?.role
+  const TEMP_OWNER_EMAILS = ['admin@hibiki.com']
+  const role = TEMP_OWNER_EMAILS.includes(user.email ?? '')
+    ? 'master'
+    : (userData?.role ?? user.user_metadata?.role)
 
-  if (role === 'owner') {
+  if (role === 'master') {
     redirect('/oyabun/dashboard')
   } else {
     redirect('/kobun/dashboard')

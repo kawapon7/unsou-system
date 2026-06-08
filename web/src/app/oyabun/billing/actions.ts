@@ -1,6 +1,6 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 
 type ClientRow     = Database['public']['Tables']['clients']['Row']
@@ -85,20 +85,28 @@ type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
 // ── JOIN 結果の型 ──────────────────────────────────────────
 
-type ProjectWithClient = {
-  id:            string
-  sale_amount:   number
-  operation_end: string | null
-  client_id:     string
-  clients:       Pick<ClientRow, 'id' | 'company_name' | 'tax_type' | 'invoice_registered' | 'closing_day' | 'payment_site'> | null
+type WorkRecordForBilling = {
+  id:        string
+  work_date: string
+  projects: {
+    client_id:   string
+    price_rules: { selling_price: number }[]
+    clients:     Pick<ClientRow, 'id' | 'company_name' | 'tax_type' | 'invoice_registered' | 'closing_day' | 'payment_site'> | null
+  } | null
 }
 
-type ProjectWithContractor = {
+type WorkRecordForPayment = {
   id:            string
-  buy_amount:    number | null
-  operation_end: string | null
-  contractor_id: string | null
-  contractors:   Pick<ContractorRow, 'id' | 'name' | 'tax_type' | 'invoice_registration_type' | 'invoice_registration_number' | 'withholding_tax_flag' | 'payment_site'> | null
+  work_date:     string
+  contractor_id: string
+  projects: {
+    price_rules: { buying_price: number }[]
+  } | null
+  contractors: (Pick<ContractorRow, 'id' | 'name' | 'invoice_registration_type' | 'payment_site'> & {
+    tax_category:    string
+    has_withholding: boolean
+    invoice_number:  string | null
+  }) | null
 }
 
 // ── 荷主向け請求集計 ──────────────────────────────────────
@@ -106,41 +114,44 @@ type ProjectWithContractor = {
 export async function fetchBillingByClient(
   yearMonth: string,
 ): Promise<ActionResult<BillingRow[]>> {
-  const supabase = await createClient()
+  const supabase = createServiceClient()
+  const { from, to } = monthRange(yearMonth)
 
   const { data, error } = await supabase
-    .from('projects')
+    .from('work_records')
     .select(`
       id,
-      sale_amount,
-      operation_end,
-      client_id,
-      clients (
-        id,
-        company_name,
-        tax_type,
-        invoice_registered,
-        closing_day,
-        payment_site
+      work_date,
+      projects (
+        client_id,
+        price_rules ( selling_price ),
+        clients (
+          id,
+          company_name,
+          tax_type,
+          invoice_registered,
+          closing_day,
+          payment_site
+        )
       )
     `)
-    .eq('status', 'completed')
-    .not('operation_end', 'is', null)
+    .gte('work_date', from.toISOString().slice(0, 10))
+    .lte('work_date', to.toISOString().slice(0, 10))
 
   if (error) return { data: null, error: error.message }
 
-  const rows = (data ?? []) as unknown as ProjectWithClient[]
+  const rows = (data ?? []) as unknown as WorkRecordForBilling[]
   const map = new Map<string, BillingRow>()
 
   for (const row of rows) {
-    const client = row.clients
-    if (!client || !row.operation_end) continue
+    const client = row.projects?.clients
+    if (!client) continue
 
-    const { from, to } = closingRange(yearMonth, client.closing_day)
-    const opEnd = new Date(row.operation_end)
-    if (opEnd < from || opEnd > to) continue
+    const { from: cFrom, to: cTo } = closingRange(yearMonth, client.closing_day)
+    const workDate = new Date(row.work_date)
+    if (workDate < cFrom || workDate > cTo) continue
 
-    const net = row.sale_amount ?? 0
+    const net = row.projects?.price_rules?.[0]?.selling_price ?? 0
     const tax = calcTax(net, client.tax_type)
 
     const existing = map.get(client.id)
@@ -178,45 +189,43 @@ export async function fetchBillingByClient(
 export async function fetchPaymentByContractor(
   yearMonth: string,
 ): Promise<ActionResult<PaymentRow[]>> {
-  const supabase = await createClient()
+  const supabase = createServiceClient()
+  const { from, to } = monthRange(yearMonth)
 
   const { data, error } = await supabase
-    .from('projects')
+    .from('work_records')
     .select(`
       id,
-      buy_amount,
-      operation_end,
+      work_date,
       contractor_id,
+      projects (
+        price_rules ( buying_price )
+      ),
       contractors (
         id,
         name,
-        tax_type,
+        tax_category,
         invoice_registration_type,
-        invoice_registration_number,
-        withholding_tax_flag,
+        invoice_number,
+        has_withholding,
         payment_site
       )
     `)
-    .eq('status', 'completed')
-    .not('contractor_id', 'is', null)
-    .not('operation_end', 'is', null)
+    .gte('work_date', from.toISOString().slice(0, 10))
+    .lte('work_date', to.toISOString().slice(0, 10))
 
   if (error) return { data: null, error: error.message }
 
-  const rows = (data ?? []) as unknown as ProjectWithContractor[]
-  const { from, to } = monthRange(yearMonth)
+  const rows = (data ?? []) as unknown as WorkRecordForPayment[]
   const map = new Map<string, PaymentRow>()
 
   for (const row of rows) {
     const contractor = row.contractors
-    if (!contractor || row.buy_amount == null || !row.operation_end) continue
+    if (!contractor) continue
 
-    const opEnd = new Date(row.operation_end)
-    if (opEnd < from || opEnd > to) continue
-
-    const net         = row.buy_amount
-    const tax         = calcTax(net, contractor.tax_type)
-    const withholding = contractor.withholding_tax_flag ? calcWithholding(net) : 0
+    const net = row.projects?.price_rules?.[0]?.buying_price ?? 0
+    const tax         = calcTax(net, contractor.tax_category)
+    const withholding = contractor.has_withholding ? calcWithholding(net) : 0
 
     const existing = map.get(contractor.id)
     if (existing) {
@@ -229,10 +238,10 @@ export async function fetchPaymentByContractor(
       map.set(contractor.id, {
         contractorId:       contractor.id,
         name:               contractor.name,
-        taxType:            contractor.tax_type,
+        taxType:            contractor.tax_category,
         invoiceType:        contractor.invoice_registration_type,
-        invoiceNumber:      contractor.invoice_registration_number,
-        withholdingTaxFlag: contractor.withholding_tax_flag,
+        invoiceNumber:      contractor.invoice_number,
+        withholdingTaxFlag: contractor.has_withholding,
         paymentSite:        contractor.payment_site,
         projectCount:       1,
         buyAmountNet:       net,

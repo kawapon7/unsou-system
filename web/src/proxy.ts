@@ -30,6 +30,11 @@ export async function proxy(request: NextRequest) {
   const isProtected = pathname.startsWith('/oyabun') || pathname.startsWith('/kobun')
   const isLoginPage = pathname === '/login'
 
+  // TODO: UI確認用一時バイパス（本番前に必ず削除すること）
+  if (process.env.NODE_ENV === 'development' && isProtected && !user) {
+    return supabaseResponse
+  }
+
   if (isProtected && !user) {
     const url = request.nextUrl.clone()
     url.pathname = '/login'
@@ -43,10 +48,13 @@ export async function proxy(request: NextRequest) {
       .eq('id', user.id)
       .single()
 
-    const role = userData?.role ?? user.user_metadata?.role
+    const TEMP_OWNER_EMAILS = ['admin@hibiki.com']
+    const role = TEMP_OWNER_EMAILS.includes(user.email ?? '')
+      ? 'master'
+      : (userData?.role ?? user.user_metadata?.role)
 
     const url = request.nextUrl.clone()
-    url.pathname = role === 'owner' ? '/oyabun/dashboard' : '/kobun/dashboard'
+    url.pathname = role === 'master' ? '/oyabun/dashboard' : '/kobun/dashboard'
     return NextResponse.redirect(url)
   }
 
