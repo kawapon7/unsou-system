@@ -13,6 +13,11 @@ import {
   type PaymentNoticeSummaryRow,
 } from './actions'
 import { finalizeInvoiceAndNotice } from '@/app/_actions/billing-actions'
+import {
+  fetchUnassignedSpots,
+  promoteSpotToOfficialProject,
+  type SpotGroup,
+} from '@/app/_actions/project-actions'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -827,15 +832,272 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
   )
 }
 
+// ── ⑤ スポット案件ガードレール ────────────────────────────
+
+const UNIT_TYPE_OPTIONS = [
+  { value: 'per_trip', label: '1件単位' },
+  { value: 'per_day',  label: '1日単位' },
+  { value: 'per_km',   label: 'km単価' },
+]
+
+type PromoteForm = {
+  clientId:    string
+  projectName: string
+  saleAmount:  string
+  buyAmount:   string
+  unitType:    string
+}
+
+function SpotGuardrailTab() {
+  const [spots, setSpots]     = useState<SpotGroup[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState<string | null>(null)
+  const [toast, setToast]     = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+
+  // 荷主オプション
+  const [clientOpts, setClientOpts] = useState<{ id: string; company_name: string }[]>([])
+
+  // インラインフォームの開閉：key = spotGenericId
+  const [openForm, setOpenForm] = useState<Record<string, boolean>>({})
+  const [forms, setForms] = useState<Record<string, PromoteForm>>({})
+  const [promoting, setPromoting] = useState<Record<string, boolean>>({})
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    const [spotRes, clientRes] = await Promise.all([
+      fetchUnassignedSpots(),
+      fetchClientOptions(),
+    ])
+    if (spotRes.error)   setError(spotRes.error)
+    else                 setSpots(spotRes.data ?? [])
+    if (!clientRes.error) setClientOpts(clientRes.data ?? [])
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { load() }, [load])
+
+  useEffect(() => {
+    if (toast) {
+      const t = setTimeout(() => setToast(null), 5000)
+      return () => clearTimeout(t)
+    }
+  }, [toast])
+
+  function toggleForm(id: string) {
+    setOpenForm(prev => ({ ...prev, [id]: !prev[id] }))
+    setForms(prev => ({
+      ...prev,
+      [id]: prev[id] ?? { clientId: '', projectName: id, saleAmount: '', buyAmount: '', unitType: 'per_trip' },
+    }))
+  }
+
+  function updateForm(id: string, patch: Partial<PromoteForm>) {
+    setForms(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }))
+  }
+
+  async function handlePromote(spot: SpotGroup) {
+    const form = forms[spot.spotGenericId]
+    if (!form?.clientId || !form.projectName || !form.saleAmount || !form.buyAmount) {
+      setToast({ message: '荷主・案件名・売値・買値は必須です', type: 'error' })
+      return
+    }
+    setPromoting(prev => ({ ...prev, [spot.spotGenericId]: true }))
+    const res = await promoteSpotToOfficialProject({
+      spotGenericId: spot.spotGenericId,
+      clientId:      form.clientId,
+      projectName:   form.projectName,
+      saleAmount:    Number(form.saleAmount),
+      buyAmount:     Number(form.buyAmount),
+      unitType:      form.unitType,
+    })
+    setPromoting(prev => ({ ...prev, [spot.spotGenericId]: false }))
+
+    if (res.error) {
+      setToast({ message: res.error, type: 'error' })
+    } else {
+      setToast({
+        message: `「${form.projectName}」として昇格完了（${res.data?.updatedCount ?? 0}件の記録を紐付け）`,
+        type: 'success',
+      })
+      setOpenForm(prev => ({ ...prev, [spot.spotGenericId]: false }))
+      await load()
+    }
+  }
+
+  return (
+    <div>
+      <div className="mb-6">
+        <h2 className="text-base font-bold text-zinc-900 mb-1">スポット案件ガードレール</h2>
+        <p className="text-sm text-zinc-500">
+          案件マスタ未紐付けのスポット記録を検知します。ボタン一発で正式案件マスタへ昇格・過去実績を一括紐付けします。
+        </p>
+      </div>
+
+      {error && (
+        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>
+      )}
+
+      {loading ? (
+        <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
+      ) : spots.length === 0 ? (
+        <div className="py-20 text-center rounded-xl border border-dashed border-zinc-200 bg-white">
+          <p className="text-zinc-400 text-sm">未紐付けのスポット案件はありません ✅</p>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {spots.map(spot => {
+            const isOpen     = !!openForm[spot.spotGenericId]
+            const form       = forms[spot.spotGenericId] ?? { clientId: '', projectName: spot.spotGenericId, saleAmount: '', buyAmount: '', unitType: 'per_trip' }
+            const isPromoting = !!promoting[spot.spotGenericId]
+            const canSubmit  = form.clientId && form.projectName && form.saleAmount && form.buyAmount
+
+            return (
+              <div key={spot.spotGenericId} className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
+                {/* 概要行 */}
+                <div className="flex items-start justify-between gap-4 px-5 py-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="inline-block rounded-full bg-amber-200 text-amber-800 text-xs font-semibold px-2 py-0.5">
+                        未紐付け
+                      </span>
+                      <code className="text-sm font-mono text-zinc-700 truncate">{spot.spotGenericId}</code>
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+                      <span>{spot.recordCount}件の記録</span>
+                      <span>{spot.earliestDate} 〜 {spot.latestDate}</span>
+                      <span>担当: {spot.contractorNames.join('、') || '—'}</span>
+                    </div>
+                    <div className="flex gap-4 mt-1.5 text-xs font-medium">
+                      <span className="text-zinc-600">売上合計 <span className="text-zinc-900">{yen(spot.totalSales)}</span></span>
+                      <span className="text-zinc-600">支払合計 <span className="text-zinc-900">{yen(spot.totalPayment)}</span></span>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => toggleForm(spot.spotGenericId)}
+                    className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition ${
+                      isOpen
+                        ? 'bg-zinc-200 text-zinc-700 hover:bg-zinc-300'
+                        : 'bg-amber-600 text-white hover:bg-amber-500'
+                    }`}
+                  >
+                    {isOpen ? 'キャンセル' : 'マスタへ昇格'}
+                  </button>
+                </div>
+
+                {/* インラインフォーム */}
+                {isOpen && (
+                  <div className="border-t border-amber-200 bg-white px-5 py-5">
+                    <h3 className="text-sm font-semibold text-zinc-800 mb-4">正式案件マスタの情報を入力</h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                      {/* 荷主 */}
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-600 mb-1">荷主 <span className="text-red-500">*</span></label>
+                        <select
+                          value={form.clientId}
+                          onChange={e => updateForm(spot.spotGenericId, { clientId: e.target.value })}
+                          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500"
+                        >
+                          <option value="">選択してください</option>
+                          {clientOpts.map(c => (
+                            <option key={c.id} value={c.id}>{c.company_name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      {/* 案件名 */}
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-600 mb-1">案件名 <span className="text-red-500">*</span></label>
+                        <input
+                          type="text"
+                          value={form.projectName}
+                          onChange={e => updateForm(spot.spotGenericId, { projectName: e.target.value })}
+                          placeholder="例：○○倉庫→△△港 定期便"
+                          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
+                        />
+                      </div>
+                      {/* 売値 */}
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-600 mb-1">売値（税抜） <span className="text-red-500">*</span></label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={form.saleAmount}
+                          onChange={e => updateForm(spot.spotGenericId, { saleAmount: e.target.value })}
+                          placeholder="30000"
+                          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
+                        />
+                      </div>
+                      {/* 買値 */}
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-600 mb-1">買値（税抜） <span className="text-red-500">*</span></label>
+                        <input
+                          type="number"
+                          min={0}
+                          value={form.buyAmount}
+                          onChange={e => updateForm(spot.spotGenericId, { buyAmount: e.target.value })}
+                          placeholder="25000"
+                          className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
+                        />
+                      </div>
+                      {/* 計算方式 */}
+                      <div>
+                        <label className="block text-xs font-medium text-zinc-600 mb-1">計算方式</label>
+                        <select
+                          value={form.unitType}
+                          onChange={e => updateForm(spot.spotGenericId, { unitType: e.target.value })}
+                          className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500"
+                        >
+                          {UNIT_TYPE_OPTIONS.map(o => (
+                            <option key={o.value} value={o.value}>{o.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-xs text-zinc-400">
+                        確定後、{spot.recordCount}件の記録が新しい案件マスタへ自動紐付けされます
+                      </p>
+                      <button
+                        onClick={() => handlePromote(spot)}
+                        disabled={!canSubmit || isPromoting}
+                        className="rounded-lg bg-zinc-900 px-5 py-2 text-sm font-semibold text-white hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                      >
+                        {isPromoting ? '処理中...' : '昇格を確定する'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* トースト */}
+      {toast && (
+        <div
+          className={`fixed bottom-6 right-6 z-50 flex items-start gap-3 rounded-xl px-4 py-3 shadow-lg text-sm font-medium max-w-sm
+            ${toast.type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}
+        >
+          <span className="flex-1">{toast.message}</span>
+          <button onClick={() => setToast(null)} className="opacity-75 hover:opacity-100 text-lg leading-none">×</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── メインページ ──────────────────────────────────────────
 
-type Tab = 'list' | 'generate' | 'payment' | 'finalize'
+type Tab = 'list' | 'generate' | 'payment' | 'finalize' | 'spot'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'list',     label: '① 売上一覧' },
   { key: 'generate', label: '② 請求書生成' },
   { key: 'payment',  label: '③ 入金管理' },
   { key: 'finalize', label: '④ 確定・ロック' },
+  { key: 'spot',     label: '⑤ スポット昇格' },
 ]
 
 export default function SalesPage() {
@@ -881,6 +1143,7 @@ export default function SalesPage() {
         {tab === 'generate' && <InvoiceGenerateTab  yearMonth={yearMonth} />}
         {tab === 'payment'  && <PaymentStatusTab    yearMonth={yearMonth} />}
         {tab === 'finalize' && <FinalizeTab         yearMonth={yearMonth} />}
+        {tab === 'spot'     && <SpotGuardrailTab />}
       </div>
     </div>
   )
