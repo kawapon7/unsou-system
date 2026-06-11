@@ -7,6 +7,11 @@ import {
   updateProjectStatus,
   type AssignedProject,
 } from './actions'
+import {
+  fetchMyPaymentNotices,
+  approvePaymentNotice,
+  type MyPaymentNotice,
+} from '@/app/_actions/driver-actions'
 import type { Database } from '@/types/supabase'
 
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -148,6 +153,218 @@ function ProjectCard({
   )
 }
 
+// ── トースト通知 ──────────────────────────────────────────
+
+function Toast({ message, type, onDismiss }: { message: string; type: 'success' | 'error'; onDismiss: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onDismiss, 5000)
+    return () => clearTimeout(t)
+  }, [onDismiss])
+
+  return (
+    <div
+      className={`fixed bottom-6 right-4 left-4 sm:left-auto sm:w-80 z-50 flex items-start gap-3 rounded-xl px-4 py-3 shadow-lg text-sm font-medium transition-all
+        ${type === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}
+    >
+      <span className="flex-1">{message}</span>
+      <button onClick={onDismiss} className="shrink-0 opacity-75 hover:opacity-100 text-lg leading-none">×</button>
+    </div>
+  )
+}
+
+// ── 金額フォーマット ─────────────────────────────────────
+
+function yen(n: number) {
+  return `¥${n.toLocaleString('ja-JP')}`
+}
+
+function monthLabel(iso: string) {
+  const d = new Date(iso)
+  return `${d.getFullYear()}年${d.getMonth() + 1}月分`
+}
+
+// ── 支払通知書カード ─────────────────────────────────────
+
+function PaymentNoticeCard({
+  notice,
+  onApprove,
+}: {
+  notice: MyPaymentNotice
+  onApprove: (id: string) => Promise<void>
+}) {
+  const [approving, setApproving] = useState(false)
+  const isApproved = notice.approvalStatus === 'approved'
+
+  async function handleApprove() {
+    setApproving(true)
+    await onApprove(notice.id)
+    setApproving(false)
+  }
+
+  const subtotal = notice.laborNet + notice.laborTax + notice.expenseNet + notice.expenseTax
+
+  return (
+    <div className={`rounded-2xl border bg-white p-5 shadow-sm ${isApproved ? 'border-green-300' : 'border-zinc-200'}`}>
+      {/* ヘッダ */}
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-bold text-zinc-900 text-base">{monthLabel(notice.noticeMonth)}</h3>
+        {isApproved && (
+          <span className="inline-flex items-center gap-1 rounded-full bg-green-100 text-green-700 text-xs font-semibold px-3 py-1">
+            ✅ 承認済み
+          </span>
+        )}
+      </div>
+
+      {/* 金額明細 */}
+      <div className="space-y-2 text-sm mb-4">
+        <div className="flex justify-between text-zinc-600">
+          <span>労務報酬（税抜）</span>
+          <span className="tabular-nums font-medium text-zinc-900">{yen(notice.laborNet)}</span>
+        </div>
+        {notice.laborTax > 0 && (
+          <div className="flex justify-between text-zinc-400">
+            <span className="pl-4">うち消費税</span>
+            <span className="tabular-nums">{yen(notice.laborTax)}</span>
+          </div>
+        )}
+        {(notice.expenseNet > 0 || notice.expenseTax > 0) && (
+          <>
+            <div className="flex justify-between text-zinc-600">
+              <span>立替経費（税抜）</span>
+              <span className="tabular-nums font-medium text-zinc-900">{yen(notice.expenseNet)}</span>
+            </div>
+            {notice.expenseTax > 0 && (
+              <div className="flex justify-between text-zinc-400">
+                <span className="pl-4">うち消費税</span>
+                <span className="tabular-nums">{yen(notice.expenseTax)}</span>
+              </div>
+            )}
+          </>
+        )}
+        {notice.deduction > 0 && (
+          <div className="flex justify-between text-amber-600">
+            <span>経過措置控除（{(notice.deductionRate * 100).toFixed(0)}%）</span>
+            <span className="tabular-nums">−{yen(notice.deduction)}</span>
+          </div>
+        )}
+        <div className="border-t border-zinc-100 pt-2 flex justify-between font-bold text-zinc-900">
+          <span>差引支払額</span>
+          <span className="tabular-nums text-lg">{yen(notice.totalAmount)}</span>
+        </div>
+      </div>
+
+      {/* 承認ボタン */}
+      <button
+        onClick={handleApprove}
+        disabled={isApproved || approving || notice.locked}
+        className={`w-full py-4 rounded-xl text-base font-bold transition
+          ${isApproved
+            ? 'bg-green-100 text-green-600 cursor-not-allowed'
+            : notice.locked
+              ? 'bg-zinc-100 text-zinc-400 cursor-not-allowed'
+              : approving
+                ? 'bg-blue-400 text-white cursor-not-allowed'
+                : 'bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white'
+          }`}
+      >
+        {isApproved
+          ? '✅ 承認済み'
+          : notice.locked
+            ? '🔒 ロック中（親分に確認)'
+            : approving
+              ? '処理中...'
+              : 'この金額で合ってます'}
+      </button>
+    </div>
+  )
+}
+
+// ── 支払通知書セクション ─────────────────────────────────
+
+function PaymentNoticeSection({
+  contractorId,
+  toast,
+  setToast,
+}: {
+  contractorId: string
+  toast: { message: string; type: 'success' | 'error' } | null
+  setToast: (t: { message: string; type: 'success' | 'error' } | null) => void
+}) {
+  const [notices, setNotices]   = useState<MyPaymentNotice[]>([])
+  const [loading, setLoading]   = useState(true)
+  const [sectErr, setSectErr]   = useState<string | null>(null)
+
+  const loadNotices = useCallback(async () => {
+    setLoading(true)
+    const res = await fetchMyPaymentNotices()
+    if (res.error) {
+      setSectErr(res.error)
+    } else {
+      setNotices(res.data ?? [])
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { loadNotices() }, [loadNotices])
+
+  async function handleApprove(noticeId: string) {
+    const res = await approvePaymentNotice(noticeId)
+    if (res.error) {
+      setToast({ message: res.error, type: 'error' })
+    } else {
+      setToast({ message: '支払通知書を承認しました', type: 'success' })
+      setNotices(prev =>
+        prev.map(n => n.id === noticeId ? { ...n, approvalStatus: 'approved' } : n)
+      )
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="py-8 text-center text-sm text-zinc-400">支払通知書を読み込み中...</div>
+    )
+  }
+
+  if (sectErr) {
+    return (
+      <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+        {sectErr}
+      </div>
+    )
+  }
+
+  const pending  = notices.filter(n => n.approvalStatus !== 'approved')
+  const approved = notices.filter(n => n.approvalStatus === 'approved')
+
+  return (
+    <div>
+      <h2 className="text-base font-bold text-zinc-900 mb-4">支払通知書の確認・承認</h2>
+
+      {notices.length === 0 ? (
+        <div className="py-12 text-center text-sm text-zinc-400 rounded-xl border border-dashed border-zinc-200 bg-white">
+          未承認の支払通知書はありません
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {/* 未承認を先に表示 */}
+          {pending.map(n => (
+            <PaymentNoticeCard key={n.id} notice={n} onApprove={handleApprove} />
+          ))}
+          {/* 承認済みは折りたたまず一覧表示（最大3件） */}
+          {approved.slice(0, 3).map(n => (
+            <PaymentNoticeCard key={n.id} notice={n} onApprove={handleApprove} />
+          ))}
+          {approved.length > 3 && (
+            <p className="text-center text-xs text-zinc-400">
+              他 {approved.length - 3} 件の承認済み通知書は省略されています
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── メインページ ──────────────────────────────────────────
 
 export default function KobunDashboard() {
@@ -156,6 +373,7 @@ export default function KobunDashboard() {
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState<string | null>(null)
   const [filterStatus, setFilterStatus] = useState<string>('active')
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -285,7 +503,27 @@ export default function KobunDashboard() {
             ))}
           </div>
         )}
+
+        {/* 支払通知書セクション */}
+        {contractor && !loading && (
+          <div className="mt-10 border-t border-zinc-200 pt-8">
+            <PaymentNoticeSection
+              contractorId={contractor.id}
+              toast={toast}
+              setToast={setToast}
+            />
+          </div>
+        )}
       </div>
+
+      {/* トースト */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onDismiss={() => setToast(null)}
+        />
+      )}
     </div>
   )
 }
