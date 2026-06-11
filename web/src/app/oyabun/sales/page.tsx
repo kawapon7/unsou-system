@@ -20,6 +20,7 @@ import {
 } from '@/app/_actions/project-actions'
 import { InvoicePdfModal }       from '@/components/pdf/InvoicePdfModal'
 import { PaymentNoticePdfModal } from '@/components/pdf/PaymentNoticePdfModal'
+import { ScanTab }               from './ScanTab'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -1129,7 +1130,7 @@ function SpotGuardrailTab() {
 
 // ── メインページ ──────────────────────────────────────────
 
-type Tab = 'list' | 'generate' | 'payment' | 'finalize' | 'spot'
+type Tab = 'list' | 'generate' | 'payment' | 'finalize' | 'spot' | 'scan'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'list',     label: '① 売上一覧' },
@@ -1137,6 +1138,7 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'payment',  label: '③ 入金管理' },
   { key: 'finalize', label: '④ 確定・ロック' },
   { key: 'spot',     label: '⑤ スポット昇格' },
+  { key: 'scan',     label: '⑥ AIスキャン入力' },
 ]
 
 export default function SalesPage() {
@@ -1183,6 +1185,7 @@ export default function SalesPage() {
         {tab === 'payment'  && <PaymentStatusTab    yearMonth={yearMonth} />}
         {tab === 'finalize' && <FinalizeTab         yearMonth={yearMonth} />}
         {tab === 'spot'     && <SpotGuardrailTab />}
+        {tab === 'scan'     && <ScanTab />}
       </div>
     </div>
   )
