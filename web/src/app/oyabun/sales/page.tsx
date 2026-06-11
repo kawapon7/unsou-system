@@ -22,6 +22,7 @@ import { InvoicePdfModal }       from '@/components/pdf/InvoicePdfModal'
 import { PaymentNoticePdfModal } from '@/components/pdf/PaymentNoticePdfModal'
 import { ScanTab }               from './ScanTab'
 import { VoiceButton }           from '@/components/voice/VoiceButton'
+import { useFavorites }          from '@/hooks/useFavorites'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -1142,9 +1143,13 @@ const TABS: { key: Tab; label: string }[] = [
   { key: 'scan',     label: '⑥ AIスキャン入力' },
 ]
 
+const SALES_FAV = { id: '/oyabun/sales', label: '売上管理', url: '/oyabun/sales' }
+
 export default function SalesPage() {
   const [tab, setTab]           = useState<Tab>('list')
   const [yearMonth, setYearMonth] = useState(currentYearMonth)
+  const { isFav, toggle }       = useFavorites()
+  const starred                 = isFav(SALES_FAV.id)
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -1152,7 +1157,17 @@ export default function SalesPage() {
 
         {/* ヘッダー */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <h1 className="text-xl font-semibold text-zinc-900">売上管理</h1>
+          <div className="flex items-center gap-1.5">
+            <h1 className="text-xl font-semibold text-zinc-900">売上管理</h1>
+            <button
+              onClick={() => toggle(SALES_FAV)}
+              aria-label={starred ? 'ショートカットから削除' : 'ショートカットに追加'}
+              title={starred ? 'ショートカットから削除' : 'サイドバーにショートカットを追加'}
+              className="text-xl leading-none transition-transform duration-150 hover:scale-125 active:scale-95 select-none"
+            >
+              {starred ? '⭐' : '☆'}
+            </button>
+          </div>
           <div className="flex items-center gap-2">
             <label className="text-sm text-zinc-600">対象年月</label>
             <input

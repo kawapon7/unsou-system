@@ -4,6 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { handleLogout } from '@/app/auth/actions'
+import { useFavorites } from '@/hooks/useFavorites'
 
 // ── ナビアイテム定義 ──────────────────────────────────────
 
@@ -90,6 +91,45 @@ function Logo() {
   )
 }
 
+// ── お気に入りセクション ──────────────────────────────────
+
+function FavoritesSection({ onNavClick }: { onNavClick?: () => void }) {
+  const { favorites, remove } = useFavorites()
+
+  if (favorites.length === 0) return null
+
+  return (
+    <div className="mb-3">
+      <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-amber-500">
+        ⭐ マイショートカット
+      </p>
+      {favorites.map(fav => (
+        <div
+          key={fav.id}
+          className="flex items-center group rounded-lg hover:bg-amber-50 transition-colors"
+        >
+          <Link
+            href={fav.url}
+            onClick={onNavClick}
+            className="flex flex-1 items-center gap-2.5 px-3 py-2 text-sm font-medium text-zinc-700 hover:text-zinc-900 min-w-0"
+          >
+            <span className="text-amber-400 text-sm leading-none shrink-0">⭐</span>
+            <span className="truncate">{fav.label}</span>
+          </Link>
+          <button
+            onClick={() => remove(fav.id)}
+            aria-label={`${fav.label} をショートカットから削除`}
+            className="pr-3 text-zinc-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all text-xs shrink-0"
+          >
+            ✕
+          </button>
+        </div>
+      ))}
+      <div className="mx-3 mt-2 border-t border-zinc-100" />
+    </div>
+  )
+}
+
 // ── サイドバー内容 ────────────────────────────────────────
 
 function SidebarContent({
@@ -109,20 +149,25 @@ function SidebarContent({
       </div>
 
       {/* ナビゲーション */}
-      <nav className="flex-1 overflow-y-auto px-3 py-4 space-y-1">
+      <nav className="flex-1 overflow-y-auto px-3 py-4">
+        {/* ⭐ マイショートカット（お気に入りがある場合のみ表示） */}
+        <FavoritesSection onNavClick={onNavClick} />
+
         <p className="px-3 mb-2 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
           管理メニュー
         </p>
-        {NAV_ITEMS.map(item => (
-          <NavLink
-            key={item.href}
-            href={item.href}
-            label={item.label}
-            icon={item.icon}
-            active={pathname.startsWith(item.href)}
-            onClick={onNavClick}
-          />
-        ))}
+        <div className="space-y-1">
+          {NAV_ITEMS.map(item => (
+            <NavLink
+              key={item.href}
+              href={item.href}
+              label={item.label}
+              icon={item.icon}
+              active={pathname.startsWith(item.href)}
+              onClick={onNavClick}
+            />
+          ))}
+        </div>
       </nav>
 
       {/* ユーザー情報・ログアウト */}
