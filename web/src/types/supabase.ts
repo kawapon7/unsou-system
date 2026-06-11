@@ -34,6 +34,24 @@ export type Database = {
   }
   public: {
     Tables: {
+      companies: {
+        Row: {
+          created_at: string
+          id:         string
+          name:       string
+        }
+        Insert: {
+          created_at?: string
+          id?:         string
+          name:        string
+        }
+        Update: {
+          created_at?: string
+          id?:         string
+          name?:       string
+        }
+        Relationships: []
+      }
       approval_history: {
         Row: {
           action_type: string
@@ -240,6 +258,7 @@ export type Database = {
           amount_actual: number
           amount_tax_excluded: number
           approval_status: string
+          company_id: string | null
           contractor_id: string
           created_at: string
           expense_date: string
@@ -254,6 +273,7 @@ export type Database = {
           amount_actual?: number
           amount_tax_excluded?: number
           approval_status?: string
+          company_id?: string | null
           contractor_id: string
           created_at?: string
           expense_date: string
@@ -268,6 +288,7 @@ export type Database = {
           amount_actual?: number
           amount_tax_excluded?: number
           approval_status?: string
+          company_id?: string | null
           contractor_id?: string
           created_at?: string
           expense_date?: string
@@ -279,6 +300,13 @@ export type Database = {
           updated_at?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "expense_records_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "expense_records_contractor_id_fkey"
             columns: ["contractor_id"]
@@ -648,6 +676,7 @@ export type Database = {
       work_records: {
         Row: {
           approval_status: string
+          company_id: string | null
           contractor_id: string
           created_at: string
           id: string
@@ -662,6 +691,7 @@ export type Database = {
         }
         Insert: {
           approval_status?: string
+          company_id?: string | null
           contractor_id: string
           created_at?: string
           id?: string
@@ -676,6 +706,7 @@ export type Database = {
         }
         Update: {
           approval_status?: string
+          company_id?: string | null
           contractor_id?: string
           created_at?: string
           id?: string
@@ -689,6 +720,13 @@ export type Database = {
           work_date?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "work_records_company_id_fkey"
+            columns: ["company_id"]
+            isOneToOne: false
+            referencedRelation: "companies"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "work_records_contractor_id_fkey"
             columns: ["contractor_id"]
