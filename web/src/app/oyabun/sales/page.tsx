@@ -21,6 +21,7 @@ import {
 import { InvoicePdfModal }       from '@/components/pdf/InvoicePdfModal'
 import { PaymentNoticePdfModal } from '@/components/pdf/PaymentNoticePdfModal'
 import { ScanTab }               from './ScanTab'
+import { VoiceButton }           from '@/components/voice/VoiceButton'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -1187,6 +1188,9 @@ export default function SalesPage() {
         {tab === 'spot'     && <SpotGuardrailTab />}
         {tab === 'scan'     && <ScanTab />}
       </div>
+
+      {/* 音声操作ボタン（親分：画面遷移のみ） */}
+      <VoiceButton />
     </div>
   )
 }

@@ -13,6 +13,7 @@ import {
   type MyPaymentNotice,
 } from '@/app/_actions/driver-actions'
 import { PaymentNoticePdfModal } from '@/components/pdf/PaymentNoticePdfModal'
+import { VoiceButton }           from '@/components/voice/VoiceButton'
 import type { Database } from '@/types/supabase'
 
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -547,6 +548,9 @@ export default function KobunDashboard() {
           onDismiss={() => setToast(null)}
         />
       )}
+
+      {/* 音声操作ボタン（子分：経費保存フロー有効） */}
+      <VoiceButton contractorId={contractor?.id} />
     </div>
   )
 }
