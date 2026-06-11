@@ -27,5 +27,21 @@ body {
 
 @media print {
   body > * { display: none !important; }
-  #invoice-print-overlay { display: block !important; position: static !important; }
+  /* PDF帳票エリアのみ印刷対象 */
+  #pdf-print-area {
+    display: block !important;
+    position: static !important;
+    overflow: visible !important;
+    background: white !important;
+  }
+  #pdf-print-area .no-print { display: none !important; }
+  /* ページ余白・改ページ制御 */
+  @page { margin: 10mm; size: A4 portrait; }
+  .a4-page {
+    width: 100% !important;
+    min-height: 0 !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
 }

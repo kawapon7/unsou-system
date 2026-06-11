@@ -12,6 +12,7 @@ import {
   approvePaymentNotice,
   type MyPaymentNotice,
 } from '@/app/_actions/driver-actions'
+import { PaymentNoticePdfModal } from '@/components/pdf/PaymentNoticePdfModal'
 import type { Database } from '@/types/supabase'
 
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -187,13 +188,17 @@ function monthLabel(iso: string) {
 
 function PaymentNoticeCard({
   notice,
+  contractorId,
   onApprove,
 }: {
-  notice: MyPaymentNotice
-  onApprove: (id: string) => Promise<void>
+  notice:       MyPaymentNotice
+  contractorId: string
+  onApprove:    (id: string) => Promise<void>
 }) {
   const [approving, setApproving] = useState(false)
+  const [pdfOpen,   setPdfOpen]   = useState(false)
   const isApproved = notice.approvalStatus === 'approved'
+  const yearMonth  = notice.noticeMonth.slice(0, 7)  // 'YYYY-MM'
 
   async function handleApprove() {
     setApproving(true)
@@ -253,6 +258,14 @@ function PaymentNoticeCard({
         </div>
       </div>
 
+      {/* 支払明細PDFボタン */}
+      <button
+        onClick={() => setPdfOpen(true)}
+        className="w-full py-2.5 rounded-xl border border-blue-200 bg-blue-50 text-sm font-medium text-blue-700 hover:bg-blue-100 transition mb-3"
+      >
+        📄 支払明細PDF
+      </button>
+
       {/* 承認ボタン */}
       <button
         onClick={handleApprove}
@@ -275,6 +288,16 @@ function PaymentNoticeCard({
               ? '処理中...'
               : 'この金額で合ってます'}
       </button>
+
+      {/* PDF モーダル */}
+      {pdfOpen && (
+        <PaymentNoticePdfModal
+          contractorId={contractorId}
+          yearMonth={yearMonth}
+          contractorName="（自分）"
+          onClose={() => setPdfOpen(false)}
+        />
+      )}
     </div>
   )
 }
@@ -348,11 +371,11 @@ function PaymentNoticeSection({
         <div className="space-y-4">
           {/* 未承認を先に表示 */}
           {pending.map(n => (
-            <PaymentNoticeCard key={n.id} notice={n} onApprove={handleApprove} />
+            <PaymentNoticeCard key={n.id} notice={n} contractorId={contractorId} onApprove={handleApprove} />
           ))}
           {/* 承認済みは折りたたまず一覧表示（最大3件） */}
           {approved.slice(0, 3).map(n => (
-            <PaymentNoticeCard key={n.id} notice={n} onApprove={handleApprove} />
+            <PaymentNoticeCard key={n.id} notice={n} contractorId={contractorId} onApprove={handleApprove} />
           ))}
           {approved.length > 3 && (
             <p className="text-center text-xs text-zinc-400">

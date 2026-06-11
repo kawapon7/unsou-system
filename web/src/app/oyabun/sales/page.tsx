@@ -18,6 +18,8 @@ import {
   promoteSpotToOfficialProject,
   type SpotGroup,
 } from '@/app/_actions/project-actions'
+import { InvoicePdfModal }       from '@/components/pdf/InvoicePdfModal'
+import { PaymentNoticePdfModal } from '@/components/pdf/PaymentNoticePdfModal'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -558,12 +560,17 @@ function Toast({ msg, onClose }: { msg: { type: 'ok' | 'err'; text: string }; on
   )
 }
 
+type PdfTarget =
+  | { type: 'invoice';  clientId:     string; name: string }
+  | { type: 'notice';   contractorId: string; name: string }
+
 function FinalizeTab({ yearMonth }: { yearMonth: string }) {
   const [invoiceRows,   setInvoiceRows]   = useState<SalesListRow[]>([])
   const [noticeRows,    setNoticeRows]    = useState<PaymentNoticeSummaryRow[]>([])
   const [loading,       setLoading]       = useState(true)
   const [processing,    setProcessing]    = useState<string | null>(null)
   const [toast,         setToast]         = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+  const [pdfTarget,     setPdfTarget]     = useState<PdfTarget | null>(null)
   // per-row unlock UI state: key = clientId or contractorId
   const [unlockOpen,    setUnlockOpen]    = useState<Record<string, boolean>>({})
   const [unlockReasons, setUnlockReasons] = useState<Record<string, string>>({})
@@ -673,11 +680,18 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
                     <Td right muted>{yen(r.taxAmount)}</Td>
                     <Td right bold>{yen(r.totalAmount)}</Td>
                     <td className="px-4 py-3 space-y-2">
+                      {/* プレビュー・出力ボタン（常時表示） */}
+                      <button
+                        onClick={() => setPdfTarget({ type: 'invoice', clientId: r.clientId, name: r.companyName })}
+                        className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition"
+                      >
+                        📄 プレビュー・出力
+                      </button>
                       {!isLocked ? (
                         <button
                           onClick={() => handleFinalizeInvoice(r.clientId)}
                           disabled={busy}
-                          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 transition"
+                          className="block rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 transition"
                         >
                           {busy ? '処理中...' : '請求書を確定する'}
                         </button>
@@ -778,11 +792,18 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
                       </span>
                     </td>
                     <td className="px-4 py-3 space-y-2">
+                      {/* プレビュー・出力ボタン（常時表示） */}
+                      <button
+                        onClick={() => setPdfTarget({ type: 'notice', contractorId: r.contractorId, name: r.name })}
+                        className="rounded-lg border border-blue-300 bg-blue-50 px-3 py-1.5 text-xs font-medium text-blue-700 hover:bg-blue-100 transition"
+                      >
+                        📄 プレビュー・出力
+                      </button>
                       {!isLocked ? (
                         <button
                           onClick={() => handleFinalizeNotice(r.contractorId)}
                           disabled={busy}
-                          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 transition"
+                          className="block rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 transition"
                         >
                           {busy ? '処理中...' : '支払通知書を確定ロック'}
                         </button>
@@ -828,6 +849,24 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
           ※ 経過措置控除: インボイス未登録業者への支払額から差し引く金額（現在フェーズ: 2%）
         </p>
       </section>
+
+      {/* PDF モーダル */}
+      {pdfTarget?.type === 'invoice' && (
+        <InvoicePdfModal
+          clientId={pdfTarget.clientId}
+          yearMonth={yearMonth}
+          clientName={pdfTarget.name}
+          onClose={() => setPdfTarget(null)}
+        />
+      )}
+      {pdfTarget?.type === 'notice' && (
+        <PaymentNoticePdfModal
+          contractorId={pdfTarget.contractorId}
+          yearMonth={yearMonth}
+          contractorName={pdfTarget.name}
+          onClose={() => setPdfTarget(null)}
+        />
+      )}
     </div>
   )
 }
