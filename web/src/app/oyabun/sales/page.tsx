@@ -7,9 +7,12 @@ import {
   computeInvoicePreview,
   upsertInvoice,
   updateInvoiceStatus,
+  fetchPaymentNoticeSummary,
   type SalesListRow,
   type InvoicePreview,
+  type PaymentNoticeSummaryRow,
 } from './actions'
+import { finalizeInvoiceAndNotice } from '@/app/_actions/billing-actions'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -522,14 +525,317 @@ function PaymentStatusTab({ yearMonth }: { yearMonth: string }) {
   )
 }
 
+// ── 確定・ロック管理タブ ──────────────────────────────────
+
+const NOTICE_STATUS_META: Record<string, { label: string; cls: string }> = {
+  pending:  { label: '未確定',   cls: 'bg-zinc-100 text-zinc-500' },
+  approved: { label: '承認済',   cls: 'bg-blue-50 text-blue-700' },
+  locked:   { label: 'ロック済', cls: 'bg-red-50 text-red-700' },
+}
+
+const INVOICE_TYPE_LABEL: Record<string, string> = {
+  registered:   'インボイス登録済',
+  unregistered: '未登録（経過措置）',
+}
+
+function Toast({ msg, onClose }: { msg: { type: 'ok' | 'err'; text: string }; onClose: () => void }) {
+  return (
+    <div
+      className={`fixed bottom-6 right-6 z-50 flex items-start gap-3 rounded-xl px-5 py-4 shadow-lg text-sm max-w-md ${
+        msg.type === 'ok'
+          ? 'bg-green-50 border border-green-200 text-green-800'
+          : 'bg-red-50 border border-red-200 text-red-800'
+      }`}
+    >
+      <span className="flex-1">{msg.text}</span>
+      <button onClick={onClose} className="text-current opacity-50 hover:opacity-100 shrink-0">✕</button>
+    </div>
+  )
+}
+
+function FinalizeTab({ yearMonth }: { yearMonth: string }) {
+  const [invoiceRows,   setInvoiceRows]   = useState<SalesListRow[]>([])
+  const [noticeRows,    setNoticeRows]    = useState<PaymentNoticeSummaryRow[]>([])
+  const [loading,       setLoading]       = useState(true)
+  const [processing,    setProcessing]    = useState<string | null>(null)
+  const [toast,         setToast]         = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
+  // per-row unlock UI state: key = clientId or contractorId
+  const [unlockOpen,    setUnlockOpen]    = useState<Record<string, boolean>>({})
+  const [unlockReasons, setUnlockReasons] = useState<Record<string, string>>({})
+
+  const showToast = (type: 'ok' | 'err', text: string) => {
+    setToast({ type, text })
+    setTimeout(() => setToast(null), 5000)
+  }
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const [invRes, noticeRes] = await Promise.all([
+      fetchSalesList(yearMonth),
+      fetchPaymentNoticeSummary(yearMonth),
+    ])
+    if (!invRes.error)    setInvoiceRows(invRes.data ?? [])
+    if (!noticeRes.error) setNoticeRows(noticeRes.data ?? [])
+    setLoading(false)
+  }, [yearMonth])
+
+  useEffect(() => { load() }, [load])
+
+  // ── 請求書確定 ───────────────────────────────────────────
+  const handleFinalizeInvoice = async (
+    clientId: string,
+    opts?: { isDeveloperUnlock: boolean; unlockReason: string },
+  ) => {
+    setProcessing(clientId)
+    const res = await finalizeInvoiceAndNotice({
+      type:     'invoice',
+      yearMonth,
+      clientId,
+      ...opts,
+    })
+    if (res.error) {
+      showToast('err', res.error)
+    } else {
+      showToast('ok', '請求書を確定しました。')
+      setUnlockOpen(p => ({ ...p, [clientId]: false }))
+      await load()
+    }
+    setProcessing(null)
+  }
+
+  // ── 支払通知書確定ロック ─────────────────────────────────
+  const handleFinalizeNotice = async (
+    contractorId: string,
+    opts?: { isDeveloperUnlock: boolean; unlockReason: string },
+  ) => {
+    setProcessing(contractorId)
+    const res = await finalizeInvoiceAndNotice({
+      type: 'payment_notice',
+      yearMonth,
+      contractorId,
+      ...opts,
+    })
+    if (res.error) {
+      showToast('err', res.error)
+    } else {
+      showToast('ok', '支払通知書を確定ロックしました。')
+      setUnlockOpen(p => ({ ...p, [contractorId]: false }))
+      await load()
+    }
+    setProcessing(null)
+  }
+
+  if (loading) return <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
+
+  return (
+    <div className="space-y-8">
+      {toast && <Toast msg={toast} onClose={() => setToast(null)} />}
+
+      {/* ── 請求書確定セクション ─────────────────────────── */}
+      <section>
+        <h2 className="text-sm font-semibold text-zinc-700 mb-3">請求書の確定（荷主向け）</h2>
+        <div className="rounded-lg border border-zinc-200 overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-zinc-50 border-b border-zinc-200">
+              <tr>
+                <Th>荷主名</Th>
+                <Th>ステータス</Th>
+                <Th right>税抜金額</Th>
+                <Th right>消費税</Th>
+                <Th right>請求金額</Th>
+                <Th>操作</Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {invoiceRows.length === 0 && (
+                <tr>
+                  <td colSpan={6} className="px-4 py-10 text-center text-sm text-zinc-400">
+                    対象データがありません
+                  </td>
+                </tr>
+              )}
+              {invoiceRows.map(r => {
+                const isLocked = r.status === 'issued' || r.status === 'paid'
+                const isOpen   = unlockOpen[r.clientId] ?? false
+                const reason   = unlockReasons[r.clientId] ?? ''
+                const busy     = processing === r.clientId
+
+                return (
+                  <tr key={r.clientId} className="hover:bg-zinc-50">
+                    <Td bold>{r.companyName}</Td>
+                    <Td><StatusBadge status={r.status} /></Td>
+                    <Td right>{yen(r.netAmount)}</Td>
+                    <Td right muted>{yen(r.taxAmount)}</Td>
+                    <Td right bold>{yen(r.totalAmount)}</Td>
+                    <td className="px-4 py-3 space-y-2">
+                      {!isLocked ? (
+                        <button
+                          onClick={() => handleFinalizeInvoice(r.clientId)}
+                          disabled={busy}
+                          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 transition"
+                        >
+                          {busy ? '処理中...' : '請求書を確定する'}
+                        </button>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <span className="inline-block rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                            🔒 ロック済み
+                          </span>
+                          <button
+                            onClick={() => setUnlockOpen(p => ({ ...p, [r.clientId]: !isOpen }))}
+                            className="block text-xs text-zinc-400 hover:text-zinc-700 underline"
+                          >
+                            {isOpen ? '▲ 閉じる' : '▼ 強制アンロック'}
+                          </button>
+                          {isOpen && (
+                            <div className="flex items-center gap-2 mt-1">
+                              <input
+                                type="text"
+                                placeholder="アンロック理由を入力（必須）"
+                                value={reason}
+                                onChange={e => setUnlockReasons(p => ({ ...p, [r.clientId]: e.target.value }))}
+                                className="rounded-md border border-zinc-300 px-2.5 py-1.5 text-xs w-52 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+                              />
+                              <button
+                                onClick={() => handleFinalizeInvoice(r.clientId, { isDeveloperUnlock: true, unlockReason: reason })}
+                                disabled={!reason.trim() || busy}
+                                className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-40 transition whitespace-nowrap"
+                              >
+                                {busy ? '処理中...' : '強制アンロック再確定'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      {/* ── 支払通知書確定セクション ─────────────────────── */}
+      <section>
+        <h2 className="text-sm font-semibold text-zinc-700 mb-3">支払通知書の確定ロック（委託先向け）</h2>
+        <div className="rounded-lg border border-zinc-200 overflow-x-auto">
+          <table className="w-full">
+            <thead className="bg-zinc-50 border-b border-zinc-200">
+              <tr>
+                <Th>委託先名</Th>
+                <Th>インボイス区分</Th>
+                <Th right>労務報酬（税抜）</Th>
+                <Th right>立替金（税抜）</Th>
+                <Th right>経過措置控除</Th>
+                <Th right>最終支払額</Th>
+                <Th>ステータス</Th>
+                <Th>操作</Th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {noticeRows.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-zinc-400">
+                    対象データがありません
+                  </td>
+                </tr>
+              )}
+              {noticeRows.map(r => {
+                const isLocked = r.approvalStatus === 'approved' || r.locked
+                const statusKey = r.locked ? 'locked' : r.approvalStatus
+                const statusMeta = NOTICE_STATUS_META[statusKey] ?? NOTICE_STATUS_META.pending
+                const isOpen = unlockOpen[r.contractorId] ?? false
+                const reason = unlockReasons[r.contractorId] ?? ''
+                const busy   = processing === r.contractorId
+
+                return (
+                  <tr key={r.contractorId} className="hover:bg-zinc-50">
+                    <Td bold>{r.name}</Td>
+                    <Td>
+                      <span className="text-xs text-zinc-500">
+                        {INVOICE_TYPE_LABEL[r.invoiceType] ?? r.invoiceType}
+                      </span>
+                    </Td>
+                    <Td right>{yen(r.laborNet)}</Td>
+                    <Td right muted>{yen(r.expenseNet)}</Td>
+                    <Td right>
+                      {r.deduction > 0 ? (
+                        <span className="text-amber-700">▲{yen(r.deduction)}</span>
+                      ) : (
+                        <span className="text-zinc-300">—</span>
+                      )}
+                    </Td>
+                    <Td right bold>{yen(r.totalAmount)}</Td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${statusMeta.cls}`}>
+                        {statusMeta.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 space-y-2">
+                      {!isLocked ? (
+                        <button
+                          onClick={() => handleFinalizeNotice(r.contractorId)}
+                          disabled={busy}
+                          className="rounded-lg bg-zinc-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-50 transition"
+                        >
+                          {busy ? '処理中...' : '支払通知書を確定ロック'}
+                        </button>
+                      ) : (
+                        <div className="space-y-1.5">
+                          <span className="inline-block rounded-full bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                            🔒 ロック済み
+                          </span>
+                          <button
+                            onClick={() => setUnlockOpen(p => ({ ...p, [r.contractorId]: !isOpen }))}
+                            className="block text-xs text-zinc-400 hover:text-zinc-700 underline"
+                          >
+                            {isOpen ? '▲ 閉じる' : '▼ 強制アンロック'}
+                          </button>
+                          {isOpen && (
+                            <div className="flex items-center gap-2 mt-1">
+                              <input
+                                type="text"
+                                placeholder="アンロック理由を入力（必須）"
+                                value={reason}
+                                onChange={e => setUnlockReasons(p => ({ ...p, [r.contractorId]: e.target.value }))}
+                                className="rounded-md border border-zinc-300 px-2.5 py-1.5 text-xs w-52 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+                              />
+                              <button
+                                onClick={() => handleFinalizeNotice(r.contractorId, { isDeveloperUnlock: true, unlockReason: reason })}
+                                disabled={!reason.trim() || busy}
+                                className="rounded-lg bg-red-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-500 disabled:opacity-40 transition whitespace-nowrap"
+                              >
+                                {busy ? '処理中...' : '強制アンロック再確定'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+        <p className="mt-2 text-xs text-zinc-400">
+          ※ 経過措置控除: インボイス未登録業者への支払額から差し引く金額（現在フェーズ: 2%）
+        </p>
+      </section>
+    </div>
+  )
+}
+
 // ── メインページ ──────────────────────────────────────────
 
-type Tab = 'list' | 'generate' | 'payment'
+type Tab = 'list' | 'generate' | 'payment' | 'finalize'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'list',     label: '① 売上一覧' },
   { key: 'generate', label: '② 請求書生成' },
   { key: 'payment',  label: '③ 入金管理' },
+  { key: 'finalize', label: '④ 確定・ロック' },
 ]
 
 export default function SalesPage() {
@@ -571,9 +877,10 @@ export default function SalesPage() {
           ))}
         </div>
 
-        {tab === 'list'     && <SalesListTab     yearMonth={yearMonth} />}
-        {tab === 'generate' && <InvoiceGenerateTab yearMonth={yearMonth} />}
-        {tab === 'payment'  && <PaymentStatusTab  yearMonth={yearMonth} />}
+        {tab === 'list'     && <SalesListTab       yearMonth={yearMonth} />}
+        {tab === 'generate' && <InvoiceGenerateTab  yearMonth={yearMonth} />}
+        {tab === 'payment'  && <PaymentStatusTab    yearMonth={yearMonth} />}
+        {tab === 'finalize' && <FinalizeTab         yearMonth={yearMonth} />}
       </div>
     </div>
   )

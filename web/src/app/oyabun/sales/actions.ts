@@ -374,3 +374,146 @@ export async function fetchClientOptions(): Promise<
   if (error) return { data: null, error: error.message }
   return { data: data ?? [], error: null }
 }
+
+// ── 確定・ロック管理用：支払通知書サマリー ──────────────────
+
+export type PaymentNoticeSummaryRow = {
+  contractorId:    string
+  name:            string
+  invoiceType:     string
+  laborNet:        number
+  laborTax:        number
+  expenseNet:      number
+  expenseTax:      number
+  deductionRate:   number
+  deduction:       number
+  totalAmount:     number
+  // 既存 payment_notice
+  noticeId:        string | null
+  approvalStatus:  string   // 'pending' | 'approved'
+  locked:          boolean
+}
+
+export async function fetchPaymentNoticeSummary(
+  yearMonth: string,
+): Promise<ActionResult<PaymentNoticeSummaryRow[]>> {
+  const supabase = createServiceClient()
+
+  const [y, m] = yearMonth.split('-').map(Number)
+  const from = `${yearMonth}-01`
+  const to   = new Date(y, m, 0).toISOString().slice(0, 10)
+  const noticeMonth = `${yearMonth}-01`
+
+  const [contractorsRes, workRes, expenseRes, noticesRes] = await Promise.all([
+    supabase
+      .from('contractors')
+      .select('id, name, invoice_registration_type, tax_type')
+      .order('name'),
+    supabase
+      .from('work_records')
+      .select('contractor_id, tax_excluded_payment')
+      .gte('work_date', from)
+      .lte('work_date', to),
+    supabase
+      .from('expense_records')
+      .select('contractor_id, amount_tax_excluded, tax_category')
+      .gte('expense_date', from)
+      .lte('expense_date', to),
+    supabase
+      .from('payment_notices')
+      .select('id, contractor_id, approval_status, locked, labor_tax_excluded, labor_tax, expense_tax_excluded, expense_tax, deduction_rate, deduction, total_amount')
+      .eq('notice_month', noticeMonth),
+  ])
+
+  if (contractorsRes.error) return { data: null, error: contractorsRes.error.message }
+
+  const noticeMap = new Map(
+    (noticesRes.data ?? []).map(n => [n.contractor_id, n]),
+  )
+
+  // 稼働・経費の税抜き合計を contractor ごとに集計
+  type WorkAccum  = { laborNet: number }
+  type ExpAccum   = { expNetTaxable: number; expNetExempt: number }
+  const workMap   = new Map<string, WorkAccum>()
+  const expMap    = new Map<string, ExpAccum>()
+
+  for (const r of workRes.data ?? []) {
+    const acc = workMap.get(r.contractor_id) ?? { laborNet: 0 }
+    acc.laborNet += r.tax_excluded_payment
+    workMap.set(r.contractor_id, acc)
+  }
+  for (const r of expenseRes.data ?? []) {
+    const acc = expMap.get(r.contractor_id) ?? { expNetTaxable: 0, expNetExempt: 0 }
+    if ((r as { tax_category: string }).tax_category === 'taxable_10') {
+      acc.expNetTaxable += r.amount_tax_excluded
+    } else {
+      acc.expNetExempt  += r.amount_tax_excluded
+    }
+    expMap.set(r.contractor_id, acc)
+  }
+
+  const { getTransitionDeductionRate } = await import('@/lib/invoice')
+  const targetDate = new Date(y, m, 0) // 月末
+
+  const rows: PaymentNoticeSummaryRow[] = []
+
+  for (const contractor of contractorsRes.data ?? []) {
+    const work = workMap.get(contractor.id)
+    const exp  = expMap.get(contractor.id)
+    if (!work && !exp) continue  // この月の稼働・経費なし → 表示しない
+
+    const existing = noticeMap.get(contractor.id)
+    if (existing) {
+      // 既存 notice の保存値をそのまま表示
+      rows.push({
+        contractorId:  contractor.id,
+        name:          contractor.name,
+        invoiceType:   contractor.invoice_registration_type,
+        laborNet:      existing.labor_tax_excluded,
+        laborTax:      existing.labor_tax,
+        expenseNet:    existing.expense_tax_excluded,
+        expenseTax:    existing.expense_tax,
+        deductionRate: Number(existing.deduction_rate),
+        deduction:     existing.deduction,
+        totalAmount:   existing.total_amount,
+        noticeId:      existing.id,
+        approvalStatus: existing.approval_status,
+        locked:        existing.locked,
+      })
+      continue
+    }
+
+    // 未確定 → ライブ計算で表示
+    const isRegistered  = contractor.invoice_registration_type === 'registered'
+    const isLaborTaxable = (contractor.tax_type ?? 'exclusive') !== 'exempt'
+    const deductionRate = getTransitionDeductionRate(targetDate)
+
+    const laborNet  = work?.laborNet ?? 0
+    const laborTax  = isLaborTaxable ? Math.round(laborNet * 0.1) : 0
+    const expNetTax = exp?.expNetTaxable ?? 0
+    const expNetExm = exp?.expNetExempt  ?? 0
+    const expTax    = Math.round(expNetTax * 0.1)
+
+    const totalWithTax = laborNet + laborTax + expNetTax + expNetExm + expTax
+    const deduction = isRegistered ? 0 : Math.round(totalWithTax * deductionRate)
+    const totalAmount = totalWithTax - deduction
+
+    rows.push({
+      contractorId:  contractor.id,
+      name:          contractor.name,
+      invoiceType:   contractor.invoice_registration_type,
+      laborNet,
+      laborTax,
+      expenseNet:    expNetTax + expNetExm,
+      expenseTax:    expTax,
+      deductionRate: isRegistered ? 0 : deductionRate,
+      deduction,
+      totalAmount,
+      noticeId:      null,
+      approvalStatus: 'pending',
+      locked:        false,
+    })
+  }
+
+  return { data: rows, error: null }
+}
