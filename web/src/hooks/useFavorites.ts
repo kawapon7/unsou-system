@@ -26,7 +26,8 @@ function getSnapshot(): Favorite[] {
   return _lastParsed
 }
 
-const getServerSnapshot = (): Favorite[] => []
+const EMPTY: Favorite[] = []
+const getServerSnapshot = (): Favorite[] => EMPTY
 
 function subscribe(callback: () => void): () => void {
   window.addEventListener(CHANGE_EVENT, callback)
