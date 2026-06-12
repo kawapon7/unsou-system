@@ -206,7 +206,11 @@ function FavoritesSection({ onNavClick }: { onNavClick?: () => void }) {
             <span className="truncate">{fav.label}</span>
           </Link>
           <button
-            onClick={() => remove(fav.id)}
+            onClick={() => {
+              if (window.confirm(`「${fav.label}」をお気に入りから削除しますか？`)) {
+                remove(fav.id)
+              }
+            }}
             aria-label={`${fav.label} をショートカットから削除`}
             className="pr-3 text-zinc-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all text-xs shrink-0"
           >
