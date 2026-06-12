@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, Suspense } from 'react'
 import Link from 'next/link'
-import { usePathname } from 'next/navigation'
+import { usePathname, useSearchParams } from 'next/navigation'
 import { handleLogout } from '@/app/auth/actions'
 import { useFavorites } from '@/hooks/useFavorites'
 
@@ -46,6 +46,95 @@ const NAV_ITEMS = [
     ),
   },
 ] as const
+
+// ── ページラベル定義（星ボタン用） ───────────────────────
+// 新しいメニューを追加したら、ここに1行足すだけで自動対応
+
+type PageDef = {
+  label:    string
+  paramKey?: string
+  tabs?:    Record<string, string>
+}
+
+const PAGE_DEFS: Record<string, PageDef> = {
+  '/oyabun/projects': {
+    label:    '案件・配車管理',
+    paramKey: 'status',
+    tabs: {
+      accepted:   '受託',
+      dispatched: '配車済',
+      in_transit: '運行中',
+      completed:  '完了',
+      cancelled:  'キャンセル',
+    },
+  },
+  '/oyabun/sales': {
+    label:    '売上管理',
+    paramKey: 'tab',
+    tabs: {
+      list:     '① 売上一覧',
+      generate: '② 請求書生成',
+      payment:  '③ 入金管理',
+      finalize: '④ 確定・ロック',
+      spot:     '⑤ スポット昇格',
+      scan:     '⑥ AIスキャン入力',
+    },
+  },
+  '/oyabun/partners': {
+    label:    '取引先マスタ',
+    paramKey: 'tab',
+    tabs: {
+      clients:     '荷主マスタ',
+      contractors: '委託先マスタ',
+    },
+  },
+  '/oyabun/billing': {
+    label:    '請求・支払管理',
+    paramKey: 'tab',
+    tabs: {
+      billing: '荷主向け請求管理',
+      payment: '委託先向け支払管理',
+    },
+  },
+}
+
+// ── 星ボタン（useSearchParams を使うので Suspense で包む） ─
+
+function StarButtonInner() {
+  const pathname     = usePathname()
+  const searchParams = useSearchParams()
+  const { isFav, toggle } = useFavorites()
+
+  const def = PAGE_DEFS[pathname]
+  if (!def) return null
+
+  const paramVal = def.paramKey ? (searchParams.get(def.paramKey) ?? null) : null
+  const tabLabel = paramVal && def.tabs ? (def.tabs[paramVal] ?? null) : null
+  const label    = tabLabel ? `${def.label}（${tabLabel}）` : def.label
+  const url      = paramVal && def.paramKey
+    ? `${pathname}?${def.paramKey}=${paramVal}`
+    : pathname
+  const starred  = isFav(url)
+
+  return (
+    <button
+      onClick={() => toggle({ id: url, label, url })}
+      aria-label={starred ? 'ショートカットから削除' : 'ショートカットに追加'}
+      title={starred ? `「${label}」をショートカットから削除` : `「${label}」をサイドバーにピン留め`}
+      className="text-lg leading-none transition-transform duration-150 hover:scale-125 active:scale-95 select-none"
+    >
+      {starred ? '⭐' : '☆'}
+    </button>
+  )
+}
+
+function StarButton() {
+  return (
+    <Suspense fallback={<span className="inline-block w-6" />}>
+      <StarButtonInner />
+    </Suspense>
+  )
+}
 
 // ── NavLink ───────────────────────────────────────────────
 
@@ -143,9 +232,10 @@ function SidebarContent({
 }) {
   return (
     <div className="flex h-full flex-col">
-      {/* ロゴ */}
-      <div className="px-4 py-5 border-b border-zinc-100">
+      {/* ロゴ + 星ボタン（デスクトップ） */}
+      <div className="flex items-center justify-between px-4 py-5 border-b border-zinc-100">
         <Logo />
+        <StarButton />
       </div>
 
       {/* ナビゲーション */}
@@ -230,7 +320,7 @@ export default function OyabunShell({
       {/* ── メインエリア ───────────────────────────────── */}
       <div className="flex flex-1 flex-col min-w-0 overflow-hidden">
 
-        {/* モバイル ヘッダー */}
+        {/* モバイル ヘッダー（星ボタン含む） */}
         <header className="lg:hidden flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3">
           <button
             onClick={() => setDrawerOpen(true)}
@@ -242,11 +332,14 @@ export default function OyabunShell({
             </svg>
           </button>
           <Logo />
-          <form action={handleLogout}>
-            <button type="submit" className="text-xs text-zinc-500 hover:text-zinc-900 transition">
-              ログアウト
-            </button>
-          </form>
+          <div className="flex items-center gap-3">
+            <StarButton />
+            <form action={handleLogout}>
+              <button type="submit" className="text-xs text-zinc-500 hover:text-zinc-900 transition">
+                ログアウト
+              </button>
+            </form>
+          </div>
         </header>
 
         {/* ページコンテンツ */}

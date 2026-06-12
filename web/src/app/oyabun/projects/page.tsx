@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import {
   fetchProjects,
   fetchClientOptions,
@@ -239,7 +240,14 @@ export default function ProjectsPage() {
   const [form, setForm]               = useState<ProjectForm>(defaultForm())
   const [saving, setSaving]           = useState(false)
   const [formError, setFormError]     = useState<string | null>(null)
-  const [filterStatus, setFilterStatus] = useState<string>('all')
+  const searchParams    = useSearchParams()
+  const router          = useRouter()
+  const pathname        = usePathname()
+  const filterStatus    = searchParams.get('status') ?? 'all'
+  const setFilterStatus = (s: string) => {
+    if (s === 'all') router.replace(pathname)
+    else router.replace(`${pathname}?status=${s}`)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)

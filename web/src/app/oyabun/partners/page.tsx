@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import {
   fetchClients,
   fetchContractors,
@@ -743,7 +744,11 @@ function ContractorsTab() {
 type Tab = 'clients' | 'contractors'
 
 export default function PartnersPage() {
-  const [tab, setTab] = useState<Tab>('clients')
+  const searchParams = useSearchParams()
+  const router       = useRouter()
+  const pathname     = usePathname()
+  const tab          = (searchParams.get('tab') as Tab | null) ?? 'clients'
+  const setTab       = (t: Tab) => router.replace(`${pathname}?tab=${t}`)
 
   return (
     <div className="min-h-screen bg-zinc-50">

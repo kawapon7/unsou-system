@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import {
   fetchBillingByClient,
   fetchPaymentByContractor,
@@ -275,7 +276,11 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
 type Tab = 'billing' | 'payment'
 
 export default function BillingPage() {
-  const [tab, setTab]           = useState<Tab>('billing')
+  const searchParams = useSearchParams()
+  const router       = useRouter()
+  const pathname     = usePathname()
+  const tab          = (searchParams.get('tab') as Tab | null) ?? 'billing'
+  const setTab       = (t: Tab) => router.replace(`${pathname}?tab=${t}`)
   const [yearMonth, setYearMonth] = useState(currentYearMonth)
 
   return (
