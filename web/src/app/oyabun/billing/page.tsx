@@ -6,11 +6,14 @@ import {
   fetchBillingByClient,
   fetchPaymentByContractor,
   fetchExpensesForApproval,
+  fetchPaymentNoticeStatuses,
+  generatePaymentNotice,
+  generateAllPaymentNotices,
   approveExpense,
   rejectExpense,
-  EXPENSE_TYPE_LABEL,
   type BillingRow,
   type PaymentRow,
+  type PaymentNoticeStatus,
   type ExpenseApprovalRow,
 } from './actions'
 
@@ -21,6 +24,13 @@ const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
 function currentYearMonth() {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+const EXPENSE_TYPE_LABEL: Record<string, string> = {
+  toll:    '高速道路料金',
+  parking: '駐車場代',
+  fuel:    '燃料費',
+  other:   'その他',
 }
 
 const TAX_LABEL: Record<string, string> = {
@@ -160,29 +170,86 @@ function BillingTab({ yearMonth }: { yearMonth: string }) {
 
 // ── 委託先支払タブ ────────────────────────────────────────
 
+const NOTICE_STYLE: Record<string, { label: string; cls: string }> = {
+  pending:  { label: '承認待ち', cls: 'bg-amber-100 text-amber-700' },
+  approved: { label: '承認済',   cls: 'bg-emerald-100 text-emerald-700' },
+  rejected: { label: '却下',     cls: 'bg-rose-100 text-rose-600' },
+}
+
 function PaymentTab({ yearMonth }: { yearMonth: string }) {
-  const [rows, setRows]       = useState<PaymentRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError]     = useState<string | null>(null)
+  const [rows,    setRows]    = useState<PaymentRow[]>([])
+  const [statuses, setStatuses] = useState<Map<string, PaymentNoticeStatus>>(new Map())
+  const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState<string | null>(null)
+  const [generating, setGenerating] = useState<string | null>(null) // contractorId or 'all'
+  const [message,  setMessage]  = useState<{ text: string; ok: boolean } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const res = await fetchPaymentByContractor(yearMonth)
-    if (res.error) setError(res.error)
-    else setRows(res.data ?? [])
+    const [payRes, stRes] = await Promise.all([
+      fetchPaymentByContractor(yearMonth),
+      fetchPaymentNoticeStatuses(yearMonth),
+    ])
+    if (payRes.error) { setError(payRes.error); setLoading(false); return }
+    setRows(payRes.data ?? [])
+    const map = new Map<string, PaymentNoticeStatus>()
+    for (const s of stRes.data ?? []) map.set(s.contractorId, s)
+    setStatuses(map)
     setLoading(false)
   }, [yearMonth])
 
   useEffect(() => { load() }, [load])
 
+  async function handleGenerate(contractorId: string) {
+    setGenerating(contractorId)
+    setMessage(null)
+    const res = await generatePaymentNotice(contractorId, yearMonth)
+    if (res.error) {
+      setMessage({ text: res.error, ok: false })
+    } else if (res.data) {
+      setMessage({ text: '支払通知書を生成しました', ok: true })
+      const { id, totalAmount } = res.data
+      setStatuses(prev => {
+        const next = new Map(prev)
+        next.set(contractorId, {
+          contractorId,
+          noticeId:       id,
+          approvalStatus: 'pending',
+          locked:         false,
+          totalAmount,
+        })
+        return next
+      })
+    }
+    setGenerating(null)
+  }
+
+  async function handleGenerateAll() {
+    setGenerating('all')
+    setMessage(null)
+    const res = await generateAllPaymentNotices(yearMonth)
+    if (res.error) {
+      setMessage({ text: res.error, ok: false })
+    } else if (res.data) {
+      const { generated, errors } = res.data
+      if (errors.length > 0) {
+        setMessage({ text: `${generated} 件生成（${errors.length} 件エラー: ${errors[0]}）`, ok: false })
+      } else {
+        setMessage({ text: `${generated} 件の支払通知書を生成しました`, ok: true })
+      }
+      await load()
+    }
+    setGenerating(null)
+  }
+
   const totals = rows.reduce(
     (acc, r) => ({
-      buy:        acc.buy        + r.buyAmountNet,
-      tax:        acc.tax        + r.taxAmount,
+      buy:         acc.buy         + r.buyAmountNet,
+      tax:         acc.tax         + r.taxAmount,
       withholding: acc.withholding + r.withholdingTax,
-      net:        acc.net        + r.netPayment,
-      count:      acc.count      + r.projectCount,
+      net:         acc.net         + r.netPayment,
+      count:       acc.count       + r.projectCount,
     }),
     { buy: 0, tax: 0, withholding: 0, net: 0, count: 0 },
   )
@@ -190,15 +257,42 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
   if (loading) return <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
   if (error)   return <p className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</p>
 
+  const generatedCount = statuses.size
+  const allBulkGenerating = generating === 'all'
+
   return (
     <div>
-      {/* サマリー */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <SummaryCard label="支払先数"         value={`${rows.length} 名`}    sub={`案件 ${totals.count} 件`} />
-        <SummaryCard label="支払運賃合計（税抜）" value={yen(totals.buy)}   />
-        <SummaryCard label="源泉徴収合計"     value={yen(totals.withholding)} />
-        <SummaryCard label="差引支払合計"     value={yen(totals.net)}         />
+      {/* サマリー + 一括生成ボタン */}
+      <div className="flex flex-wrap items-start justify-between gap-4 mb-6">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 flex-1 min-w-0">
+          <SummaryCard label="支払先数"            value={`${rows.length} 名`}      sub={`案件 ${totals.count} 件`} />
+          <SummaryCard label="支払運賃合計（税抜）" value={yen(totals.buy)}          />
+          <SummaryCard label="源泉徴収合計"        value={yen(totals.withholding)}  />
+          <SummaryCard label="差引支払合計"        value={yen(totals.net)}          />
+        </div>
+
+        {rows.length > 0 && (
+          <div className="flex flex-col items-end gap-2 shrink-0">
+            <button
+              onClick={handleGenerateAll}
+              disabled={allBulkGenerating || generating !== null}
+              className="rounded-lg bg-zinc-900 hover:bg-zinc-700 px-4 py-2 text-sm font-medium text-white transition disabled:opacity-50 whitespace-nowrap"
+            >
+              {allBulkGenerating ? '生成中...' : '全員分を一括生成'}
+            </button>
+            {generatedCount > 0 && (
+              <p className="text-xs text-zinc-500">{generatedCount} / {rows.length} 件生成済み</p>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* メッセージ */}
+      {message && (
+        <div className={`mb-4 rounded-lg px-4 py-2.5 text-sm ${message.ok ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-600'}`}>
+          {message.text}
+        </div>
+      )}
 
       {rows.length === 0 ? (
         <div className="py-16 text-center text-sm text-zinc-400">対象データがありません</div>
@@ -209,51 +303,72 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
               <tr>
                 <Th>委託先</Th>
                 <Th>インボイス区分</Th>
-                <Th>登録番号</Th>
                 <Th>消費税</Th>
                 <Th right>案件数</Th>
                 <Th right>支払運賃（税抜）</Th>
                 <Th right>消費税額</Th>
                 <Th right>源泉徴収額</Th>
                 <Th right>差引支払額</Th>
-                <Th right>支払サイト</Th>
+                <Th>通知書</Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {rows.map(r => (
-                <tr key={r.contractorId} className="hover:bg-zinc-50">
-                  <Td bold>{r.name}</Td>
-                  <Td>
-                    {r.invoiceType === '適格'
-                      ? <span className="rounded-full bg-blue-50 text-blue-700 px-2 py-0.5 text-xs">適格事業者</span>
-                      : <span className="rounded-full bg-zinc-100 text-zinc-500 px-2 py-0.5 text-xs">免税事業者</span>}
-                  </Td>
-                  <Td>
-                    {r.invoiceNumber
-                      ? <span className="font-mono text-xs text-zinc-600">{r.invoiceNumber}</span>
-                      : <span className="text-zinc-400 text-xs">—</span>}
-                  </Td>
-                  <Td>
-                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
-                      {TAX_LABEL[r.taxType] ?? r.taxType}
-                    </span>
-                  </Td>
-                  <Td right>{r.projectCount}</Td>
-                  <Td right>{yen(r.buyAmountNet)}</Td>
-                  <Td right muted={r.taxType === 'exempt'}>{yen(r.taxAmount)}</Td>
-                  <Td right muted={!r.withholdingTaxFlag}>
-                    {r.withholdingTaxFlag
-                      ? <span className="text-red-600">{yen(r.withholdingTax)}</span>
-                      : '—'}
-                  </Td>
-                  <Td right bold>{yen(r.netPayment)}</Td>
-                  <Td right muted>{r.paymentSite}日後</Td>
-                </tr>
-              ))}
+              {rows.map(r => {
+                const st       = statuses.get(r.contractorId)
+                const isLocked = st?.locked ?? false
+                const isBusy   = generating === r.contractorId || allBulkGenerating
+                const nStyle   = st ? (NOTICE_STYLE[st.approvalStatus] ?? NOTICE_STYLE.pending) : null
+
+                return (
+                  <tr key={r.contractorId} className="hover:bg-zinc-50">
+                    <Td bold>{r.name}</Td>
+                    <Td>
+                      {r.invoiceType === '適格'
+                        ? <span className="rounded-full bg-blue-50 text-blue-700 px-2 py-0.5 text-xs">適格事業者</span>
+                        : <span className="rounded-full bg-zinc-100 text-zinc-500 px-2 py-0.5 text-xs">免税事業者</span>}
+                    </Td>
+                    <Td>
+                      <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
+                        {TAX_LABEL[r.taxType] ?? r.taxType}
+                      </span>
+                    </Td>
+                    <Td right>{r.projectCount}</Td>
+                    <Td right>{yen(r.buyAmountNet)}</Td>
+                    <Td right muted={r.taxType === 'exempt'}>{yen(r.taxAmount)}</Td>
+                    <Td right muted={!r.withholdingTaxFlag}>
+                      {r.withholdingTaxFlag
+                        ? <span className="text-red-600">{yen(r.withholdingTax)}</span>
+                        : '—'}
+                    </Td>
+                    <Td right bold>{yen(r.netPayment)}</Td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-col items-start gap-1.5 min-w-[100px]">
+                        {st && nStyle && (
+                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${nStyle.cls}`}>
+                            {isLocked && <span>🔒</span>}
+                            {nStyle.label}
+                          </span>
+                        )}
+                        {isLocked ? (
+                          <span className="text-xs text-zinc-400">ロック中</span>
+                        ) : (
+                          <button
+                            onClick={() => handleGenerate(r.contractorId)}
+                            disabled={isBusy}
+                            className="rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 transition whitespace-nowrap"
+                          >
+                            {isBusy ? '生成中...' : st ? '再生成' : '生成'}
+                          </button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
             <tfoot className="border-t-2 border-zinc-200 bg-zinc-50">
               <tr>
-                <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-zinc-500">合計</td>
+                <td colSpan={3} className="px-4 py-3 text-xs font-semibold text-zinc-500">合計</td>
                 <Td right bold>{totals.count}</Td>
                 <Td right bold>{yen(totals.buy)}</Td>
                 <Td right bold>{yen(totals.tax)}</Td>
@@ -268,9 +383,8 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
         </div>
       )}
 
-      {/* 源泉徴収注記 */}
       <p className="mt-3 text-xs text-zinc-400">
-        ※ 源泉徴収税額は支払運賃の 10.21%（2026年税制準拠）。1円未満切り捨て。
+        ※ 源泉徴収税額は支払運賃の 10.21%（2026年税制準拠）。経過措置控除は免税事業者への支払運賃消費税に適用。
       </p>
     </div>
   )

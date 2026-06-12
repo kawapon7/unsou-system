@@ -273,15 +273,6 @@ export type ExpenseApprovalRow = {
   approvalStatus: string
 }
 
-const EXPENSE_TYPE_LABEL: Record<string, string> = {
-  toll:    '高速道路料金',
-  parking: '駐車場代',
-  fuel:    '燃料費',
-  other:   'その他',
-}
-
-export { EXPENSE_TYPE_LABEL }
-
 export async function fetchExpensesForApproval(
   yearMonth: string,
 ): Promise<ActionResult<ExpenseApprovalRow[]>> {
@@ -340,4 +331,175 @@ export async function rejectExpense(
     .single()
   if (error) return { data: null, error: error.message }
   return { data: { id: data.id }, error: null }
+}
+
+// ── 支払通知書生成 ────────────────────────────────────────
+
+/** インボイス制度経過措置控除率 */
+function calcDeductionRate(invoiceType: string, yearMonth: string): number {
+  if (invoiceType === '適格') return 0
+  const [y, m] = yearMonth.split('-').map(Number)
+  const ym = y * 100 + m
+  if (ym >= 202310 && ym <= 202609) return 0.2
+  if (ym >= 202610 && ym <= 202909) return 0.5
+  return 0
+}
+
+export type PaymentNoticeStatus = {
+  contractorId:   string
+  noticeId:       string
+  approvalStatus: string
+  locked:         boolean
+  totalAmount:    number
+}
+
+/** 対象月の既存支払通知書ステータス一覧 */
+export async function fetchPaymentNoticeStatuses(
+  yearMonth: string,
+): Promise<ActionResult<PaymentNoticeStatus[]>> {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('payment_notices')
+    .select('id, contractor_id, approval_status, locked, total_amount')
+    .eq('notice_month', `${yearMonth}-01`)
+
+  if (error) return { data: null, error: error.message }
+
+  return {
+    data: (data ?? []).map((r: any) => ({
+      contractorId:   r.contractor_id,
+      noticeId:       r.id,
+      approvalStatus: r.approval_status,
+      locked:         r.locked,
+      totalAmount:    r.total_amount,
+    })),
+    error: null,
+  }
+}
+
+/** 委託先1件分の支払通知書を生成（UPSERT） */
+export async function generatePaymentNotice(
+  contractorId: string,
+  yearMonth: string,
+): Promise<ActionResult<{ id: string; totalAmount: number }>> {
+  const supabase = createServiceClient()
+  const { from, to } = monthRange(yearMonth)
+  const fromStr     = from.toISOString().slice(0, 10)
+  const toStr       = to.toISOString().slice(0, 10)
+  const noticeMonth = `${yearMonth}-01`
+
+  // ロック済みは再生成不可
+  const { data: existing } = await supabase
+    .from('payment_notices')
+    .select('locked')
+    .eq('contractor_id', contractorId)
+    .eq('notice_month', noticeMonth)
+    .maybeSingle()
+
+  if (existing?.locked) {
+    return { data: null, error: 'この支払通知書はロック済みのため再生成できません' }
+  }
+
+  // 委託先マスタ
+  const { data: c, error: cErr } = await supabase
+    .from('contractors')
+    .select('tax_category, invoice_registration_type, has_withholding')
+    .eq('id', contractorId)
+    .single()
+  if (cErr || !c) return { data: null, error: cErr?.message ?? '委託先が見つかりません' }
+  const contractor = c as any
+
+  // 稼働記録から労務報酬を集計
+  const { data: workData, error: wErr } = await supabase
+    .from('work_records')
+    .select('projects(price_rules(buying_price))')
+    .eq('contractor_id', contractorId)
+    .gte('work_date', fromStr)
+    .lte('work_date', toStr)
+  if (wErr) return { data: null, error: wErr.message }
+
+  let laborTaxExcluded = 0
+  for (const w of (workData ?? []) as any[]) {
+    laborTaxExcluded += w.projects?.price_rules?.[0]?.buying_price ?? 0
+  }
+  const laborTax = calcTax(laborTaxExcluded, contractor.tax_category)
+
+  // 承認済み立替金を集計
+  const { data: expData, error: eErr } = await supabase
+    .from('expense_records')
+    .select('amount_actual, amount_tax_excluded')
+    .eq('contractor_id', contractorId)
+    .eq('approval_status', 'approved')
+    .gte('expense_date', fromStr)
+    .lte('expense_date', toStr)
+  if (eErr) return { data: null, error: eErr.message }
+
+  let expenseTaxExcluded = 0
+  let expenseTax = 0
+  for (const e of (expData ?? []) as any[]) {
+    expenseTaxExcluded += e.amount_tax_excluded ?? 0
+    expenseTax         += (e.amount_actual ?? 0) - (e.amount_tax_excluded ?? 0)
+  }
+
+  // 経過措置控除
+  const deductionRate = calcDeductionRate(contractor.invoice_registration_type, yearMonth)
+  const deduction     = Math.floor(laborTax * deductionRate)
+
+  // 差引支払額
+  const totalAmount = laborTaxExcluded + laborTax - deduction + expenseTaxExcluded + expenseTax
+
+  const { data: upserted, error: uErr } = await supabase
+    .from('payment_notices')
+    .upsert(
+      {
+        contractor_id:        contractorId,
+        notice_month:         noticeMonth,
+        labor_tax_excluded:   laborTaxExcluded,
+        labor_tax:            laborTax,
+        deduction_rate:       deductionRate,
+        deduction:            deduction,
+        expense_tax_excluded: expenseTaxExcluded,
+        expense_tax:          expenseTax,
+        total_amount:         totalAmount,
+        approval_status:      'pending',
+      },
+      { onConflict: 'contractor_id,notice_month' },
+    )
+    .select('id')
+    .single()
+
+  if (uErr) return { data: null, error: uErr.message }
+  return { data: { id: upserted.id, totalAmount }, error: null }
+}
+
+/** 対象月の全委託先分を一括生成 */
+export async function generateAllPaymentNotices(
+  yearMonth: string,
+): Promise<ActionResult<{ generated: number; errors: string[] }>> {
+  const supabase = createServiceClient()
+  const { from, to } = monthRange(yearMonth)
+
+  const { data: workRows, error: wErr } = await supabase
+    .from('work_records')
+    .select('contractor_id')
+    .gte('work_date', from.toISOString().slice(0, 10))
+    .lte('work_date', to.toISOString().slice(0, 10))
+    .not('contractor_id', 'is', null)
+  if (wErr) return { data: null, error: wErr.message }
+
+  const ids = [...new Set((workRows ?? []).map((r: any) => r.contractor_id as string))]
+
+  const results = await Promise.allSettled(
+    ids.map(id => generatePaymentNotice(id, yearMonth)),
+  )
+
+  let generated = 0
+  const errors: string[] = []
+  for (const r of results) {
+    if (r.status === 'fulfilled' && !r.value.error) generated++
+    else if (r.status === 'fulfilled' && r.value.error) errors.push(r.value.error)
+    else if (r.status === 'rejected') errors.push(String(r.reason))
+  }
+
+  return { data: { generated, errors }, error: null }
 }
