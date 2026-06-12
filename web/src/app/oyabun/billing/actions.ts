@@ -259,3 +259,85 @@ export async function fetchPaymentByContractor(
 
   return { data: result, error: null }
 }
+
+// ── 立替金承認管理 ────────────────────────────────────────
+
+export type ExpenseApprovalRow = {
+  id:             string
+  contractorId:   string
+  contractorName: string
+  expenseDate:    string
+  expenseType:    string
+  amountActual:   number
+  remarks:        string | null
+  approvalStatus: string
+}
+
+const EXPENSE_TYPE_LABEL: Record<string, string> = {
+  toll:    '高速道路料金',
+  parking: '駐車場代',
+  fuel:    '燃料費',
+  other:   'その他',
+}
+
+export { EXPENSE_TYPE_LABEL }
+
+export async function fetchExpensesForApproval(
+  yearMonth: string,
+): Promise<ActionResult<ExpenseApprovalRow[]>> {
+  const supabase = createServiceClient()
+  const [y, m] = yearMonth.split('-').map(Number)
+  const from = `${yearMonth}-01`
+  const to   = new Date(y, m, 0).toISOString().slice(0, 10)
+
+  const { data, error } = await supabase
+    .from('expense_records')
+    .select('id, contractor_id, expense_date, expense_type, amount_actual, remarks, approval_status, contractors(name)')
+    .gte('expense_date', from)
+    .lte('expense_date', to)
+    .order('expense_date', { ascending: false })
+
+  if (error) return { data: null, error: error.message }
+
+  return {
+    data: (data ?? []).map((r: any) => ({
+      id:             r.id,
+      contractorId:   r.contractor_id,
+      contractorName: r.contractors?.name ?? '—',
+      expenseDate:    r.expense_date,
+      expenseType:    r.expense_type,
+      amountActual:   r.amount_actual,
+      remarks:        r.remarks,
+      approvalStatus: r.approval_status,
+    })),
+    error: null,
+  }
+}
+
+export async function approveExpense(
+  expenseId: string,
+): Promise<ActionResult<{ id: string }>> {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('expense_records')
+    .update({ approval_status: 'approved' })
+    .eq('id', expenseId)
+    .select('id')
+    .single()
+  if (error) return { data: null, error: error.message }
+  return { data: { id: data.id }, error: null }
+}
+
+export async function rejectExpense(
+  expenseId: string,
+): Promise<ActionResult<{ id: string }>> {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('expense_records')
+    .update({ approval_status: 'rejected' })
+    .eq('id', expenseId)
+    .select('id')
+    .single()
+  if (error) return { data: null, error: error.message }
+  return { data: { id: data.id }, error: null }
+}

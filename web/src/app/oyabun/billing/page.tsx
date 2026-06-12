@@ -5,8 +5,13 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import {
   fetchBillingByClient,
   fetchPaymentByContractor,
+  fetchExpensesForApproval,
+  approveExpense,
+  rejectExpense,
+  EXPENSE_TYPE_LABEL,
   type BillingRow,
   type PaymentRow,
+  type ExpenseApprovalRow,
 } from './actions'
 
 // ── ユーティリティ ────────────────────────────────────────
@@ -273,7 +278,155 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
 
 // ── メインページ ──────────────────────────────────────────
 
-type Tab = 'billing' | 'payment'
+// ── 立替金承認タブ ────────────────────────────────────────
+
+const APPROVAL_STYLE: Record<string, { label: string; cls: string }> = {
+  pending:  { label: '未承認', cls: 'bg-amber-100 text-amber-700' },
+  approved: { label: '承認済', cls: 'bg-emerald-100 text-emerald-700' },
+  rejected: { label: '却下',   cls: 'bg-rose-100 text-rose-600' },
+}
+
+function ExpenseApprovalTab({ yearMonth }: { yearMonth: string }) {
+  const [rows,    setRows]    = useState<ExpenseApprovalRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState<string | null>(null)
+  const [saving,  setSaving]  = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const res = await fetchExpensesForApproval(yearMonth)
+    if (res.error) setError(res.error)
+    else setRows(res.data ?? [])
+    setLoading(false)
+  }, [yearMonth])
+
+  useEffect(() => { load() }, [load])
+
+  async function handleApprove(id: string) {
+    setSaving(id)
+    const res = await approveExpense(id)
+    if (res.error) setError(res.error)
+    else setRows(prev => prev.map(r => r.id === id ? { ...r, approvalStatus: 'approved' } : r))
+    setSaving(null)
+  }
+
+  async function handleReject(id: string) {
+    if (!window.confirm('この立替金を却下しますか？')) return
+    setSaving(id)
+    const res = await rejectExpense(id)
+    if (res.error) setError(res.error)
+    else setRows(prev => prev.map(r => r.id === id ? { ...r, approvalStatus: 'rejected' } : r))
+    setSaving(null)
+  }
+
+  const pending  = rows.filter(r => r.approvalStatus === 'pending')
+  const approved = rows.filter(r => r.approvalStatus === 'approved')
+  const rejected = rows.filter(r => r.approvalStatus === 'rejected')
+  const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
+
+  if (loading) return <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
+
+  return (
+    <div className="space-y-6">
+      {error && <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>}
+
+      {/* サマリー */}
+      <div className="grid grid-cols-3 gap-3">
+        {[
+          { label: '未承認', count: pending.length,  total: pending.reduce((s,r)=>s+r.amountActual,0),  cls: 'border-l-4 border-l-amber-400' },
+          { label: '承認済', count: approved.length, total: approved.reduce((s,r)=>s+r.amountActual,0), cls: 'border-l-4 border-l-emerald-400' },
+          { label: '却下',   count: rejected.length, total: rejected.reduce((s,r)=>s+r.amountActual,0), cls: 'border-l-4 border-l-rose-400' },
+        ].map(s => (
+          <div key={s.label} className={`rounded-xl bg-white border border-zinc-200 px-4 py-3 ${s.cls}`}>
+            <p className="text-xs text-zinc-500">{s.label}</p>
+            <p className="text-lg font-bold text-zinc-900 tabular-nums mt-0.5">{yen(s.total)}</p>
+            <p className="text-xs text-zinc-400">{s.count} 件</p>
+          </div>
+        ))}
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="py-16 text-center text-sm text-zinc-400">
+          対象月の立替金データがありません
+        </div>
+      ) : (
+        <div className="rounded-xl bg-white border border-zinc-200 overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50">
+              <tr>
+                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500">日付</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500">委託先</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500">種別</th>
+                <th className="px-4 py-3 text-right text-xs font-medium text-zinc-500">金額</th>
+                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500">備考</th>
+                <th className="px-4 py-3 text-center text-xs font-medium text-zinc-500">状態</th>
+                <th className="px-4 py-3" />
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {rows.map(r => {
+                const st  = APPROVAL_STYLE[r.approvalStatus] ?? APPROVAL_STYLE.pending
+                const isSaving = saving === r.id
+                return (
+                  <tr key={r.id} className="hover:bg-zinc-50">
+                    <td className="px-4 py-3 tabular-nums text-zinc-600">
+                      {r.expenseDate.slice(5).replace('-', '/')}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-zinc-900">{r.contractorName}</td>
+                    <td className="px-4 py-3 text-zinc-600">
+                      {EXPENSE_TYPE_LABEL[r.expenseType] ?? r.expenseType}
+                    </td>
+                    <td className="px-4 py-3 text-right font-semibold text-zinc-900 tabular-nums">
+                      {yen(r.amountActual)}
+                    </td>
+                    <td className="px-4 py-3 text-zinc-500 max-w-[160px] truncate">
+                      {r.remarks ?? '—'}
+                    </td>
+                    <td className="px-4 py-3 text-center">
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${st.cls}`}>
+                        {st.label}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {r.approvalStatus === 'pending' && (
+                        <div className="flex gap-1 justify-end">
+                          <button
+                            onClick={() => handleApprove(r.id)}
+                            disabled={isSaving}
+                            className="rounded-md bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-700 disabled:opacity-50 transition"
+                          >
+                            {isSaving ? '…' : '承認'}
+                          </button>
+                          <button
+                            onClick={() => handleReject(r.id)}
+                            disabled={isSaving}
+                            className="rounded-md border border-zinc-300 px-3 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-50 disabled:opacity-50 transition"
+                          >
+                            却下
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── メインページ ──────────────────────────────────────────
+
+type Tab = 'billing' | 'payment' | 'expense'
+
+const TABS: { key: Tab; label: string }[] = [
+  { key: 'billing', label: '① 荷主向け請求管理' },
+  { key: 'payment', label: '② 委託先向け支払管理' },
+  { key: 'expense', label: '③ 立替金承認' },
+]
 
 export default function BillingPage() {
   const searchParams = useSearchParams()
@@ -290,8 +443,6 @@ export default function BillingPage() {
         {/* ヘッダ */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <h1 className="text-xl font-semibold text-zinc-900">請求・支払管理</h1>
-
-          {/* 年月セレクタ */}
           <div className="flex items-center gap-2">
             <label className="text-sm text-zinc-600">対象年月</label>
             <input
@@ -305,12 +456,7 @@ export default function BillingPage() {
 
         {/* タブ */}
         <div className="flex gap-1 border-b border-zinc-200 mb-6">
-          {(
-            [
-              { key: 'billing' as Tab, label: '荷主向け請求管理' },
-              { key: 'payment' as Tab, label: '委託先向け支払管理' },
-            ] as const
-          ).map(({ key, label }) => (
+          {TABS.map(({ key, label }) => (
             <button
               key={key}
               onClick={() => setTab(key)}
@@ -325,9 +471,9 @@ export default function BillingPage() {
           ))}
         </div>
 
-        {tab === 'billing'
-          ? <BillingTab yearMonth={yearMonth} />
-          : <PaymentTab yearMonth={yearMonth} />}
+        {tab === 'billing' && <BillingTab  yearMonth={yearMonth} />}
+        {tab === 'payment' && <PaymentTab  yearMonth={yearMonth} />}
+        {tab === 'expense' && <ExpenseApprovalTab yearMonth={yearMonth} />}
       </div>
     </div>
   )

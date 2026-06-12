@@ -92,8 +92,9 @@ const PAGE_DEFS: Record<string, PageDef> = {
     label:    '請求・支払管理',
     paramKey: 'tab',
     tabs: {
-      billing: '荷主向け請求管理',
-      payment: '委託先向け支払管理',
+      billing: '① 荷主向け請求管理',
+      payment: '② 委託先向け支払管理',
+      expense: '③ 立替金承認',
     },
   },
 }

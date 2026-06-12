@@ -8,6 +8,24 @@ type ProjectRow    = Database['public']['Tables']['projects']['Row']
 type ClientRow     = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
 
+export type ExpenseRow = {
+  id:             string
+  expenseDate:    string
+  expenseType:    string
+  amountActual:   number
+  remarks:        string | null
+  approvalStatus: string
+  createdAt:      string
+}
+
+export type SubmitExpenseParams = {
+  contractorId: string
+  expenseDate:  string
+  expenseType:  string
+  amountActual: number
+  remarks:      string
+}
+
 export type AssignedProject = ProjectRow & {
   client_name: string | null
 }
@@ -99,4 +117,64 @@ export async function updateProjectStatus(
 
   if (error) return { data: null, error: error.message }
   return { data, error: null }
+}
+
+// ── 立替金 ────────────────────────────────────────────────
+
+export async function fetchMyExpenses(
+  contractorId: string,
+  yearMonth: string,
+): Promise<ActionResult<ExpenseRow[]>> {
+  const supabase = createServiceClient()
+  const [y, m] = yearMonth.split('-').map(Number)
+  const from = `${yearMonth}-01`
+  const to   = new Date(y, m, 0).toISOString().slice(0, 10)
+
+  const { data, error } = await supabase
+    .from('expense_records')
+    .select('id, expense_date, expense_type, amount_actual, remarks, approval_status, created_at')
+    .eq('contractor_id', contractorId)
+    .gte('expense_date', from)
+    .lte('expense_date', to)
+    .order('expense_date', { ascending: false })
+
+  if (error) return { data: null, error: error.message }
+
+  return {
+    data: (data ?? []).map(r => ({
+      id:             r.id,
+      expenseDate:    r.expense_date,
+      expenseType:    r.expense_type,
+      amountActual:   r.amount_actual,
+      remarks:        r.remarks,
+      approvalStatus: r.approval_status,
+      createdAt:      r.created_at,
+    })),
+    error: null,
+  }
+}
+
+export async function submitExpense(
+  params: SubmitExpenseParams,
+): Promise<ActionResult<{ id: string }>> {
+  const supabase = createServiceClient()
+  const amountTaxExcluded = Math.round(params.amountActual / 1.1)
+
+  const { data, error } = await supabase
+    .from('expense_records')
+    .insert({
+      contractor_id:       params.contractorId,
+      expense_date:        params.expenseDate,
+      expense_type:        params.expenseType,
+      amount_actual:       params.amountActual,
+      amount_tax_excluded: amountTaxExcluded,
+      tax_category:        'exclusive',
+      approval_status:     'pending',
+      remarks:             params.remarks || null,
+    })
+    .select('id')
+    .single()
+
+  if (error) return { data: null, error: error.message }
+  return { data: { id: data.id }, error: null }
 }

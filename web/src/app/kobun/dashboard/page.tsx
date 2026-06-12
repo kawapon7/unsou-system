@@ -5,7 +5,10 @@ import {
   fetchMyContractor,
   fetchMyProjects,
   updateProjectStatus,
+  fetchMyExpenses,
+  submitExpense,
   type AssignedProject,
+  type ExpenseRow,
 } from './actions'
 import {
   fetchMyPaymentNotices,
@@ -389,6 +392,220 @@ function PaymentNoticeSection({
   )
 }
 
+// ── 立替金セクション ─────────────────────────────────────
+
+const EXPENSE_TYPES = [
+  { value: 'toll',    label: '高速道路料金' },
+  { value: 'parking', label: '駐車場代' },
+  { value: 'fuel',    label: '燃料費' },
+  { value: 'other',   label: 'その他' },
+] as const
+
+const EXPENSE_STATUS_STYLE: Record<string, { label: string; cls: string }> = {
+  pending:  { label: '未承認', cls: 'bg-amber-100 text-amber-700' },
+  approved: { label: '承認済', cls: 'bg-emerald-100 text-emerald-700' },
+  rejected: { label: '却下',   cls: 'bg-rose-100 text-rose-600' },
+}
+
+function currentYearMonth() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+function todayISO() {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`
+}
+
+function ExpenseSection({ contractorId }: { contractorId: string }) {
+  const [yearMonth, setYearMonth] = useState(currentYearMonth())
+  const [expenses,  setExpenses]  = useState<ExpenseRow[]>([])
+  const [loadingExp, setLoadingExp] = useState(true)
+  const [expError,   setExpError]   = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [submitErr,  setSubmitErr]  = useState<string | null>(null)
+  const [submitOk,   setSubmitOk]   = useState(false)
+
+  // フォーム
+  const [date,    setDate]    = useState(todayISO())
+  const [type,    setType]    = useState<string>('toll')
+  const [amount,  setAmount]  = useState('')
+  const [remarks, setRemarks] = useState('')
+
+  const loadExpenses = useCallback(async () => {
+    setLoadingExp(true)
+    setExpError(null)
+    const res = await fetchMyExpenses(contractorId, yearMonth)
+    if (res.error) setExpError(res.error)
+    else setExpenses(res.data ?? [])
+    setLoadingExp(false)
+  }, [contractorId, yearMonth])
+
+  useEffect(() => { loadExpenses() }, [loadExpenses])
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    const amountNum = parseInt(amount.replace(/,/g, ''), 10)
+    if (!date || !type || isNaN(amountNum) || amountNum <= 0) {
+      setSubmitErr('日付・種別・金額（正の整数）を入力してください')
+      return
+    }
+    setSubmitting(true)
+    setSubmitErr(null)
+    const res = await submitExpense({ contractorId, expenseDate: date, expenseType: type, amountActual: amountNum, remarks })
+    if (res.error) {
+      setSubmitErr(res.error)
+    } else {
+      setSubmitOk(true)
+      setAmount('')
+      setRemarks('')
+      setTimeout(() => setSubmitOk(false), 3000)
+      await loadExpenses()
+    }
+    setSubmitting(false)
+  }
+
+  return (
+    <div className="mt-10 border-t border-zinc-200 pt-8">
+      <h2 className="text-base font-bold text-zinc-900 mb-5">立替金の申請</h2>
+
+      {/* 入力フォーム */}
+      <form onSubmit={handleSubmit} className="rounded-2xl border border-zinc-200 bg-white p-5 mb-6 space-y-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {/* 日付 */}
+          <div className="col-span-2 sm:col-span-1">
+            <label className="block text-xs text-zinc-500 mb-1">日付</label>
+            <input
+              type="date"
+              value={date}
+              onChange={e => setDate(e.target.value)}
+              required
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+            />
+          </div>
+          {/* 種別 */}
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">種別</label>
+            <select
+              value={type}
+              onChange={e => setType(e.target.value)}
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+            >
+              {EXPENSE_TYPES.map(t => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+          {/* 金額 */}
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">金額（税込）</label>
+            <input
+              type="number"
+              min="1"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              placeholder="例: 1500"
+              required
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+            />
+          </div>
+          {/* 備考 */}
+          <div className="col-span-2 sm:col-span-1">
+            <label className="block text-xs text-zinc-500 mb-1">備考（任意）</label>
+            <input
+              type="text"
+              value={remarks}
+              onChange={e => setRemarks(e.target.value)}
+              placeholder="区間など"
+              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+            />
+          </div>
+        </div>
+
+        {submitErr && (
+          <p className="text-xs text-red-600">{submitErr}</p>
+        )}
+        {submitOk && (
+          <p className="text-xs text-emerald-600">申請しました</p>
+        )}
+
+        <button
+          type="submit"
+          disabled={submitting}
+          className="w-full rounded-xl bg-blue-600 hover:bg-blue-500 active:bg-blue-700 py-3 text-sm font-bold text-white transition disabled:opacity-50"
+        >
+          {submitting ? '送信中...' : '立替金を申請する'}
+        </button>
+      </form>
+
+      {/* 一覧 */}
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-zinc-700">申請履歴</h3>
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-zinc-500">対象月</label>
+          <input
+            type="month"
+            value={yearMonth}
+            onChange={e => setYearMonth(e.target.value)}
+            className="rounded-md border border-zinc-300 bg-white px-2 py-1 text-xs text-zinc-900 outline-none focus:border-zinc-500"
+          />
+        </div>
+      </div>
+
+      {expError && (
+        <p className="text-xs text-red-600 mb-2">{expError}</p>
+      )}
+
+      {loadingExp ? (
+        <div className="py-8 text-center text-sm text-zinc-400">読み込み中...</div>
+      ) : expenses.length === 0 ? (
+        <div className="py-8 text-center text-sm text-zinc-400 rounded-xl border border-dashed border-zinc-200 bg-white">
+          対象月の申請データがありません
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-zinc-200 bg-white overflow-hidden">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 border-b border-zinc-100">
+              <tr>
+                <th className="px-4 py-2.5 text-left text-xs font-medium text-zinc-500">日付</th>
+                <th className="px-4 py-2.5 text-left text-xs font-medium text-zinc-500">種別</th>
+                <th className="px-4 py-2.5 text-right text-xs font-medium text-zinc-500">金額</th>
+                <th className="px-4 py-2.5 text-left text-xs font-medium text-zinc-500">備考</th>
+                <th className="px-4 py-2.5 text-center text-xs font-medium text-zinc-500">状態</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {expenses.map(r => {
+                const st = EXPENSE_STATUS_STYLE[r.approvalStatus] ?? EXPENSE_STATUS_STYLE.pending
+                const typeLabel = EXPENSE_TYPES.find(t => t.value === r.expenseType)?.label ?? r.expenseType
+                return (
+                  <tr key={r.id} className="hover:bg-zinc-50">
+                    <td className="px-4 py-2.5 tabular-nums text-zinc-600 whitespace-nowrap">
+                      {r.expenseDate.slice(5).replace('-', '/')}
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-700">{typeLabel}</td>
+                    <td className="px-4 py-2.5 text-right font-semibold text-zinc-900 tabular-nums">
+                      ¥{r.amountActual.toLocaleString('ja-JP')}
+                    </td>
+                    <td className="px-4 py-2.5 text-zinc-500 max-w-[120px] truncate">
+                      {r.remarks ?? '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-center">
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${st.cls}`}>
+                        {st.label}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── メインページ ──────────────────────────────────────────
 
 export default function KobunDashboard() {
@@ -537,6 +754,11 @@ export default function KobunDashboard() {
               setToast={setToast}
             />
           </div>
+        )}
+
+        {/* 立替金セクション */}
+        {contractor && !loading && (
+          <ExpenseSection contractorId={contractor.id} />
         )}
       </div>
 
