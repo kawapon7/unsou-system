@@ -340,7 +340,7 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
                         ? <span className="text-red-600">{yen(r.withholdingTax)}</span>
                         : '—'}
                     </Td>
-                    <Td right bold>{yen(r.netPayment)}</Td>
+                    <Td right bold>{yen(st?.totalAmount ?? r.netPayment)}</Td>
                     <td className="px-4 py-3">
                       <div className="flex flex-col items-start gap-1.5 min-w-[100px]">
                         {st && nStyle && (

@@ -7,6 +7,9 @@ type ActionResult<T = void> =
   | { data: T; error: null }
   | { data: null; error: string }
 
+// dev bypass 用テスト委託先ID（鈴木次郎・免税）
+const DEV_CONTRACTOR_ID = 'cc31ee16-660a-42db-acb4-05f148a3fce8'
+
 // ── ログイン中の子分に紐づく contractor_id を取得 ─────────
 
 async function resolveContractorId(userId: string, userEmail: string | undefined): Promise<string | null> {
@@ -37,52 +40,70 @@ async function resolveContractorId(userId: string, userEmail: string | undefined
 // ── 支払通知書一覧取得（自分のものだけ） ─────────────────
 
 export type MyPaymentNotice = {
-  id:              string
-  noticeMonth:     string   // 'YYYY-MM-DD' (月初日)
-  laborNet:        number
-  laborTax:        number
-  expenseNet:      number
-  expenseTax:      number
-  deductionRate:   number
-  deduction:       number
-  totalAmount:     number
-  approvalStatus:  string   // 'pending' | 'approved'
-  locked:          boolean
+  id:             string
+  noticeMonth:    string   // 'YYYY-MM-DD' (月初日)
+  laborNet:       number
+  laborTax:       number
+  expenseNet:     number
+  expenseTax:     number
+  deductionRate:  number
+  deduction:      number
+  totalAmount:    number
+  approvalStatus: string   // 'pending' | 'approved'
+  locked:         boolean
 }
 
 export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNotice[]>> {
-  const supabase = await createClient()
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) return { data: null, error: '未ログインです' }
+  let contractorId: string | null
 
-  const contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  if (process.env.NODE_ENV === 'development') {
+    contractorId = DEV_CONTRACTOR_ID
+  } else {
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  }
 
   const service = createServiceClient()
-  const { data, error } = await service
+  const db = service as any
+
+  const { data, error } = await db
     .from('payment_notices')
     .select(
-      'id, notice_month, labor_tax_excluded, labor_tax, expense_tax_excluded, expense_tax, deduction_rate, deduction, total_amount, approval_status, locked',
+      'id, target_month, subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction, status',
     )
     .eq('contractor_id', contractorId)
-    .order('notice_month', { ascending: false })
+    .order('target_month', { ascending: false })
     .limit(12)
 
   if (error) return { data: null, error: error.message }
 
-  const rows: MyPaymentNotice[] = (data ?? []).map(r => ({
-    id:             r.id,
-    noticeMonth:    r.notice_month,
-    laborNet:       r.labor_tax_excluded,
-    laborTax:       r.labor_tax,
-    expenseNet:     r.expense_tax_excluded,
-    expenseTax:     r.expense_tax,
-    deductionRate:  Number(r.deduction_rate),
-    deduction:      r.deduction,
-    totalAmount:    r.total_amount,
-    approvalStatus: r.approval_status,
-    locked:         r.locked,
-  }))
+  const rows: MyPaymentNotice[] = (data ?? []).map((r: any) => {
+    const laborNet  = Number(r.subtotal_registered ?? 0) + Number(r.subtotal_unregistered ?? 0) + Number(r.subtotal_exempt ?? 0)
+    const laborTax  = Number(r.tax_registered ?? 0) + Number(r.tax_unregistered ?? 0)
+    const totalEx   = Number(r.total_excluding_tax ?? 0)
+    const totalTax  = Number(r.total_tax ?? 0)
+    const deduction = Number(r.total_deduction ?? 0)
+    // 経過措置控除率: deduction / laborTax から逆算（0除算ガード）
+    const deductionRate = laborTax > 0 ? Math.round((deduction / laborTax) * 100) / 100 : 0
+
+    return {
+      id:             r.id,
+      noticeMonth:    r.target_month,
+      laborNet,
+      laborTax,
+      expenseNet:     Math.max(0, totalEx  - laborNet),
+      expenseTax:     Math.max(0, totalTax - laborTax),
+      deductionRate,
+      deduction,
+      totalAmount:    totalEx + totalTax - deduction,
+      // status='locked' が kobun 承認済み、'approved' は生成済み・未確認
+      approvalStatus: r.status === 'locked' ? 'approved' : 'pending',
+      locked:         r.status === 'locked',
+    }
+  })
 
   return { data: rows, error: null }
 }
@@ -92,59 +113,60 @@ export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNot
 /**
  * 子分が自分の支払通知書に合意・承認する。
  * - contractor_id の一致を確認（他人の notice を承認不可）
- * - approval_status を 'approved' に更新
- * - approval_history に監査ログを INSERT
+ * - status を 'locked' に更新（承認確定）
+ * - approval_history に監査ログを INSERT（ベストエフォート）
  */
 export async function approvePaymentNotice(noticeId: string): Promise<ActionResult> {
-  const supabase = await createClient()
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) return { data: null, error: '未ログインです' }
+  let contractorId: string | null
+  let userId: string
 
-  const contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  if (process.env.NODE_ENV === 'development') {
+    contractorId = DEV_CONTRACTOR_ID
+    userId = '00000000-0000-0000-0000-000000000000'  // dev dummy user ID
+  } else {
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+    userId = user.id
+  }
 
   const service = createServiceClient()
+  const db = service as any
 
-  // 所有権バリデーション：自分の notice だけ承認可能
-  const { data: notice, error: fetchErr } = await service
+  // 所有権バリデーション（自分の notice だけ操作可能）
+  const { data: notice, error: fetchErr } = await db
     .from('payment_notices')
-    .select('id, contractor_id, approval_status, locked, total_amount')
+    .select('id, contractor_id, status')
     .eq('id', noticeId)
-    .eq('contractor_id', contractorId)   // 他人の notice は取得不可
+    .eq('contractor_id', contractorId)
     .single()
 
   if (fetchErr || !notice) {
     return { data: null, error: '対象の支払通知書が見つかりません' }
   }
-  if (notice.approval_status === 'approved') {
+  if (notice.status === 'locked') {
     return { data: null, error: 'すでに承認済みです' }
   }
-  if (notice.locked) {
-    return { data: null, error: '支払通知書はロック済みです。親分に確認してください。' }
-  }
 
-  // approval_status を approved に更新
-  const { error: updateErr } = await service
+  // status を 'locked' に更新（kobun 承認確定）
+  const { error: updateErr } = await db
     .from('payment_notices')
-    .update({ approval_status: 'approved' })
+    .update({ status: 'locked' })
     .eq('id', noticeId)
     .eq('contractor_id', contractorId)
 
   if (updateErr) return { data: null, error: updateErr.message }
 
-  // 監査ログを approval_history に INSERT（変更・削除不可）
-  const { error: logErr } = await service
+  // 監査ログ（ベストエフォート: 失敗しても承認自体は成功扱い）
+  await db
     .from('approval_history')
     .insert({
-      target_type:  'payment_notice',
-      target_id:    noticeId,
-      action_type:  'driver_approval',
-      operator_id:  user.id,
-      amount_after: notice.total_amount,
-      memo:         '子分によるスマホからの承認',
+      payment_notice_id: noticeId,
+      action_type:       'driver_approval',
+      action_by:         userId,
     })
-
-  if (logErr) return { data: null, error: `承認は完了しましたが監査ログの記録に失敗しました: ${logErr.message}` }
 
   return { data: undefined, error: null }
 }

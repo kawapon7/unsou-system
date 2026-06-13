@@ -358,10 +358,10 @@ export async function fetchPaymentNoticeStatuses(
   yearMonth: string,
 ): Promise<ActionResult<PaymentNoticeStatus[]>> {
   const supabase = createServiceClient()
-  const { data, error } = await supabase
+  const { data, error } = await (supabase as any)
     .from('payment_notices')
-    .select('id, contractor_id, approval_status, locked, total_amount')
-    .eq('notice_month', `${yearMonth}-01`)
+    .select('id, contractor_id, status, total_excluding_tax, total_tax, total_deduction')
+    .eq('target_month', `${yearMonth}-01`)
 
   if (error) return { data: null, error: error.message }
 
@@ -369,9 +369,9 @@ export async function fetchPaymentNoticeStatuses(
     data: (data ?? []).map((r: any) => ({
       contractorId:   r.contractor_id,
       noticeId:       r.id,
-      approvalStatus: r.approval_status,
-      locked:         r.locked,
-      totalAmount:    r.total_amount,
+      approvalStatus: r.status ?? 'pending',
+      locked:         false,
+      totalAmount:    Number(r.total_excluding_tax ?? 0) + Number(r.total_tax ?? 0) - Number(r.total_deduction ?? 0),
     })),
     error: null,
   }
@@ -384,21 +384,9 @@ export async function generatePaymentNotice(
 ): Promise<ActionResult<{ id: string; totalAmount: number }>> {
   const supabase = createServiceClient()
   const { from, to } = monthRange(yearMonth)
-  const fromStr     = from.toISOString().slice(0, 10)
-  const toStr       = to.toISOString().slice(0, 10)
-  const noticeMonth = `${yearMonth}-01`
-
-  // ロック済みは再生成不可
-  const { data: existing } = await supabase
-    .from('payment_notices')
-    .select('locked')
-    .eq('contractor_id', contractorId)
-    .eq('notice_month', noticeMonth)
-    .maybeSingle()
-
-  if (existing?.locked) {
-    return { data: null, error: 'この支払通知書はロック済みのため再生成できません' }
-  }
+  const fromStr    = from.toISOString().slice(0, 10)
+  const toStr      = to.toISOString().slice(0, 10)
+  const targetMonth = `${yearMonth}-01`
 
   // 委託先マスタ
   const { data: c, error: cErr } = await supabase
@@ -420,7 +408,7 @@ export async function generatePaymentNotice(
 
   let laborTaxExcluded = 0
   for (const w of (workData ?? []) as any[]) {
-    laborTaxExcluded += w.projects?.price_rules?.[0]?.buying_price ?? 0
+    laborTaxExcluded += Number(w.projects?.price_rules?.[0]?.buying_price ?? 0)
   }
   const laborTax = calcTax(laborTaxExcluded, contractor.tax_category)
 
@@ -437,39 +425,74 @@ export async function generatePaymentNotice(
   let expenseTaxExcluded = 0
   let expenseTax = 0
   for (const e of (expData ?? []) as any[]) {
-    expenseTaxExcluded += e.amount_tax_excluded ?? 0
-    expenseTax         += (e.amount_actual ?? 0) - (e.amount_tax_excluded ?? 0)
+    expenseTaxExcluded += Number(e.amount_tax_excluded ?? 0)
+    expenseTax         += Number(e.amount_actual ?? 0) - Number(e.amount_tax_excluded ?? 0)
   }
 
-  // 経過措置控除
+  // 経過措置控除（免税・未登録のみ）
   const deductionRate = calcDeductionRate(contractor.invoice_registration_type, yearMonth)
   const deduction     = Math.floor(laborTax * deductionRate)
 
-  // 差引支払額
-  const totalAmount = laborTaxExcluded + laborTax - deduction + expenseTaxExcluded + expenseTax
+  // invoice_registration_type 別に集計列へ振り分け
+  const isRegistered = contractor.invoice_registration_type === '適格'
+  const isExempt     = contractor.invoice_registration_type === '免税'
 
-  const { data: upserted, error: uErr } = await supabase
+  const subtotalRegistered   = isRegistered ? laborTaxExcluded : 0
+  const taxRegistered        = isRegistered ? laborTax          : 0
+  const subtotalUnregistered = (!isRegistered && !isExempt) ? laborTaxExcluded : 0
+  const taxUnregistered      = isRegistered ? 0 : laborTax
+  const deductionUnregistered = deduction
+  const subtotalExempt       = isExempt ? laborTaxExcluded : 0
+
+  const totalExcludingTax = laborTaxExcluded + expenseTaxExcluded
+  const totalTax          = laborTax + expenseTax
+  const totalDeduction    = deduction
+  const totalAmount       = totalExcludingTax + totalTax - totalDeduction
+
+  const db = supabase as any
+
+  // 既存レコードを確認して INSERT or UPDATE
+  const { data: existing } = await db
     .from('payment_notices')
-    .upsert(
-      {
-        contractor_id:        contractorId,
-        notice_month:         noticeMonth,
-        labor_tax_excluded:   laborTaxExcluded,
-        labor_tax:            laborTax,
-        deduction_rate:       deductionRate,
-        deduction:            deduction,
-        expense_tax_excluded: expenseTaxExcluded,
-        expense_tax:          expenseTax,
-        total_amount:         totalAmount,
-        approval_status:      'pending',
-      },
-      { onConflict: 'contractor_id,notice_month' },
-    )
     .select('id')
-    .single()
+    .eq('contractor_id', contractorId)
+    .eq('target_month', targetMonth)
+    .maybeSingle()
 
-  if (uErr) return { data: null, error: uErr.message }
-  return { data: { id: upserted.id, totalAmount }, error: null }
+  const noticePayload = {
+    subtotal_registered:    subtotalRegistered,
+    tax_registered:         taxRegistered,
+    subtotal_unregistered:  subtotalUnregistered,
+    tax_unregistered:       taxUnregistered,
+    deduction_unregistered: deductionUnregistered,
+    subtotal_exempt:        subtotalExempt,
+    total_excluding_tax:    totalExcludingTax,
+    total_tax:              totalTax,
+    total_deduction:        totalDeduction,
+    status:                 'approved',
+  }
+
+  let noticeId: string
+  if (existing?.id) {
+    const { data: updated, error: uErr } = await db
+      .from('payment_notices')
+      .update(noticePayload)
+      .eq('id', existing.id)
+      .select('id')
+      .single()
+    if (uErr) return { data: null, error: uErr.message }
+    noticeId = updated.id
+  } else {
+    const { data: inserted, error: iErr } = await db
+      .from('payment_notices')
+      .insert({ contractor_id: contractorId, target_month: targetMonth, ...noticePayload })
+      .select('id')
+      .single()
+    if (iErr) return { data: null, error: iErr.message }
+    noticeId = inserted.id
+  }
+
+  return { data: { id: noticeId, totalAmount }, error: null }
 }
 
 /** 対象月の全委託先分を一括生成 */

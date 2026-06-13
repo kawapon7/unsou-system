@@ -32,7 +32,18 @@ export type AssignedProject = ProjectRow & {
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
+// dev bypass 用テスト委託先ID（鈴木次郎・免税）
+const DEV_CONTRACTOR_ID = 'cc31ee16-660a-42db-acb4-05f148a3fce8'
+
 export async function fetchMyContractor(): Promise<ActionResult<ContractorRow>> {
+  if (process.env.NODE_ENV === 'development') {
+    const service = createServiceClient()
+    const { data, error } = await service
+      .from('contractors').select('*').eq('id', DEV_CONTRACTOR_ID).single()
+    if (error || !data) return { data: null, error: error?.message ?? 'dev contractor not found' }
+    return { data, error: null }
+  }
+
   const supabase = await createClient()
 
   const { data: { user }, error: authErr } = await supabase.auth.getUser()

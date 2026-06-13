@@ -151,10 +151,10 @@ export async function fetchPaymentNoticePdfData(
 
   const [contractorRes, noticeRes, workRes, expenseRes, projectsRes] = await Promise.all([
     service.from('contractors').select('name, invoice_registration_type').eq('id', contractorId).single(),
-    service.from('payment_notices')
-      .select('labor_tax_excluded, labor_tax, expense_tax_excluded, expense_tax, deduction_rate, deduction, total_amount')
+    (service as any).from('payment_notices')
+      .select('subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction')
       .eq('contractor_id', contractorId)
-      .eq('notice_month', from)
+      .eq('target_month', from)
       .maybeSingle(),
     service.from('work_records')
       .select('work_date, project_id, quantity, tax_excluded_payment')
@@ -190,13 +190,22 @@ export async function fetchPaymentNoticePdfData(
   }))
 
   // 確定済み notice があればその値を優先（taxCalculator.ts との一致を保証）
-  const laborNet    = notice?.labor_tax_excluded   ?? laborLines.reduce((s, l) => s + l.netAmount, 0)
-  const laborTax    = notice?.labor_tax            ?? 0
-  const expenseNet  = notice?.expense_tax_excluded ?? expenseLines.reduce((s, l) => s + l.netAmount, 0)
-  const expenseTax  = notice?.expense_tax          ?? 0
-  const deduction   = notice?.deduction            ?? 0
-  const deductionRate = Number(notice?.deduction_rate ?? 0)
-  const totalAmount = notice?.total_amount ?? (laborNet + laborTax + expenseNet + expenseTax - deduction)
+  const n = notice as any
+  const laborNetFromNotice = n
+    ? Number(n.subtotal_registered ?? 0) + Number(n.subtotal_unregistered ?? 0) + Number(n.subtotal_exempt ?? 0)
+    : null
+  const laborTaxFromNotice = n
+    ? Number(n.tax_registered ?? 0) + Number(n.tax_unregistered ?? 0)
+    : null
+  const laborNet    = laborNetFromNotice ?? laborLines.reduce((s, l) => s + l.netAmount, 0)
+  const laborTax    = laborTaxFromNotice ?? 0
+  const totalEx     = n ? Number(n.total_excluding_tax ?? 0) : laborNet + expenseLines.reduce((s, l) => s + l.netAmount, 0)
+  const totalTax    = n ? Number(n.total_tax ?? 0) : laborTax
+  const expenseNet  = Math.max(0, totalEx - laborNet)
+  const expenseTax  = Math.max(0, totalTax - laborTax)
+  const deduction   = n ? Number(n.total_deduction ?? 0) : 0
+  const deductionRate = laborTax > 0 ? Math.round((deduction / laborTax) * 100) / 100 : 0
+  const totalAmount = totalEx + totalTax - deduction
 
   return {
     data: {
