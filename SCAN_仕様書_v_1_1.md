@@ -1,11 +1,16 @@
-# SCAN_仕様書_v_1_0
+# SCAN_仕様書_v_1_1
 ## 運送業務管理システム「響き（HIBIKI）」請求書データ取り込みサポート拡張オプション
-### 参照元コア仕様書：`HIBIKI_仕様書_v_1_9.md`
+### 参照元コア仕様書：`HIBIKI_仕様書_v_2_1.md`
 
 * **作成日：** 2026年6月7日
-* **ステータス：** 設計フェーズ（実装待ち）
-* **対応コアバージョン：** HIBIKI v1.9以降
+* **更新日：** 2026年6月14日
+* **バージョン：** v_1_1
+* **ステータス：** 実装フェーズ（α版部分実装済：`/admin/sales?tab=scan`）
+* **対応コアバージョン：** HIBIKI v_2_1以降
 * **オプション区分：** プラグイン型疎結合（コアDB・RLS・ロジックへの直接依存禁止）
+* **変更履歴：**
+  * **v_1_0（2026年6月7日）：** 初版作成
+  * **v_1_1（2026年6月14日）：** admin/driver ルーティング移行に伴うアーキテクチャ図・ファイル構成・パス表記の全面同期
 
 ---
 
@@ -50,8 +55,8 @@
 ### 3-1. 全体アーキテクチャ図
 
 ```
-[親分ブラウザ]
-  │ ファイルアップロード / URL貼り付け
+[管理画面ブラウザ（admin）]
+  │ ファイルアップロード / URL貼り付け（/admin/sales?tab=scan）
   ↓
 [SCAN APIエンドポイント]（/api/scan/upload）
   │ ファイルを受取り、ジョブIDを即時返却（非同期分離）
@@ -59,18 +64,18 @@
 [ジョブキュー]（Cloudflare Queues / Supabase Edge Functions等）
   │ 非同期でAI解析ジョブを実行
   ↓
-[AI解析モジュール]（Gemini 1.5 Flash API）
+[AI解析モジュール]（Gemini 2.0 Flash API）
   │ 請求書データを構造化JSONとして抽出
   ↓
-[マスタ照合モジュール]（HIBIKI API経由）
+[マスタ照合モジュール]（HIBIKI Server Actions 経由）
   │ 取引先名・案件名をHIBIKIマスタと照合
   ↓
 [サジェスト結果DB保存]（scan_jobs テーブル）
   ↓
-[親分ブラウザ]
+[管理画面ブラウザ（admin）]
   │ ジョブIDでポーリング or WebSocket通知
   ↓
-[確認・承認UI]（サジェスト表示→人間が承認→HIBIKI APIへ確定送信）
+[確認・承認UI]（ScanTab.tsx：サジェスト表示→人間が承認→Server Actions へ確定送信）
   ↓
 [HIBIKI コアDB]（RLS保護下・service_role経由のみ）
 ```
@@ -79,16 +84,16 @@
 
 | フェーズ | 採用モデル | 理由 |
 | :--- | :--- | :--- |
-| **初期（コスト最優先）** | **Gemini 1.5 Flash** | 無料枠15RPM・1,000,000TPM。月10〜20件の処理なら実質ゼロコスト |
-| 精度強化フェーズ | Gemini 1.5 Pro | Flash比で高精度。複雑レイアウトの請求書に対応 |
+| **初期（コスト最優先）** | **Gemini 2.0 Flash** | 無料枠内で月10〜20件の処理なら実質ゼロコスト。現行実装で採用中 |
+| 精度強化フェーズ | Gemini 2.0 Pro | Flash比で高精度。複雑レイアウトの請求書に対応 |
 | 大量処理フェーズ | 専用AI-OCR（Document AI等） | 100件/日以上で費用対効果が逆転する場合に換装 |
 
-**換装設計：** AI呼び出し部分を `src/utils/scan/aiExtractor.ts` に集約し、モデル変更は1ファイルの差し替えで完結するアダプターパターンを採用する。
+**換装設計：** AI呼び出し部分を `web/src/utils/scan/aiExtractor.ts` に集約し、モデル変更は1ファイルの差し替えで完結するアダプターパターンを採用する。
 
 ```typescript
-// src/utils/scan/aiExtractor.ts
+// web/src/utils/scan/aiExtractor.ts
 // モデルをここだけで管理する。将来の換装はこのファイルのみ修正。
-const MODEL = 'gemini-1.5-flash-latest'  // ← 1行変更で換装
+const MODEL = 'gemini-2.0-flash'  // ← 1行変更で換装
 ```
 
 ### 3-3. AI抽出プロンプト設計（Gemini向け）
@@ -314,34 +319,31 @@ X-Option-Source: scan/1.0
 
 ---
 
-## 8. ファイル構成
+## 8. ファイル構成（v_1_1：admin/driver 移行後）
 
 ```
 web/
 ├── src/
+│   ├── app/
+│   │   ├── admin/
+│   │   │   └── sales/
+│   │   │       ├── page.tsx              # 売上管理（?tab=scan で SCAN タブ表示）
+│   │   │       ├── ScanTab.tsx           # AIスキャン入力 UI
+│   │   │       └── actions.ts            # 売上管理 Server Actions
+│   │   ├── _actions/
+│   │   │   ├── scan-actions.ts           # SCAN確定保存 Server Actions
+│   │   │   └── scan-voice-bridge.ts      # SCAN/VOICE 連携ブリッジ
+│   │   └── api/
+│   │       └── scan/
+│   │           └── upload/
+│   │               └── route.ts          # ファイル受付エンドポイント
 │   └── utils/
 │       └── scan/
-│           ├── aiExtractor.ts         # AI抽出ロジック（Gemini APIアダプター）
-│           ├── clientMatcher.ts       # 取引先マスタ照合ロジック
-│           ├── fileConverter.ts       # PDF/Excel→解析可能形式への変換
-│           └── jobQueue.ts            # ジョブキュー管理ユーティリティ
-└── app/
-    ├── api/
-    │   └── scan/
-    │       ├── upload/
-    │       │   └── route.ts           # ファイル受付エンドポイント
-    │       └── jobs/
-    │           └── [jobId]/
-    │               ├── route.ts       # ジョブ状態取得
-    │               └── confirm/
-    │                   └── route.ts   # 確定データ送信
-    └── dashboard/
-        └── scan/
-            ├── page.tsx               # ファイルアップロード画面
-            └── [jobId]/
-                └── confirm/
-                    └── page.tsx       # 確認・承認UI
+│           ├── aiExtractor.ts            # AI抽出ロジック（Gemini APIアダプター）
+│           └── fileConverter.ts          # CSV/スプレッドシートパース・ファジーマッチ（緊急インポート共用）
 ```
+
+> **緊急インポート共用：** `fileConverter.ts` は Googleフォーム緊急避難ルート（`importEmergencyRecords` in `workRecordActions.ts`）からも共用される。
 
 ---
 
@@ -349,7 +351,7 @@ web/
 
 | フェーズ | 内容 | 前提条件 |
 | :--- | :--- | :--- |
-| α版 | PDF・画像のみ対応。Gemini 1.5 Flash。同期処理（件数少のため）。取引先マスタ照合のみ | HIBIKIフェーズ3完了後 |
+| α版 | PDF・画像のみ対応。Gemini 2.0 Flash。`/admin/sales?tab=scan` に統合済 | HIBIKIフェーズ2進行中 ✅ 部分完了 |
 | β版 | Excel・スプレッドシート対応追加。新規登録ナビ実装。AI信頼スコア表示 | α版フィールドテスト完了後 |
 | 正式版 | 非同期キュー処理実装。大量処理対応。AI換装オプション提供 | β版検証完了後 |
 
