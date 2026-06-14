@@ -296,7 +296,7 @@ export async function resolveDuplicateRecord(
 
 // ================================================================
 // reviewThresholdRecord
-// 親分が「確認済み」を押したとき: pending_review → pending に戻す
+// 親分が「確認済み・承認」を押したとき: pending_review → confirmed
 // ================================================================
 export async function reviewThresholdRecord(
   table: 'work_records' | 'expense_records',
@@ -306,7 +306,7 @@ export async function reviewThresholdRecord(
 
   const { error } = await db
     .from(table)
-    .update({ status: 'pending' })
+    .update({ status: 'confirmed' })
     .eq('id', id)
     .eq('status', 'pending_review')
 
@@ -315,4 +315,30 @@ export async function reviewThresholdRecord(
   revalidatePath('/admin/dashboard')
   revalidatePath('/admin/sales')
   return { data: undefined, error: null }
+}
+
+// ================================================================
+// logPendingNoticeResend
+// 長期未承認通知書の再送操作を notification_logs に記録
+// ================================================================
+export async function logPendingNoticeResend(
+  contractorId: string,
+  destination: string,
+  channel: 'email' | 'sms',
+): Promise<ActionResult<{ id: string }>> {
+  const db = createServiceClient() as any
+
+  const { data, error } = await db
+    .from('notification_logs')
+    .insert({
+      contractor_id: contractorId,
+      type:          channel === 'email' ? 'email' : 'sms',
+      destination,
+      status:        'sent',
+    })
+    .select('id')
+    .single()
+
+  if (error || !data) return { data: null, error: error?.message ?? '再送ログ記録に失敗しました' }
+  return { data: { id: data.id }, error: null }
 }

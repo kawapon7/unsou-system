@@ -40,6 +40,7 @@ export type MissingInputRow = {
   scheduleId:     string
   contractorId:   string
   contractorName: string
+  contractorPhone: string | null
   projectId:      string
   projectName:    string
   date:           string   // 'YYYY-MM-DD'
@@ -85,7 +86,7 @@ export async function getMissingInputs(): Promise<ActionResult<MissingInputRow[]
       contractor_id,
       project_id,
       date,
-      contractors ( id, name ),
+      contractors ( id, name, phone ),
       projects    ( id, project_name, name )
     `)
     .eq('status', 'scheduled')
@@ -120,6 +121,7 @@ export async function getMissingInputs(): Promise<ActionResult<MissingInputRow[]
       scheduleId:     s.id,
       contractorId:   s.contractor_id,
       contractorName: s.contractors?.name ?? s.contractor_id,
+      contractorPhone: s.contractors?.phone ?? null,
       projectId:      s.project_id,
       projectName:    s.projects?.project_name ?? s.projects?.name ?? s.project_id,
       date:           s.date,

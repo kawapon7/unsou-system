@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import DefensiveAlertPanel from '../_components/DefensiveAlertPanel'
+import DefensiveAlertPanel from '@/components/admin/DefensiveAlertPanel'
 import {
   fetchDashboardSummary,
   fetchInvoiceSchedule,
@@ -352,6 +352,9 @@ export default function OyabunDashboard() {
         ) : (
           <div className="space-y-6">
 
+            {/* 5大ディフェンシブ・アラート（最上部・常駐） */}
+            <DefensiveAlertPanel />
+
             {/* KPIカード（2列 → 4列） */}
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
               <KpiCard
@@ -379,9 +382,6 @@ export default function OyabunDashboard() {
                 accent="zinc"
               />
             </div>
-
-            {/* 5大ディフェンシブ・アラート */}
-            <DefensiveAlertPanel />
 
             {/* 既存アラート */}
             {alerts && <AlertBanner alerts={alerts} />}

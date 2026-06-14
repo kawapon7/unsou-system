@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
-import DefensiveAlertPanel from '../_components/DefensiveAlertPanel'
+import DefensiveAlertPanel from '@/components/admin/DefensiveAlertPanel'
 import {
   fetchSalesList,
   fetchClientOptions,

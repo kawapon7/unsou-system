@@ -4,19 +4,34 @@ import { useState, useEffect, useCallback, useTransition } from 'react'
 import {
   getDefensiveAlerts,
   reviewThresholdRecord,
+  logPendingNoticeResend,
   type DefensiveAlerts,
   type ThresholdAlertRow,
   type InvoiceWarningRow,
   type PendingNoticeRow,
 } from '@/app/_actions/defensiveAlertActions'
-import { resolveDuplicateRecord } from '@/app/_actions/workRecordActions'
-import { updateScheduleStatus } from '@/app/_actions/scheduleActions'
-import type { MissingInputRow } from '@/app/_actions/scheduleActions'
-import type { DuplicateGroup, WorkRecordRow } from '@/app/_actions/workRecordActions'
+import {
+  updateScheduleStatus,
+  logNotification,
+  type MissingInputRow,
+} from '@/app/_actions/scheduleActions'
+import {
+  resolveDuplicateRecord,
+  type DuplicateGroup,
+  type WorkRecordRow,
+} from '@/app/_actions/workRecordActions'
 
 // ── ユーティリティ ────────────────────────────────────────
 
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
+
+function smsReminderBody(name: string, date: string) {
+  return `${name}さん、${date}の稼働実績の入力がまだ確認できていません。HIBIKIアプリからご入力をお願いします。`
+}
+
+function pendingNoticeResendBody(name: string, month: string) {
+  return `${name}さん、${month}分の支払通知書の承認が48時間以上確認できていません。HIBIKIアプリからご確認をお願いします。`
+}
 
 function Badge({ count, color }: { count: number; color: 'red' | 'amber' }) {
   const cls = color === 'red'
@@ -73,13 +88,16 @@ function AlertSection({
   )
 }
 
-// ── ① 入力遅延セクション ──────────────────────────────────
+// ── ① 入力遅延 ────────────────────────────────────────────
 
 function MissingInputSection({
-  rows, onMarkAbsent,
+  rows,
+  onMarkAbsent,
+  onSmsReminder,
 }: {
   rows: MissingInputRow[]
   onMarkAbsent: (scheduleId: string, name: string) => void
+  onSmsReminder: (row: MissingInputRow) => void
 }) {
   return (
     <AlertSection icon="🔴" title="入力遅延（未入力検知）" count={rows.length} color="red">
@@ -97,14 +115,17 @@ function MissingInputSection({
               <span className="tabular-nums text-zinc-500">{r.date}</span>
             </div>
             <div className="flex items-center gap-2">
-              {/* SMS催促 */}
-              <a
-                href={`sms:${encodeURIComponent(r.contractorId)}`}
-                className="inline-flex rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-700"
-              >
-                SMS催促
-              </a>
-              {/* 本日休み */}
+              {r.contractorPhone ? (
+                <button
+                  type="button"
+                  onClick={() => onSmsReminder(r)}
+                  className="inline-flex rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-700"
+                >
+                  催促（SMS）
+                </button>
+              ) : (
+                <span className="text-xs text-zinc-400">電話番号未登録</span>
+              )}
               <button
                 type="button"
                 onClick={() => onMarkAbsent(r.scheduleId, r.contractorName)}
@@ -120,13 +141,14 @@ function MissingInputSection({
   )
 }
 
-// ── ② 重複の疑いセクション ────────────────────────────────
+// ── ② 重複の疑い ──────────────────────────────────────────
 
 function DuplicateSection({
-  groups, onDelete,
+  groups,
+  onDelete,
 }: {
   groups: DuplicateGroup[]
-  onDelete: (id: string, label: string) => void
+  onDelete: (id: string) => void
 }) {
   return (
     <AlertSection icon="🔴" title="重複の疑い（二重登録検知）" count={groups.length} color="red">
@@ -147,10 +169,10 @@ function DuplicateSection({
                   <p className="text-xs text-zinc-400">登録: {new Date(rec.createdAt).toLocaleString('ja-JP')}</p>
                   <button
                     type="button"
-                    onClick={() => onDelete(rec.id, `${g.contractorName} ${g.date} (${i + 1})`)}
+                    onClick={() => onDelete(rec.id)}
                     className="mt-1 inline-flex rounded-md bg-rose-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-rose-700"
                   >
-                    このレコードを削除
+                    片方削除
                   </button>
                 </div>
               ))}
@@ -162,10 +184,11 @@ function DuplicateSection({
   )
 }
 
-// ── ③ 業務しきい値セクション ──────────────────────────────
+// ── ③ 業務しきい値 ────────────────────────────────────────
 
 function ThresholdSection({
-  rows, onReview,
+  rows,
+  onReview,
 }: {
   rows: ThresholdAlertRow[]
   onReview: (table: 'work_records' | 'expense_records', id: string) => void
@@ -188,7 +211,7 @@ function ThresholdSection({
                 ({r.table === 'work_records' ? `${r.value}個` : yen(r.value)})
               </span>
               <span className="ml-2 inline-flex rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700">
-                ロック中
+                確認待ちロック
               </span>
             </div>
             <button
@@ -196,7 +219,7 @@ function ThresholdSection({
               onClick={() => onReview(r.table, r.id)}
               className="inline-flex rounded-md bg-amber-600 px-2.5 py-1 text-xs font-medium text-white hover:bg-amber-700"
             >
-              確認済み（承認）
+              確認済み・承認
             </button>
           </div>
         ))}
@@ -205,7 +228,7 @@ function ThresholdSection({
   )
 }
 
-// ── ④ インボイス警告セクション ────────────────────────────
+// ── ④ インボイス警告 ────────────────────────────────────
 
 function InvoiceWarningSection({ rows }: { rows: InvoiceWarningRow[] }) {
   return (
@@ -227,9 +250,9 @@ function InvoiceWarningSection({ rows }: { rows: InvoiceWarningRow[] }) {
               </span>
             </div>
             <p className="text-xs text-zinc-500">
-              {r.invoiceStatus === 'expired'
-                ? '登録番号が失効しています。経過措置控除率に自動移行してください。'
-                : '登録番号が未設定です。取引先マスタを確認してください。'}
+              {r.invoiceStatus === 'expired' || r.invoiceStatus === 'invalid'
+                ? '登録番号が失効しています。経過措置控除率への切り替えを確認してください。'
+                : '登録番号が未設定です。取引先マスタ（/admin/partners）を確認してください。'}
             </p>
           </div>
         ))}
@@ -238,9 +261,15 @@ function InvoiceWarningSection({ rows }: { rows: InvoiceWarningRow[] }) {
   )
 }
 
-// ── ⑤ 長期未承認セクション ───────────────────────────────
+// ── ⑤ 長期未承認 ─────────────────────────────────────────
 
-function PendingNoticeSection({ rows }: { rows: PendingNoticeRow[] }) {
+function PendingNoticeSection({
+  rows,
+  onResend,
+}: {
+  rows: PendingNoticeRow[]
+  onResend: (row: PendingNoticeRow, channel: 'email' | 'sms') => void
+}) {
   return (
     <AlertSection icon="🔴" title="長期間未承認（48時間超）" count={rows.length} color="red">
       <div className="space-y-2">
@@ -256,22 +285,14 @@ function PendingNoticeSection({ rows }: { rows: PendingNoticeRow[] }) {
               <span className="ml-2 text-rose-700 font-semibold">{r.hoursElapsed}時間 未承認</span>
             </div>
             <div className="flex items-center gap-2">
-              {r.phone && (
-                <a
-                  href={`sms:${r.phone}`}
-                  className="inline-flex rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-700"
-                >
-                  SMS催促
-                </a>
-              )}
-              {r.email && (
-                <a
-                  href={`mailto:${r.email}?subject=${encodeURIComponent('支払通知書の確認をお願いします')}`}
-                  className="inline-flex rounded-md border border-zinc-300 bg-white px-2.5 py-1 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
-                >
-                  メール催促
-                </a>
-              )}
+              <button
+                type="button"
+                onClick={() => onResend(r, r.phone ? 'sms' : 'email')}
+                disabled={!r.phone && !r.email}
+                className="inline-flex rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                通知再送
+              </button>
             </div>
           </div>
         ))}
@@ -281,68 +302,110 @@ function PendingNoticeSection({ rows }: { rows: PendingNoticeRow[] }) {
 }
 
 // ================================================================
-// DefensiveAlertPanel（メインコンポーネント）
+// DefensiveAlertPanel
 // ================================================================
 
 export default function DefensiveAlertPanel() {
-  const [alerts,   setAlerts]   = useState<DefensiveAlerts | null>(null)
-  const [loadErr,  setLoadErr]  = useState<string | null>(null)
+  const [alerts,  setAlerts]  = useState<DefensiveAlerts | null>(null)
+  const [loadErr, setLoadErr] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
   const load = useCallback(async () => {
     const res = await getDefensiveAlerts()
-    if (res.error) { setLoadErr(res.error); return }
+    if (res.error) {
+      setLoadErr(res.error)
+      return
+    }
     setAlerts(res.data)
     setLoadErr(null)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => {
+    void load()
+  }, [load])
 
-  // 総件数0なら完全非表示
   if (!alerts || alerts.totalCount === 0) return null
-
-  // ── アクションハンドラー ────────────────────────────────
 
   function handleMarkAbsent(scheduleId: string, name: string) {
     if (!window.confirm(`「${name}」を「本日休み」に変更しますか？`)) return
     startTransition(async () => {
-      await updateScheduleStatus(scheduleId, 'absent')
+      const res = await updateScheduleStatus(scheduleId, 'absent')
+      if (res.error) { setLoadErr(res.error); return }
       await load()
     })
   }
 
-  function handleDeleteDuplicate(id: string, label: string) {
-    if (!window.confirm(`「${label}」の勤務記録を削除しますか？\nこの操作は取り消せません。`)) return
+  function handleSmsReminder(row: MissingInputRow) {
+    if (!row.contractorPhone) return
+    const body = smsReminderBody(row.contractorName, row.date)
     startTransition(async () => {
-      await resolveDuplicateRecord(id)
+      const res = await logNotification({
+        contractor_id: row.contractorId,
+        type:          'sms',
+        destination:   row.contractorPhone!,
+        status:        'sent',
+      })
+      if (res.error) { setLoadErr(res.error); return }
+      window.location.href = `sms:${row.contractorPhone}?body=${encodeURIComponent(body)}`
+    })
+  }
+
+  function handleDeleteDuplicate(id: string) {
+    if (!window.confirm('この重複レコードを削除しますか？\nこの操作は取り消せません。')) return
+    startTransition(async () => {
+      const res = await resolveDuplicateRecord(id)
+      if (res.error) { setLoadErr(res.error); return }
       await load()
     })
   }
 
   function handleReviewThreshold(table: 'work_records' | 'expense_records', id: string) {
-    if (!window.confirm('このレコードを確認済みとして承認しますか？\nロックが解除されます。')) return
+    if (!window.confirm('目視確認のうえ、このレコードを承認してロックを解除しますか？')) return
     startTransition(async () => {
-      await reviewThresholdRecord(table, id)
+      const res = await reviewThresholdRecord(table, id)
+      if (res.error) { setLoadErr(res.error); return }
       await load()
     })
   }
 
-  return (
-    <div className="rounded-xl border border-zinc-200 bg-white p-4 space-y-3 shadow-sm">
+  function handlePendingResend(row: PendingNoticeRow, channel: 'email' | 'sms') {
+    startTransition(async () => {
+      if (channel === 'sms' && row.phone) {
+        const body = pendingNoticeResendBody(row.contractorName, row.targetMonth)
+        const res = await logPendingNoticeResend(row.contractorId, row.phone, 'sms')
+        if (res.error) { setLoadErr(res.error); return }
+        window.location.href = `sms:${row.phone}?body=${encodeURIComponent(body)}`
+        return
+      }
+      if (row.email) {
+        const subject = encodeURIComponent('【HIBIKI】支払通知書の承認をお願いします')
+        const body = encodeURIComponent(pendingNoticeResendBody(row.contractorName, row.targetMonth))
+        const res = await logPendingNoticeResend(row.contractorId, row.email, 'email')
+        if (res.error) { setLoadErr(res.error); return }
+        window.location.href = `mailto:${row.email}?subject=${subject}&body=${body}`
+      }
+    })
+  }
 
-      {/* ヘッダー */}
+  return (
+    <div
+      className="sticky top-0 z-20 rounded-xl border border-rose-200 bg-gradient-to-b from-rose-50 to-white p-4 space-y-3 shadow-md"
+      role="alert"
+      aria-live="polite"
+    >
       <div className="flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-zinc-800 flex items-center gap-2">
-          ディフェンシブアラート
+        <h2 className="text-sm font-semibold text-rose-900 flex items-center gap-2">
+          <span aria-hidden>🛡️</span>
+          5大ディフェンシブ・アラート
           <span className="inline-flex items-center justify-center rounded-full bg-rose-600 px-2 py-0.5 text-xs font-bold text-white tabular-nums">
             {alerts.totalCount}
           </span>
         </h2>
         <button
           type="button"
-          onClick={load}
+          onClick={() => void load()}
           disabled={isPending}
-          className="text-xs text-zinc-400 hover:text-zinc-600 disabled:opacity-40"
+          className="text-xs text-zinc-500 hover:text-zinc-700 disabled:opacity-40"
         >
           {isPending ? '更新中…' : '↺ 更新'}
         </button>
@@ -352,30 +415,28 @@ export default function DefensiveAlertPanel() {
         <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-600">{loadErr}</p>
       )}
 
-      {/* ① 入力遅延 */}
       <MissingInputSection
         rows={alerts.missingInputs}
         onMarkAbsent={handleMarkAbsent}
+        onSmsReminder={handleSmsReminder}
       />
 
-      {/* ② 重複の疑い */}
       <DuplicateSection
         groups={alerts.duplicates}
         onDelete={handleDeleteDuplicate}
       />
 
-      {/* ③ 業務しきい値 */}
       <ThresholdSection
         rows={alerts.thresholds}
         onReview={handleReviewThreshold}
       />
 
-      {/* ④ インボイス警告 */}
       <InvoiceWarningSection rows={alerts.invoiceWarnings} />
 
-      {/* ⑤ 長期未承認 */}
-      <PendingNoticeSection rows={alerts.pendingNotices} />
-
+      <PendingNoticeSection
+        rows={alerts.pendingNotices}
+        onResend={handlePendingResend}
+      />
     </div>
   )
 }
