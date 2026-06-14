@@ -16,10 +16,9 @@ $$;
 
 CREATE OR REPLACE FUNCTION my_contractor_id()
 RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
-  SELECT COALESCE(
-    (SELECT id FROM public.contractors WHERE user_id = auth.uid() LIMIT 1),
-    (SELECT contractor_id FROM public.users WHERE id = auth.uid() LIMIT 1)
-  );
+  SELECT contractor_id FROM public.users
+  WHERE id = auth.uid()
+  LIMIT 1;
 $$;
 
 ALTER TABLE schedules ENABLE ROW LEVEL SECURITY;

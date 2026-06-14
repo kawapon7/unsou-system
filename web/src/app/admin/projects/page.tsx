@@ -275,7 +275,7 @@ export default function ProjectsPage() {
   function openEdit(row: ProjectWithRelations) {
     setEditTarget(row)
     setForm({
-      project_code: row.project_code,
+      project_code: row.project_code ?? '',
       project_name: row.project_name,
       client_id: row.client_id,
       contractor_id: row.contractor_id ?? '',

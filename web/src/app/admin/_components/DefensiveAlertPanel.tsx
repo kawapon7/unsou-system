@@ -10,6 +10,7 @@ import {
   type InvoiceWarningRow,
   type PendingNoticeRow,
 } from '@/app/_actions/defensiveAlertActions'
+import { sendReminderEmail } from '@/app/_actions/emailActions'
 import {
   updateScheduleStatus,
   logNotification,
@@ -20,12 +21,13 @@ import {
   type DuplicateGroup,
   type WorkRecordRow,
 } from '@/app/_actions/workRecordActions'
+import { generateSmsLink } from '@/utils/smsLink'
 
 // ── ユーティリティ ────────────────────────────────────────
 
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
 
-function smsReminderBody(name: string, date: string) {
+function missingInputReminderBody(name: string, date: string) {
   return `${name}さん、${date}の稼働実績の入力がまだ確認できていません。HIBIKIアプリからご入力をお願いします。`
 }
 
@@ -93,10 +95,12 @@ function AlertSection({
 function MissingInputSection({
   rows,
   onMarkAbsent,
+  onEmailReminder,
   onSmsReminder,
 }: {
   rows: MissingInputRow[]
   onMarkAbsent: (scheduleId: string, name: string) => void
+  onEmailReminder: (row: MissingInputRow) => void
   onSmsReminder: (row: MissingInputRow) => void
 }) {
   return (
@@ -114,7 +118,18 @@ function MissingInputSection({
               <span className="mx-1.5 text-zinc-400">|</span>
               <span className="tabular-nums text-zinc-500">{r.date}</span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              {r.contractorEmail ? (
+                <button
+                  type="button"
+                  onClick={() => onEmailReminder(r)}
+                  className="inline-flex rounded-md bg-sky-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-600"
+                >
+                  催促（メール）
+                </button>
+              ) : (
+                <span className="text-xs text-zinc-400">メール未登録</span>
+              )}
               {r.contractorPhone ? (
                 <button
                   type="button"
@@ -228,47 +243,57 @@ function ThresholdSection({
   )
 }
 
-// ── ④ インボイス警告 ────────────────────────────────────
+// ── ④ インボイス警告 ────────────────────────────────────────
 
 function InvoiceWarningSection({ rows }: { rows: InvoiceWarningRow[] }) {
   return (
     <AlertSection icon="⚠️" title="インボイス公表サイト警告" count={rows.length} color="amber">
       <div className="space-y-2">
-        {rows.map(r => (
-          <div
-            key={r.contractorId}
-            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm"
-          >
-            <div>
-              <span className="font-medium text-zinc-900">{r.contractorName}</span>
-              <span className="mx-1.5 text-zinc-400">|</span>
-              <span className="text-zinc-600">
-                {r.invoiceNumber ? `T${r.invoiceNumber}` : '番号未登録'}
-              </span>
-              <span className="ml-2 inline-flex rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700">
-                要確認
-              </span>
+        {rows.map(r => {
+          const isExpired = r.invoiceStatus === 'expired' || r.invoiceStatus === 'invalid'
+          return (
+            <div
+              key={r.contractorId}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm"
+            >
+              <div>
+                <span className="font-medium text-zinc-900">{r.contractorName}</span>
+                <span className="mx-1.5 text-zinc-400">|</span>
+                <span className="text-zinc-600">
+                  {r.invoiceNumber ? `T${r.invoiceNumber}` : '番号未登録'}
+                </span>
+                <span className="ml-2 inline-flex rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700">
+                  要確認
+                </span>
+                {isExpired && (
+                  <span className="ml-2 inline-flex rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-800">
+                    経過措置モード
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-zinc-500">
+                {isExpired
+                  ? '登録番号が失効しています。経過措置控除率への切り替えを確認してください。'
+                  : '登録番号が未設定です。取引先マスタ（/admin/partners）を確認してください。'}
+              </p>
             </div>
-            <p className="text-xs text-zinc-500">
-              {r.invoiceStatus === 'expired' || r.invoiceStatus === 'invalid'
-                ? '登録番号が失効しています。経過措置控除率への切り替えを確認してください。'
-                : '登録番号が未設定です。取引先マスタ（/admin/partners）を確認してください。'}
-            </p>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </AlertSection>
   )
 }
 
-// ── ⑤ 長期未承認 ─────────────────────────────────────────
+// ── ⑤ 長期未承認 ───────────────────────────────────────────
 
 function PendingNoticeSection({
   rows,
-  onResend,
+  onEmailResend,
+  onSmsResend,
 }: {
   rows: PendingNoticeRow[]
-  onResend: (row: PendingNoticeRow, channel: 'email' | 'sms') => void
+  onEmailResend: (row: PendingNoticeRow) => void
+  onSmsResend: (row: PendingNoticeRow) => void
 }) {
   return (
     <AlertSection icon="🔴" title="長期間未承認（48時間超）" count={rows.length} color="red">
@@ -284,15 +309,29 @@ function PendingNoticeSection({
               <span className="text-zinc-600">{r.targetMonth} 分</span>
               <span className="ml-2 text-rose-700 font-semibold">{r.hoursElapsed}時間 未承認</span>
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => onResend(r, r.phone ? 'sms' : 'email')}
-                disabled={!r.phone && !r.email}
-                className="inline-flex rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                通知再送
-              </button>
+            <div className="flex flex-wrap items-center gap-2">
+              {r.email ? (
+                <button
+                  type="button"
+                  onClick={() => onEmailResend(r)}
+                  className="inline-flex rounded-md bg-sky-700 px-2.5 py-1 text-xs font-medium text-white hover:bg-sky-600"
+                >
+                  再送（メール）
+                </button>
+              ) : (
+                <span className="text-xs text-zinc-400">メール未登録</span>
+              )}
+              {r.phone ? (
+                <button
+                  type="button"
+                  onClick={() => onSmsResend(r)}
+                  className="inline-flex rounded-md bg-zinc-800 px-2.5 py-1 text-xs font-medium text-white hover:bg-zinc-700"
+                >
+                  催促（SMS）
+                </button>
+              ) : (
+                <span className="text-xs text-zinc-400">電話番号未登録</span>
+              )}
             </div>
           </div>
         ))}
@@ -335,9 +374,20 @@ export default function DefensiveAlertPanel() {
     })
   }
 
+  function handleEmailReminder(row: MissingInputRow) {
+    if (!row.contractorEmail) return
+    const subject = '【HIBIKI】稼働実績の入力をお願いします'
+    const body = missingInputReminderBody(row.contractorName, row.date)
+    startTransition(async () => {
+      const res = await sendReminderEmail(row.contractorId, row.contractorEmail!, subject, body)
+      if (res.error) { setLoadErr(res.error); return }
+      await load()
+    })
+  }
+
   function handleSmsReminder(row: MissingInputRow) {
     if (!row.contractorPhone) return
-    const body = smsReminderBody(row.contractorName, row.date)
+    const body = missingInputReminderBody(row.contractorName, row.date)
     startTransition(async () => {
       const res = await logNotification({
         contractor_id: row.contractorId,
@@ -346,7 +396,7 @@ export default function DefensiveAlertPanel() {
         status:        'sent',
       })
       if (res.error) { setLoadErr(res.error); return }
-      window.location.href = `sms:${row.contractorPhone}?body=${encodeURIComponent(body)}`
+      window.location.href = generateSmsLink(row.contractorPhone!, body)
     })
   }
 
@@ -368,22 +418,24 @@ export default function DefensiveAlertPanel() {
     })
   }
 
-  function handlePendingResend(row: PendingNoticeRow, channel: 'email' | 'sms') {
+  function handlePendingEmailResend(row: PendingNoticeRow) {
+    if (!row.email) return
+    const subject = '【HIBIKI】支払通知書の承認をお願いします'
+    const body = pendingNoticeResendBody(row.contractorName, row.targetMonth)
     startTransition(async () => {
-      if (channel === 'sms' && row.phone) {
-        const body = pendingNoticeResendBody(row.contractorName, row.targetMonth)
-        const res = await logPendingNoticeResend(row.contractorId, row.phone, 'sms')
-        if (res.error) { setLoadErr(res.error); return }
-        window.location.href = `sms:${row.phone}?body=${encodeURIComponent(body)}`
-        return
-      }
-      if (row.email) {
-        const subject = encodeURIComponent('【HIBIKI】支払通知書の承認をお願いします')
-        const body = encodeURIComponent(pendingNoticeResendBody(row.contractorName, row.targetMonth))
-        const res = await logPendingNoticeResend(row.contractorId, row.email, 'email')
-        if (res.error) { setLoadErr(res.error); return }
-        window.location.href = `mailto:${row.email}?subject=${subject}&body=${body}`
-      }
+      const res = await sendReminderEmail(row.contractorId, row.email!, subject, body)
+      if (res.error) { setLoadErr(res.error); return }
+      await load()
+    })
+  }
+
+  function handlePendingSmsResend(row: PendingNoticeRow) {
+    if (!row.phone) return
+    const body = pendingNoticeResendBody(row.contractorName, row.targetMonth)
+    startTransition(async () => {
+      const res = await logPendingNoticeResend(row.contractorId, row.phone!, 'sms')
+      if (res.error) { setLoadErr(res.error); return }
+      window.location.href = generateSmsLink(row.phone!, body)
     })
   }
 
@@ -418,6 +470,7 @@ export default function DefensiveAlertPanel() {
       <MissingInputSection
         rows={alerts.missingInputs}
         onMarkAbsent={handleMarkAbsent}
+        onEmailReminder={handleEmailReminder}
         onSmsReminder={handleSmsReminder}
       />
 
@@ -435,7 +488,8 @@ export default function DefensiveAlertPanel() {
 
       <PendingNoticeSection
         rows={alerts.pendingNotices}
-        onResend={handlePendingResend}
+        onEmailResend={handlePendingEmailResend}
+        onSmsResend={handlePendingSmsResend}
       />
     </div>
   )

@@ -7,6 +7,11 @@ export type Json =
   | Json[]
 
 export type Database = {
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.5"
+  }
   graphql_public: {
     Tables: {
       [_ in never]: never
@@ -34,93 +39,75 @@ export type Database = {
   }
   public: {
     Tables: {
-      companies: {
-        Row: {
-          created_at: string
-          id:         string
-          name:       string
-        }
-        Insert: {
-          created_at?: string
-          id?:         string
-          name:        string
-        }
-        Update: {
-          created_at?: string
-          id?:         string
-          name?:       string
-        }
-        Relationships: []
-      }
       approval_history: {
         Row: {
+          action_by: string
           action_type: string
-          amount_after: number | null
-          amount_before: number | null
           created_at: string
           id: string
-          memo: string | null
-          operator_id: string
-          target_id: string
-          target_type: string
+          payment_notice_id: string
+          unlock_reason: string | null
         }
         Insert: {
+          action_by: string
           action_type: string
-          amount_after?: number | null
-          amount_before?: number | null
           created_at?: string
           id?: string
-          memo?: string | null
-          operator_id: string
-          target_id: string
-          target_type: string
+          payment_notice_id: string
+          unlock_reason?: string | null
         }
         Update: {
+          action_by?: string
           action_type?: string
-          amount_after?: number | null
-          amount_before?: number | null
           created_at?: string
           id?: string
-          memo?: string | null
-          operator_id?: string
-          target_id?: string
-          target_type?: string
+          payment_notice_id?: string
+          unlock_reason?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "approval_history_action_by_fkey"
+            columns: ["action_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "approval_history_payment_notice_id_fkey"
+            columns: ["payment_notice_id"]
+            isOneToOne: false
+            referencedRelation: "payment_notices"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       billing_records: {
         Row: {
-          active_contractor_count: number
+          active_contractors_count: number
           base_fee: number
-          billing_month: string
+          contractor_fee_total: number
           created_at: string
           id: string
-          per_contractor_fee: number
-          status: string
-          total_fee: number
-          updated_at: string
+          target_month: string
+          total_billing_amount: number
         }
         Insert: {
-          active_contractor_count?: number
+          active_contractors_count: number
           base_fee?: number
-          billing_month: string
+          contractor_fee_total: number
           created_at?: string
           id?: string
-          per_contractor_fee?: number
-          status?: string
-          total_fee?: number
-          updated_at?: string
+          target_month: string
+          total_billing_amount: number
         }
         Update: {
-          active_contractor_count?: number
+          active_contractors_count?: number
           base_fee?: number
-          billing_month?: string
+          contractor_fee_total?: number
           created_at?: string
           id?: string
-          per_contractor_fee?: number
-          status?: string
-          total_fee?: number
-          updated_at?: string
+          target_month?: string
+          total_billing_amount?: number
         }
         Relationships: []
       }
@@ -131,18 +118,24 @@ export type Database = {
           account_type: string | null
           bank_branch: string | null
           bank_name: string | null
-          closing_day: string
+          branch_name: string | null
+          closing_day: number
+          closing_day_int: number | null
           company_name: string
           contact_name: string | null
           created_at: string
           email: string | null
+          has_invoice: boolean
           id: string
-          invoice_registered: boolean
+          invoice_registered: boolean | null
+          is_invoice_registered: boolean
+          metadata: Json
+          name: string | null
           payment_site: number
           phone: string | null
+          tax_treatment: string | null
           tax_type: string
-          tenant_id: string | null
-          updated_at: string
+          tenant_id: string
         }
         Insert: {
           account_holder?: string | null
@@ -150,18 +143,24 @@ export type Database = {
           account_type?: string | null
           bank_branch?: string | null
           bank_name?: string | null
-          closing_day?: string
+          branch_name?: string | null
+          closing_day: number
+          closing_day_int?: number | null
           company_name: string
           contact_name?: string | null
           created_at?: string
           email?: string | null
+          has_invoice?: boolean
           id?: string
-          invoice_registered?: boolean
-          payment_site?: number
+          invoice_registered?: boolean | null
+          is_invoice_registered?: boolean
+          metadata?: Json
+          name?: string | null
+          payment_site: number
           phone?: string | null
-          tax_type?: string
-          tenant_id?: string | null
-          updated_at?: string
+          tax_treatment?: string | null
+          tax_type: string
+          tenant_id?: string
         }
         Update: {
           account_holder?: string | null
@@ -169,18 +168,42 @@ export type Database = {
           account_type?: string | null
           bank_branch?: string | null
           bank_name?: string | null
-          closing_day?: string
+          branch_name?: string | null
+          closing_day?: number
+          closing_day_int?: number | null
           company_name?: string
           contact_name?: string | null
           created_at?: string
           email?: string | null
+          has_invoice?: boolean
           id?: string
-          invoice_registered?: boolean
+          invoice_registered?: boolean | null
+          is_invoice_registered?: boolean
+          metadata?: Json
+          name?: string | null
           payment_site?: number
           phone?: string | null
+          tax_treatment?: string | null
           tax_type?: string
-          tenant_id?: string | null
-          updated_at?: string
+          tenant_id?: string
+        }
+        Relationships: []
+      }
+      companies: {
+        Row: {
+          created_at: string
+          id: string
+          name: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          name: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          name?: string
         }
         Relationships: []
       }
@@ -191,23 +214,24 @@ export type Database = {
           account_type: string | null
           bank_branch: string | null
           bank_name: string | null
+          branch_name: string | null
           contractor_type: string
           created_at: string
-          detailed_input_switch: boolean
-          email: string | null
+          email: string
+          has_withholding: boolean
           id: string
           invoice_number: string | null
           invoice_registration_type: string
-          login_email: string | null
+          invoice_status: string | null
           name: string
-          payment_method: string
           payment_site: number
+          payment_type: string
           phone: string | null
           same_person_id: string | null
-          tax_type: string
-          tenant_id: string | null
-          updated_at: string
-          withholding_tax_flag: boolean
+          show_detail_switch: boolean
+          tax_category: string
+          tenant_id: string
+          user_id: string | null
         }
         Insert: {
           account_holder?: string | null
@@ -215,23 +239,24 @@ export type Database = {
           account_type?: string | null
           bank_branch?: string | null
           bank_name?: string | null
+          branch_name?: string | null
           contractor_type?: string
           created_at?: string
-          detailed_input_switch?: boolean
-          email?: string | null
+          email: string
+          has_withholding?: boolean
           id?: string
           invoice_number?: string | null
-          invoice_registration_type?: string
-          login_email?: string | null
+          invoice_registration_type: string
+          invoice_status?: string | null
           name: string
-          payment_method?: string
-          payment_site?: number
+          payment_site: number
+          payment_type: string
           phone?: string | null
           same_person_id?: string | null
-          tax_type?: string
-          tenant_id?: string | null
-          updated_at?: string
-          withholding_tax_flag?: boolean
+          show_detail_switch?: boolean
+          tax_category: string
+          tenant_id?: string
+          user_id?: string | null
         }
         Update: {
           account_holder?: string | null
@@ -239,74 +264,104 @@ export type Database = {
           account_type?: string | null
           bank_branch?: string | null
           bank_name?: string | null
+          branch_name?: string | null
           contractor_type?: string
           created_at?: string
-          detailed_input_switch?: boolean
-          email?: string | null
+          email?: string
+          has_withholding?: boolean
           id?: string
           invoice_number?: string | null
           invoice_registration_type?: string
-          login_email?: string | null
+          invoice_status?: string | null
           name?: string
-          payment_method?: string
           payment_site?: number
+          payment_type?: string
           phone?: string | null
           same_person_id?: string | null
-          tax_type?: string
-          tenant_id?: string | null
-          updated_at?: string
-          withholding_tax_flag?: boolean
+          show_detail_switch?: boolean
+          tax_category?: string
+          tenant_id?: string
+          user_id?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "contractors_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       expense_records: {
         Row: {
+          amount: number
           amount_actual: number
           amount_tax_excluded: number
           approval_status: string
+          approved_at: string | null
+          category: string
           company_id: string | null
           contractor_id: string
           created_at: string
+          date: string | null
           expense_date: string
           expense_type: string
           id: string
+          is_approved_by_master: boolean
+          metadata: Json
+          note: string | null
           receipt_url: string | null
           remarks: string | null
+          status: string
           tax_category: string
-          tenant_id: string | null
-          updated_at: string
+          tenant_id: string
         }
         Insert: {
+          amount: number
           amount_actual?: number
           amount_tax_excluded?: number
           approval_status?: string
+          approved_at?: string | null
+          category: string
           company_id?: string | null
           contractor_id: string
           created_at?: string
+          date?: string | null
           expense_date: string
-          expense_type: string
+          expense_type?: string
           id?: string
+          is_approved_by_master?: boolean
+          metadata?: Json
+          note?: string | null
           receipt_url?: string | null
           remarks?: string | null
+          status?: string
           tax_category?: string
-          tenant_id?: string | null
-          updated_at?: string
+          tenant_id?: string
         }
         Update: {
+          amount?: number
           amount_actual?: number
           amount_tax_excluded?: number
           approval_status?: string
+          approved_at?: string | null
+          category?: string
           company_id?: string | null
           contractor_id?: string
           created_at?: string
+          date?: string | null
           expense_date?: string
           expense_type?: string
           id?: string
+          is_approved_by_master?: boolean
+          metadata?: Json
+          note?: string | null
           receipt_url?: string | null
           remarks?: string | null
+          status?: string
           tax_category?: string
-          tenant_id?: string | null
-          updated_at?: string
+          tenant_id?: string
         }
         Relationships: [
           {
@@ -330,12 +385,25 @@ export type Database = {
           client_id: string
           consumption_tax: number
           created_at: string
+          deduction_unregistered: number
           due_date: string | null
           id: string
           invoice_month: string
+          is_issued: boolean
           issued_at: string | null
+          project_id: string | null
           status: string
+          subtotal_exempt: number
+          subtotal_registered: number
+          subtotal_unregistered: number
+          target_month: string
+          tax_registered: number
+          tax_unregistered: number
           total_amount: number
+          total_amount_ex_tax: number
+          total_deduction: number
+          total_excluding_tax: number
+          total_tax: number
           total_tax_excluded: number
           updated_at: string
         }
@@ -343,12 +411,25 @@ export type Database = {
           client_id: string
           consumption_tax?: number
           created_at?: string
+          deduction_unregistered?: number
           due_date?: string | null
           id?: string
-          invoice_month: string
+          invoice_month?: string
+          is_issued?: boolean
           issued_at?: string | null
+          project_id?: string | null
           status?: string
+          subtotal_exempt?: number
+          subtotal_registered?: number
+          subtotal_unregistered?: number
+          target_month: string
+          tax_registered?: number
+          tax_unregistered?: number
           total_amount?: number
+          total_amount_ex_tax: number
+          total_deduction?: number
+          total_excluding_tax?: number
+          total_tax: number
           total_tax_excluded?: number
           updated_at?: string
         }
@@ -356,12 +437,25 @@ export type Database = {
           client_id?: string
           consumption_tax?: number
           created_at?: string
+          deduction_unregistered?: number
           due_date?: string | null
           id?: string
           invoice_month?: string
+          is_issued?: boolean
           issued_at?: string | null
+          project_id?: string | null
           status?: string
+          subtotal_exempt?: number
+          subtotal_registered?: number
+          subtotal_unregistered?: number
+          target_month?: string
+          tax_registered?: number
+          tax_unregistered?: number
           total_amount?: number
+          total_amount_ex_tax?: number
+          total_deduction?: number
+          total_excluding_tax?: number
+          total_tax?: number
           total_tax_excluded?: number
           updated_at?: string
         }
@@ -373,6 +467,51 @@ export type Database = {
             referencedRelation: "clients"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "invoices_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      notification_logs: {
+        Row: {
+          contractor_id: string
+          created_at: string
+          destination: string
+          id: string
+          message_id: string | null
+          status: string
+          type: string
+        }
+        Insert: {
+          contractor_id: string
+          created_at?: string
+          destination: string
+          id?: string
+          message_id?: string | null
+          status?: string
+          type: string
+        }
+        Update: {
+          contractor_id?: string
+          created_at?: string
+          destination?: string
+          id?: string
+          message_id?: string | null
+          status?: string
+          type?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "notification_logs_contractor_id_fkey"
+            columns: ["contractor_id"]
+            isOneToOne: false
+            referencedRelation: "contractors"
+            referencedColumns: ["id"]
+          },
         ]
       }
       payment_notices: {
@@ -382,6 +521,7 @@ export type Database = {
           created_at: string
           deduction: number
           deduction_rate: number
+          deduction_unregistered: number
           expense_tax: number
           expense_tax_excluded: number
           id: string
@@ -390,7 +530,17 @@ export type Database = {
           locked: boolean
           locked_at: string | null
           notice_month: string
+          status: string
+          subtotal_exempt: number
+          subtotal_registered: number
+          subtotal_unregistered: number
+          target_month: string
+          tax_registered: number
+          tax_unregistered: number
           total_amount: number
+          total_deduction: number
+          total_excluding_tax: number
+          total_tax: number
           updated_at: string
         }
         Insert: {
@@ -399,23 +549,7 @@ export type Database = {
           created_at?: string
           deduction?: number
           deduction_rate?: number
-          expense_tax?: number
-          expense_tax_excluded?: number
-          id?: string
-          labor_tax?: number
-          labor_tax_excluded?: number
-          locked?: boolean
-          locked_at?: string | null
-          notice_month: string
-          total_amount?: number
-          updated_at?: string
-        }
-        Update: {
-          approval_status?: string
-          contractor_id?: string
-          created_at?: string
-          deduction?: number
-          deduction_rate?: number
+          deduction_unregistered?: number
           expense_tax?: number
           expense_tax_excluded?: number
           id?: string
@@ -424,7 +558,45 @@ export type Database = {
           locked?: boolean
           locked_at?: string | null
           notice_month?: string
+          status: string
+          subtotal_exempt?: number
+          subtotal_registered?: number
+          subtotal_unregistered?: number
+          target_month: string
+          tax_registered?: number
+          tax_unregistered?: number
           total_amount?: number
+          total_deduction?: number
+          total_excluding_tax?: number
+          total_tax?: number
+          updated_at?: string
+        }
+        Update: {
+          approval_status?: string
+          contractor_id?: string
+          created_at?: string
+          deduction?: number
+          deduction_rate?: number
+          deduction_unregistered?: number
+          expense_tax?: number
+          expense_tax_excluded?: number
+          id?: string
+          labor_tax?: number
+          labor_tax_excluded?: number
+          locked?: boolean
+          locked_at?: string | null
+          notice_month?: string
+          status?: string
+          subtotal_exempt?: number
+          subtotal_registered?: number
+          subtotal_unregistered?: number
+          target_month?: string
+          tax_registered?: number
+          tax_unregistered?: number
+          total_amount?: number
+          total_deduction?: number
+          total_excluding_tax?: number
+          total_tax?: number
           updated_at?: string
         }
         Relationships: [
@@ -441,35 +613,29 @@ export type Database = {
         Row: {
           contractor_id: string
           created_at: string
+          expense_amount_total: number
           id: string
-          payment_date: string | null
-          payment_month: string
-          payment_notice_id: string | null
-          status: string
-          total_amount: number
-          updated_at: string
+          reward_amount_ex_tax: number
+          target_month: string
+          tax_amount: number
         }
         Insert: {
           contractor_id: string
           created_at?: string
+          expense_amount_total: number
           id?: string
-          payment_date?: string | null
-          payment_month: string
-          payment_notice_id?: string | null
-          status?: string
-          total_amount?: number
-          updated_at?: string
+          reward_amount_ex_tax: number
+          target_month: string
+          tax_amount: number
         }
         Update: {
           contractor_id?: string
           created_at?: string
+          expense_amount_total?: number
           id?: string
-          payment_date?: string | null
-          payment_month?: string
-          payment_notice_id?: string | null
-          status?: string
-          total_amount?: number
-          updated_at?: string
+          reward_amount_ex_tax?: number
+          target_month?: string
+          tax_amount?: number
         }
         Relationships: [
           {
@@ -479,45 +645,41 @@ export type Database = {
             referencedRelation: "contractors"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "payments_payment_notice_id_fkey"
-            columns: ["payment_notice_id"]
-            isOneToOne: false
-            referencedRelation: "payment_notices"
-            referencedColumns: ["id"]
-          },
         ]
       }
       price_rules: {
         Row: {
-          buy_unit_price: number
-          calc_type: string
+          buying_price: number
+          calculation_type: string
           created_at: string
-          effective_from: string | null
-          effective_to: string | null
           id: string
+          margin_fixed: number
+          margin_rate: number
           project_id: string
-          sale_unit_price: number
+          sales_price: number
+          selling_price: number
         }
         Insert: {
-          buy_unit_price?: number
-          calc_type?: string
+          buying_price: number
+          calculation_type: string
           created_at?: string
-          effective_from?: string | null
-          effective_to?: string | null
           id?: string
+          margin_fixed?: number
+          margin_rate?: number
           project_id: string
-          sale_unit_price?: number
+          sales_price?: number
+          selling_price: number
         }
         Update: {
-          buy_unit_price?: number
-          calc_type?: string
+          buying_price?: number
+          calculation_type?: string
           created_at?: string
-          effective_from?: string | null
-          effective_to?: string | null
           id?: string
+          margin_fixed?: number
+          margin_rate?: number
           project_id?: string
-          sale_unit_price?: number
+          sales_price?: number
+          selling_price?: number
         }
         Relationships: [
           {
@@ -531,33 +693,30 @@ export type Database = {
       }
       project_payees: {
         Row: {
+          contractor_id: string
           created_at: string
           id: string
-          payee_contractor_id: string
           project_id: string
-          updated_at: string
-          via_contractor_id: string | null
+          share_rate: number | null
         }
         Insert: {
+          contractor_id: string
           created_at?: string
           id?: string
-          payee_contractor_id: string
           project_id: string
-          updated_at?: string
-          via_contractor_id?: string | null
+          share_rate?: number | null
         }
         Update: {
+          contractor_id?: string
           created_at?: string
           id?: string
-          payee_contractor_id?: string
           project_id?: string
-          updated_at?: string
-          via_contractor_id?: string | null
+          share_rate?: number | null
         }
         Relationships: [
           {
-            foreignKeyName: "project_payees_payee_contractor_id_fkey"
-            columns: ["payee_contractor_id"]
+            foreignKeyName: "project_payees_contractor_id_fkey"
+            columns: ["contractor_id"]
             isOneToOne: false
             referencedRelation: "contractors"
             referencedColumns: ["id"]
@@ -569,13 +728,6 @@ export type Database = {
             referencedRelation: "projects"
             referencedColumns: ["id"]
           },
-          {
-            foreignKeyName: "project_payees_via_contractor_id_fkey"
-            columns: ["via_contractor_id"]
-            isOneToOne: false
-            referencedRelation: "contractors"
-            referencedColumns: ["id"]
-          },
         ]
       }
       projects: {
@@ -584,16 +736,18 @@ export type Database = {
           client_id: string
           contractor_id: string | null
           created_at: string
+          default_margin_rate: number | null
           destination: string | null
           id: string
+          name: string | null
           operation_end: string | null
           operation_start: string | null
           origin: string | null
-          project_code: string
+          project_code: string | null
           project_name: string
           sale_amount: number
           status: string
-          tenant_id: string | null
+          tenant_id: string
           unit_type: string
           updated_at: string
         }
@@ -602,16 +756,18 @@ export type Database = {
           client_id: string
           contractor_id?: string | null
           created_at?: string
+          default_margin_rate?: number | null
           destination?: string | null
           id?: string
+          name?: string | null
           operation_end?: string | null
           operation_start?: string | null
           origin?: string | null
-          project_code: string
+          project_code?: string | null
           project_name: string
           sale_amount?: number
           status?: string
-          tenant_id?: string | null
+          tenant_id?: string
           unit_type?: string
           updated_at?: string
         }
@@ -620,16 +776,18 @@ export type Database = {
           client_id?: string
           contractor_id?: string | null
           created_at?: string
+          default_margin_rate?: number | null
           destination?: string | null
           id?: string
+          name?: string | null
           operation_end?: string | null
           operation_start?: string | null
           origin?: string | null
-          project_code?: string
+          project_code?: string | null
           project_name?: string
           sale_amount?: number
           status?: string
-          tenant_id?: string | null
+          tenant_id?: string
           unit_type?: string
           updated_at?: string
         }
@@ -650,88 +808,181 @@ export type Database = {
           },
         ]
       }
-      users: {
+      scan_jobs: {
         Row: {
-          contractor_id: string | null
           created_at: string
-          email: string
+          error_message: string | null
+          extracted_data: Json | null
+          file_name: string | null
+          file_type: string | null
           id: string
-          role: string
+          job_id: string
+          status: string
+          updated_at: string
+          user_id: string
+          work_record_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          extracted_data?: Json | null
+          file_name?: string | null
+          file_type?: string | null
+          id?: string
+          job_id: string
+          status?: string
+          updated_at?: string
+          user_id: string
+          work_record_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          extracted_data?: Json | null
+          file_name?: string | null
+          file_type?: string | null
+          id?: string
+          job_id?: string
+          status?: string
+          updated_at?: string
+          user_id?: string
+          work_record_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "scan_jobs_work_record_id_fkey"
+            columns: ["work_record_id"]
+            isOneToOne: false
+            referencedRelation: "work_records"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      schedules: {
+        Row: {
+          contractor_id: string
+          created_at: string
+          date: string
+          id: string
+          project_id: string
+          status: string
+          tenant_id: string
           updated_at: string
         }
         Insert: {
-          contractor_id?: string | null
+          contractor_id: string
           created_at?: string
-          email: string
+          date: string
           id?: string
-          role?: string
+          project_id: string
+          status?: string
+          tenant_id?: string
           updated_at?: string
         }
         Update: {
-          contractor_id?: string | null
+          contractor_id?: string
           created_at?: string
-          email?: string
+          date?: string
           id?: string
-          role?: string
+          project_id?: string
+          status?: string
+          tenant_id?: string
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "users_contractor_id_fkey"
+            foreignKeyName: "schedules_contractor_id_fkey"
             columns: ["contractor_id"]
             isOneToOne: false
             referencedRelation: "contractors"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "schedules_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
+            referencedColumns: ["id"]
+          },
         ]
+      }
+      users: {
+        Row: {
+          created_at: string
+          email: string
+          id: string
+          role: string
+        }
+        Insert: {
+          created_at?: string
+          email: string
+          id: string
+          role: string
+        }
+        Update: {
+          created_at?: string
+          email?: string
+          id?: string
+          role?: string
+        }
+        Relationships: []
       }
       work_records: {
         Row: {
-          approval_status: string
+          break_minutes: number | null
           company_id: string | null
           contractor_id: string
           created_at: string
+          date: string | null
+          end_time: string | null
           id: string
-          memo: string | null
-          project_id: string | null
-          quantity: number
-          spot_generic_id: string | null
-          tax_excluded_payment: number
-          tax_excluded_sales: number
-          tenant_id: string | null
-          updated_at: string
+          is_approved_by_master: boolean
+          metadata: Json
+          note: string | null
+          piece_count: number | null
+          project_id: string
+          raw_spot_text: string | null
+          start_time: string | null
+          status: string
+          tenant_id: string
           work_date: string
         }
         Insert: {
-          approval_status?: string
+          break_minutes?: number | null
           company_id?: string | null
           contractor_id: string
           created_at?: string
+          date?: string | null
+          end_time?: string | null
           id?: string
-          memo?: string | null
-          project_id?: string | null
-          quantity?: number
-          spot_generic_id?: string | null
-          tax_excluded_payment?: number
-          tax_excluded_sales?: number
-          tenant_id?: string | null
-          updated_at?: string
+          is_approved_by_master?: boolean
+          metadata?: Json
+          note?: string | null
+          piece_count?: number | null
+          project_id: string
+          raw_spot_text?: string | null
+          start_time?: string | null
+          status?: string
+          tenant_id?: string
           work_date: string
         }
         Update: {
-          approval_status?: string
+          break_minutes?: number | null
           company_id?: string | null
           contractor_id?: string
           created_at?: string
+          date?: string | null
+          end_time?: string | null
           id?: string
-          memo?: string | null
-          project_id?: string | null
-          quantity?: number
-          spot_generic_id?: string | null
-          tax_excluded_payment?: number
-          tax_excluded_sales?: number
-          tenant_id?: string | null
-          updated_at?: string
+          is_approved_by_master?: boolean
+          metadata?: Json
+          note?: string | null
+          piece_count?: number | null
+          project_id?: string
+          raw_spot_text?: string | null
+          start_time?: string | null
+          status?: string
+          tenant_id?: string
           work_date?: string
         }
         Relationships: [
@@ -900,4 +1151,3 @@ export const Constants = {
     Enums: {},
   },
 } as const
-

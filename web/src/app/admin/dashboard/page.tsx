@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import DefensiveAlertPanel from '@/components/admin/DefensiveAlertPanel'
+import DefensiveAlertPanel from '@/app/admin/_components/DefensiveAlertPanel'
 import {
   fetchDashboardSummary,
   fetchInvoiceSchedule,

@@ -683,7 +683,7 @@ export default function KobunDashboard() {
             {contractor ? `${contractor.name} さんのダッシュボード` : 'ダッシュボード'}
           </h1>
           {contractor && (
-            <p className="text-sm text-zinc-500 mt-1">{contractor.email ?? contractor.login_email}</p>
+            <p className="text-sm text-zinc-500 mt-1">{contractor.email ?? '—'}</p>
           )}
         </div>
 

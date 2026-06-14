@@ -23,8 +23,8 @@ $$;
 
 CREATE OR REPLACE FUNCTION my_contractor_id()
 RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
-  SELECT id FROM public.contractors
-  WHERE user_id = auth.uid()
+  SELECT contractor_id FROM public.users
+  WHERE id = auth.uid()
   LIMIT 1;
 $$;
 

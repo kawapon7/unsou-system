@@ -412,10 +412,10 @@ function ClientsTab() {
       contact_name: row.contact_name ?? '',
       phone: row.phone ?? '',
       email: row.email ?? '',
-      closing_day: row.closing_day,
+      closing_day: row.closing_day === 31 ? '月末' : String(row.closing_day),
       payment_site: String(row.payment_site),
       tax_type: row.tax_type,
-      invoice_registered: row.invoice_registered,
+      invoice_registered: row.invoice_registered ?? row.is_invoice_registered ?? false,
       bank_name: row.bank_name ?? '',
       bank_branch: row.bank_branch ?? '',
       account_type: row.account_type ?? '普通',
@@ -436,7 +436,7 @@ function ClientsTab() {
       contact_name: form.contact_name || null,
       phone: form.phone || null,
       email: form.email || null,
-      closing_day: form.closing_day,
+      closing_day: form.closing_day === '月末' ? 31 : Number(form.closing_day),
       payment_site: Number(form.payment_site),
       tax_type: form.tax_type,
       invoice_registered: form.invoice_registered,
@@ -586,10 +586,10 @@ function ContractorsTab() {
       name: row.name,
       phone: row.phone ?? '',
       email: row.email ?? '',
-      login_email: row.login_email ?? '',
-      payment_method: row.payment_method,
+      login_email: row.email ?? '',
+      payment_method: row.payment_type,
       payment_site: String(row.payment_site),
-      tax_type: row.tax_type,
+      tax_type: row.tax_category,
       invoice_registration_type: row.invoice_registration_type,
       invoice_number: row.invoice_number ?? '',
       same_person_id: row.same_person_id ?? '',
@@ -618,11 +618,10 @@ function ContractorsTab() {
     const payload: ContractorInsert = {
       name: form.name,
       phone: form.phone || null,
-      email: form.email || null,
-      login_email: form.login_email || null,
-      payment_method: form.payment_method,
+      email: form.email || form.login_email || 'noreply@local.dev',
+      payment_type: form.payment_method === '振込' ? 'bank_transfer' : form.payment_method,
       payment_site: Number(form.payment_site),
-      tax_type: form.tax_type,
+      tax_category: form.tax_type,
       invoice_registration_type: form.invoice_registration_type,
       invoice_number: form.invoice_number || null,
       same_person_id: form.same_person_id || null,
@@ -631,7 +630,6 @@ function ContractorsTab() {
       account_type: form.account_type || null,
       account_number: form.account_number || null,
       account_holder: form.account_holder || null,
-      withholding_tax_flag: false,
       contractor_type: 'individual',
     }
 
@@ -686,8 +684,8 @@ function ContractorsTab() {
               {rows.map(row => (
                 <tr key={row.id} className="hover:bg-zinc-50">
                   <td className="px-4 py-3 font-medium text-zinc-900">{row.name}</td>
-                  <td className="px-4 py-3 text-zinc-600">{row.email ?? row.login_email ?? '—'}</td>
-                  <td className="px-4 py-3 text-zinc-600">{row.payment_method}</td>
+                  <td className="px-4 py-3 text-zinc-600">{row.email ?? '—'}</td>
+                  <td className="px-4 py-3 text-zinc-600">{row.payment_type}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.payment_site}日</td>
                   <td className="px-4 py-3 text-zinc-600">{invoiceLabel(row.invoice_registration_type)}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.phone ?? '—'}</td>

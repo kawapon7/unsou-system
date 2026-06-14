@@ -150,7 +150,7 @@ export async function fetchBillingByClient(
     const client = row.projects?.clients
     if (!client) continue
 
-    const { from: cFrom, to: cTo } = closingRange(yearMonth, client.closing_day)
+    const { from: cFrom, to: cTo } = closingRange(yearMonth, String(client.closing_day))
     const workDate = new Date(row.work_date)
     if (workDate < cFrom || workDate > cTo) continue
 
@@ -168,8 +168,8 @@ export async function fetchBillingByClient(
         clientId:          client.id,
         companyName:       client.company_name,
         taxType:           client.tax_type,
-        invoiceRegistered: client.invoice_registered,
-        closingDay:        client.closing_day,
+        invoiceRegistered: client.invoice_registered ?? false,
+        closingDay:        String(client.closing_day),
         paymentSite:       client.payment_site,
         projectCount:      1,
         saleAmountNet:     net,

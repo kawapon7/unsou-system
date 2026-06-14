@@ -63,7 +63,8 @@ export async function fetchUnassignedSpots(): Promise<ActionResult<SpotGroup[]>>
     }
     const g = groupMap.get(key)!
     g.recordCount++
-    const cName = (r.contractors as { name: string } | null)?.name
+    const cRaw = r.contractors as { name: string } | { name: string }[] | null
+    const cName = Array.isArray(cRaw) ? cRaw[0]?.name : cRaw?.name
     if (cName && !g.contractorNames.includes(cName)) g.contractorNames.push(cName)
     if (r.work_date < g.earliestDate) g.earliestDate = r.work_date
     if (r.work_date > g.latestDate)   g.latestDate   = r.work_date
