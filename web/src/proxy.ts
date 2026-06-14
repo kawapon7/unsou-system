@@ -27,7 +27,7 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const isProtected = pathname.startsWith('/oyabun') || pathname.startsWith('/kobun')
+  const isProtected = pathname.startsWith('/admin') || pathname.startsWith('/driver')
   const isLoginPage = pathname === '/login'
 
   // TODO: UI確認用一時バイパス（本番前に必ず削除すること）
@@ -54,7 +54,7 @@ export async function proxy(request: NextRequest) {
       : (userData?.role ?? user.user_metadata?.role)
 
     const url = request.nextUrl.clone()
-    url.pathname = role === 'master' ? '/oyabun/dashboard' : '/kobun/dashboard'
+    url.pathname = role === 'master' ? '/admin/dashboard' : '/driver/dashboard'
     return NextResponse.redirect(url)
   }
 
@@ -62,5 +62,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/login', '/oyabun/:path*', '/kobun/:path*'],
+  matcher: ['/login', '/admin/:path*', '/driver/:path*'],
 }

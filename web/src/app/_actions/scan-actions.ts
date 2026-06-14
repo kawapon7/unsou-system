@@ -2,6 +2,7 @@
 
 import { createClient }        from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { getCurrentTenantId }  from '@/utils/tenant'
 
 type ActionResult<T = void> =
   | { data: T;    error: null   }
@@ -12,6 +13,7 @@ type ActionResult<T = void> =
 export type ContractorOption = { id: string; name: string }
 
 export async function fetchContractorOptions(): Promise<ActionResult<ContractorOption[]>> {
+  const tenantId = await getCurrentTenantId()
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return { data: null, error: '認証が必要です' }
@@ -20,6 +22,7 @@ export async function fetchContractorOptions(): Promise<ActionResult<ContractorO
   const { data, error } = await service
     .from('contractors')
     .select('id, name')
+    .eq('tenant_id', tenantId)
     .order('name')
 
   if (error) return { data: null, error: error.message }
@@ -41,6 +44,7 @@ export type ScanSaveParams = {
 export async function saveScanResult(
   params: ScanSaveParams,
 ): Promise<ActionResult<{ id: string }>> {
+  const tenantId = await getCurrentTenantId()
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return { data: null, error: '認証が必要です' }
@@ -56,6 +60,7 @@ export async function saveScanResult(
       work_date:            params.invoiceDate,
       tax_excluded_payment: params.subtotal,
       memo:                 `[AI SCAN] ${params.issuerName}`,
+      tenant_id:            tenantId,
       metadata: {
         'scan::issuer_name':   params.issuerName,
         'scan::reg_number':    params.registrationNumber,

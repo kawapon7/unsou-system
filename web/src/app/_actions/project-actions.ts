@@ -2,6 +2,7 @@
 
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { getCurrentTenantId } from '@/utils/tenant'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -27,6 +28,7 @@ export type SpotGroup = {
  * spot_generic_id でグループ化して返す。
  */
 export async function fetchUnassignedSpots(): Promise<ActionResult<SpotGroup[]>> {
+  const tenantId = await getCurrentTenantId()
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return { data: null, error: '認証が必要です' }
@@ -36,6 +38,7 @@ export async function fetchUnassignedSpots(): Promise<ActionResult<SpotGroup[]>>
   const { data, error } = await service
     .from('work_records')
     .select('id, spot_generic_id, work_date, tax_excluded_sales, tax_excluded_payment, contractors(name)')
+    .eq('tenant_id', tenantId)
     .not('spot_generic_id', 'is', null)
     .is('project_id', null)
     .order('work_date', { ascending: true })
@@ -91,6 +94,7 @@ export type PromoteSpotParams = {
 export async function promoteSpotToOfficialProject(
   params: PromoteSpotParams,
 ): Promise<ActionResult<{ projectId: string; updatedCount: number }>> {
+  const tenantId = await getCurrentTenantId()
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return { data: null, error: '認証が必要です' }
@@ -114,6 +118,7 @@ export async function promoteSpotToOfficialProject(
       buy_amount:   params.buyAmount,
       unit_type:    params.unitType,
       status:       'active',
+      tenant_id:    tenantId,
     })
     .select('id')
     .single()
@@ -127,6 +132,7 @@ export async function promoteSpotToOfficialProject(
     .from('work_records')
     .update({ project_id: newProject.id })
     .eq('spot_generic_id', params.spotGenericId)
+    .eq('tenant_id', tenantId)
     .is('project_id', null)
     .select('id')
 

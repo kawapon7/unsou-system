@@ -12,7 +12,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 
 export interface VoiceIntentResult {
   intent:      'navigate' | 'add_expense' | 'unknown'
-  targetUrl?:  '/oyabun/sales' | '/kobun/dashboard' | '/oyabun/contractors'
+  targetUrl?:  '/admin/sales' | '/driver/dashboard' | '/admin/contractors'
   expenseData?: {
     category: 'highway' | 'parking' | 'fuel'
     amount:   number
@@ -42,7 +42,7 @@ const RESPONSE_SCHEMA: ResponseSchema = {
     targetUrl: {
       type:        SchemaType.STRING,
       description:
-        '"/oyabun/sales" | "/kobun/dashboard" | "/oyabun/contractors" — ' +
+        '"/admin/sales" | "/driver/dashboard" | "/admin/contractors" — ' +
         'intent が navigate のときのみ設定。それ以外は null',
       nullable: true,
     },
@@ -78,9 +78,9 @@ const SYSTEM_PROMPT = `あなたは日本の運送業向け音声アシスタン
 【インテント判定ルール】
 
 ■ intent = "navigate"（画面遷移）
-・「売上管理」「請求書」「売上を見る」「請求を確認」  → targetUrl: "/oyabun/sales"
-・「ダッシュボード」「ホーム」「トップ」「案件一覧」「案件を見る」→ targetUrl: "/kobun/dashboard"
-・「取引先」「荷主」「得意先一覧」「委託先一覧」「ドライバー一覧」→ targetUrl: "/oyabun/contractors"
+・「売上管理」「請求書」「売上を見る」「請求を確認」  → targetUrl: "/admin/sales"
+・「ダッシュボード」「ホーム」「トップ」「案件一覧」「案件を見る」→ targetUrl: "/driver/dashboard"
+・「取引先」「荷主」「得意先一覧」「委託先一覧」「ドライバー一覧」→ targetUrl: "/admin/contractors"
 
 ■ intent = "add_expense"（立替金・経費入力）
 ・「高速」「ETC」「有料道路」「圏央道」「首都高」→ category: "highway"
@@ -137,7 +137,7 @@ export async function parseVoiceIntent(
       }
     }
     if (data.intent === 'navigate') {
-      const VALID_URLS = ['/oyabun/sales', '/kobun/dashboard', '/oyabun/contractors']
+      const VALID_URLS = ['/admin/sales', '/driver/dashboard', '/admin/contractors']
       if (!data.targetUrl || !VALID_URLS.includes(data.targetUrl)) {
         data.intent = 'unknown'
       }

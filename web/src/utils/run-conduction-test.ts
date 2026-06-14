@@ -28,7 +28,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 })
 
 // billing/actions.ts の集計関数をインポート（'use server' は Node.js では無害）
-import { fetchBillingByClient, fetchPaymentByContractor } from '../app/oyabun/billing/actions'
+import { fetchBillingByClient, fetchPaymentByContractor } from '../app/admin/billing/actions'
 
 async function runTest() {
   console.log('🚀 結合動作確認（導通テスト）を開始します（源泉徴収：凍結仕様）...')

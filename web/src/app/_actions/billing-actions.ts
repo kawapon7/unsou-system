@@ -3,6 +3,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { calculateInvoiceTax, type TaxItem } from '@/utils/billing/taxCalculator'
+import { getCurrentTenantId } from '@/utils/tenant'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -78,11 +79,13 @@ async function finalizeInvoice(
   clientId: string,
   opts: { userId: string; isDeveloperUnlock?: boolean; unlockReason?: string },
 ): Promise<ActionResult> {
+  const tenantId = await getCurrentTenantId()
   // 荷主情報取得
   const { data: client, error: clientErr } = await service
     .from('clients')
     .select('id, company_name, tax_type, invoice_registered, closing_day, payment_site')
     .eq('id', clientId)
+    .eq('tenant_id', tenantId)
     .single()
 
   if (clientErr || !client) {
@@ -124,6 +127,7 @@ async function finalizeInvoice(
     .from('work_records')
     .select('tax_excluded_sales, work_date, projects!inner( client_id )')
     .eq('projects.client_id', clientId)
+    .eq('tenant_id', tenantId)
     .gte('work_date', from.toISOString().slice(0, 10))
     .lte('work_date', to.toISOString().slice(0, 10))
 
@@ -180,11 +184,13 @@ async function finalizePaymentNotice(
   contractorId: string,
   opts: { userId: string; isDeveloperUnlock?: boolean; unlockReason?: string },
 ): Promise<ActionResult> {
+  const tenantId = await getCurrentTenantId()
   // 委託先情報取得
   const { data: contractor, error: ctErr } = await service
     .from('contractors')
     .select('id, tax_type, invoice_registration_type')
     .eq('id', contractorId)
+    .eq('tenant_id', tenantId)
     .single()
 
   if (ctErr || !contractor) {
@@ -237,6 +243,7 @@ async function finalizePaymentNotice(
     .from('work_records')
     .select('tax_excluded_payment, work_date')
     .eq('contractor_id', contractorId)
+    .eq('tenant_id', tenantId)
     .gte('work_date', from)
     .lte('work_date', to)
 
@@ -246,6 +253,7 @@ async function finalizePaymentNotice(
     .from('expense_records')
     .select('amount_tax_excluded, tax_category, expense_date')
     .eq('contractor_id', contractorId)
+    .eq('tenant_id', tenantId)
     .gte('expense_date', from)
     .lte('expense_date', to)
 

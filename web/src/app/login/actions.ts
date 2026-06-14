@@ -35,8 +35,8 @@ export async function login(formData: FormData) {
     : (userData?.role ?? user.user_metadata?.role)
 
   if (role === 'master') {
-    redirect('/oyabun/dashboard')
+    redirect('/admin/dashboard')
   } else {
-    redirect('/kobun/dashboard')
+    redirect('/driver/dashboard')
   }
 }

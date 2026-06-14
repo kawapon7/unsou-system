@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
-import { computeInvoicePreview, type InvoicePreview } from '@/app/oyabun/sales/actions'
+import { computeInvoicePreview, type InvoicePreview } from '@/app/admin/sales/actions'
 
 const TAX_LABEL: Record<string, string> = {
   exclusive: '外税（10%）',

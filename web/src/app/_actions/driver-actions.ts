@@ -72,10 +72,10 @@ export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNot
   const { data, error } = await db
     .from('payment_notices')
     .select(
-      'id, target_month, subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction, status',
+      'id, notice_month, subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction, approval_status',
     )
     .eq('contractor_id', contractorId)
-    .order('target_month', { ascending: false })
+    .order('notice_month', { ascending: false })
     .limit(12)
 
   if (error) return { data: null, error: error.message }
@@ -91,7 +91,7 @@ export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNot
 
     return {
       id:             r.id,
-      noticeMonth:    r.target_month,
+      noticeMonth:    r.notice_month,
       laborNet,
       laborTax,
       expenseNet:     Math.max(0, totalEx  - laborNet),
@@ -99,9 +99,8 @@ export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNot
       deductionRate,
       deduction,
       totalAmount:    totalEx + totalTax - deduction,
-      // status='locked' が kobun 承認済み、'approved' は生成済み・未確認
-      approvalStatus: r.status === 'locked' ? 'approved' : 'pending',
-      locked:         r.status === 'locked',
+      approvalStatus: r.approval_status ?? 'pending',
+      locked:         r.approval_status === 'approved',
     }
   })
 
@@ -150,7 +149,7 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
     return { data: null, error: 'すでに承認済みです' }
   }
 
-  // status を 'locked' に更新（kobun 承認確定）
+  // status を 'locked' に更新（driver 承認確定）
   const { error: updateErr } = await db
     .from('payment_notices')
     .update({ status: 'locked' })

@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore, useCallback } from 'react'
 
-const STORAGE_KEY  = 'hibiki_oyabun_favorites'
+const STORAGE_KEY  = 'hibiki_admin_favorites'
 const CHANGE_EVENT = 'hibiki:favorites-change'
 
 export interface Favorite {

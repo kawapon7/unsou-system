@@ -141,6 +141,7 @@ export type Database = {
           payment_site: number
           phone: string | null
           tax_type: string
+          tenant_id: string | null
           updated_at: string
         }
         Insert: {
@@ -159,6 +160,7 @@ export type Database = {
           payment_site?: number
           phone?: string | null
           tax_type?: string
+          tenant_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -177,6 +179,7 @@ export type Database = {
           payment_site?: number
           phone?: string | null
           tax_type?: string
+          tenant_id?: string | null
           updated_at?: string
         }
         Relationships: []
@@ -193,7 +196,7 @@ export type Database = {
           detailed_input_switch: boolean
           email: string | null
           id: string
-          invoice_registration_number: string | null
+          invoice_number: string | null
           invoice_registration_type: string
           login_email: string | null
           name: string
@@ -202,6 +205,7 @@ export type Database = {
           phone: string | null
           same_person_id: string | null
           tax_type: string
+          tenant_id: string | null
           updated_at: string
           withholding_tax_flag: boolean
         }
@@ -216,7 +220,7 @@ export type Database = {
           detailed_input_switch?: boolean
           email?: string | null
           id?: string
-          invoice_registration_number?: string | null
+          invoice_number?: string | null
           invoice_registration_type?: string
           login_email?: string | null
           name: string
@@ -225,6 +229,7 @@ export type Database = {
           phone?: string | null
           same_person_id?: string | null
           tax_type?: string
+          tenant_id?: string | null
           updated_at?: string
           withholding_tax_flag?: boolean
         }
@@ -239,7 +244,7 @@ export type Database = {
           detailed_input_switch?: boolean
           email?: string | null
           id?: string
-          invoice_registration_number?: string | null
+          invoice_number?: string | null
           invoice_registration_type?: string
           login_email?: string | null
           name?: string
@@ -248,6 +253,7 @@ export type Database = {
           phone?: string | null
           same_person_id?: string | null
           tax_type?: string
+          tenant_id?: string | null
           updated_at?: string
           withholding_tax_flag?: boolean
         }
@@ -267,6 +273,7 @@ export type Database = {
           receipt_url: string | null
           remarks: string | null
           tax_category: string
+          tenant_id: string | null
           updated_at: string
         }
         Insert: {
@@ -282,6 +289,7 @@ export type Database = {
           receipt_url?: string | null
           remarks?: string | null
           tax_category?: string
+          tenant_id?: string | null
           updated_at?: string
         }
         Update: {
@@ -297,6 +305,7 @@ export type Database = {
           receipt_url?: string | null
           remarks?: string | null
           tax_category?: string
+          tenant_id?: string | null
           updated_at?: string
         }
         Relationships: [
@@ -584,6 +593,7 @@ export type Database = {
           project_name: string
           sale_amount: number
           status: string
+          tenant_id: string | null
           unit_type: string
           updated_at: string
         }
@@ -601,6 +611,7 @@ export type Database = {
           project_name: string
           sale_amount?: number
           status?: string
+          tenant_id?: string | null
           unit_type?: string
           updated_at?: string
         }
@@ -618,6 +629,7 @@ export type Database = {
           project_name?: string
           sale_amount?: number
           status?: string
+          tenant_id?: string | null
           unit_type?: string
           updated_at?: string
         }
@@ -686,6 +698,7 @@ export type Database = {
           spot_generic_id: string | null
           tax_excluded_payment: number
           tax_excluded_sales: number
+          tenant_id: string | null
           updated_at: string
           work_date: string
         }
@@ -701,6 +714,7 @@ export type Database = {
           spot_generic_id?: string | null
           tax_excluded_payment?: number
           tax_excluded_sales?: number
+          tenant_id?: string | null
           updated_at?: string
           work_date: string
         }
@@ -716,6 +730,7 @@ export type Database = {
           spot_generic_id?: string | null
           tax_excluded_payment?: number
           tax_excluded_sales?: number
+          tenant_id?: string | null
           updated_at?: string
           work_date?: string
         }

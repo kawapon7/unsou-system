@@ -1,0 +1,316 @@
+'use server'
+
+import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/service'
+import { getCurrentTenantId } from '@/utils/tenant'
+
+type ActionResult<T = void> =
+  | { data: T; error: null }
+  | { data: null; error: string }
+
+const DEV_CONTRACTOR_ID = 'cc31ee16-660a-42db-acb4-05f148a3fce8'
+
+// ── 認証ヘルパー ────────────────────────────────────────────
+
+async function resolveContractorId(userId: string, email?: string): Promise<string | null> {
+  const db = createServiceClient() as any
+
+  const { data: row } = await db
+    .from('contractors')
+    .select('id')
+    .eq('user_id', userId)
+    .maybeSingle()
+  if (row?.id) return row.id
+
+  if (email) {
+    const { data: byEmail } = await db
+      .from('contractors')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle()
+    if (byEmail?.id) return byEmail.id
+  }
+  return null
+}
+
+// ── 型定義 ──────────────────────────────────────────────────
+
+export type MissingInputRow = {
+  scheduleId:     string
+  contractorId:   string
+  contractorName: string
+  projectId:      string
+  projectName:    string
+  date:           string   // 'YYYY-MM-DD'
+}
+
+export type ScheduleRow = {
+  id:           string
+  contractorId: string
+  projectId:    string
+  date:         string
+  status:       'scheduled' | 'absent' | 'completed'
+  createdAt:    string
+  updatedAt:    string
+}
+
+export type ScheduleStatus = 'scheduled' | 'absent' | 'completed'
+
+// ================================================================
+// getMissingInputs
+// 指定日に status='scheduled' だが work_records が存在しない子分を返す
+// date 省略時は本日（JST）
+// 親分ダッシュボード「入力遅延アラート」の検知ロジック
+// ================================================================
+export async function getMissingInputs(
+  date?: string,
+): Promise<ActionResult<MissingInputRow[]>> {
+  const tenantId = await getCurrentTenantId()
+  const targetDate = date ?? new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+
+  const service = createServiceClient()
+  const db = service as any
+
+  // schedules で scheduled な行を全件取得
+  const { data: schedules, error: sErr } = await db
+    .from('schedules')
+    .select(`
+      id,
+      contractor_id,
+      project_id,
+      date,
+      contractors ( id, name ),
+      projects    ( id, project_name, name )
+    `)
+    .eq('date', targetDate)
+    .eq('status', 'scheduled')
+    .eq('tenant_id', tenantId)
+
+  if (sErr) return { data: null, error: sErr.message }
+  if (!schedules?.length) return { data: [], error: null }
+
+  // 同日・同 contractor の work_records を一括取得（IN句）
+  const contractorIds: string[] = [...new Set((schedules as any[]).map((s: any) => s.contractor_id))]
+
+  const { data: workRecords, error: wErr } = await db
+    .from('work_records')
+    .select('contractor_id, project_id, date, work_date')
+    .in('contractor_id', contractorIds)
+    .eq('tenant_id', tenantId)
+    .or(`date.eq.${targetDate},work_date.eq.${targetDate}`)
+
+  if (wErr) return { data: null, error: wErr.message }
+
+  // work_records が存在しない schedule だけを残す
+  const workedSet = new Set(
+    (workRecords ?? []).map((w: any) => `${w.contractor_id}:${w.project_id}`)
+  )
+
+  const missing: MissingInputRow[] = (schedules as any[])
+    .filter((s: any) => !workedSet.has(`${s.contractor_id}:${s.project_id}`))
+    .map((s: any) => ({
+      scheduleId:     s.id,
+      contractorId:   s.contractor_id,
+      contractorName: s.contractors?.name ?? s.contractor_id,
+      projectId:      s.project_id,
+      projectName:    s.projects?.project_name ?? s.projects?.name ?? s.project_id,
+      date:           s.date,
+    }))
+
+  return { data: missing, error: null }
+}
+
+// ================================================================
+// updateScheduleStatus
+// 親分が特定の schedule の status を変更する
+// 主用途: 「本日休み（absent）」への変更
+// ================================================================
+export async function updateScheduleStatus(
+  scheduleId: string,
+  status: ScheduleStatus,
+): Promise<ActionResult> {
+  const tenantId = await getCurrentTenantId()
+  const service = createServiceClient()
+  const db = service as any
+
+  const { error } = await db
+    .from('schedules')
+    .update({ status, updated_at: new Date().toISOString() })
+    .eq('id', scheduleId)
+    .eq('tenant_id', tenantId)
+
+  if (error) return { data: null, error: error.message }
+  return { data: undefined, error: null }
+}
+
+// ================================================================
+// fetchSchedules
+// 子分カレンダー画面: 自分の月次スケジュール一覧を取得
+// ================================================================
+export async function fetchSchedules(
+  yearMonth: string,
+): Promise<ActionResult<ScheduleRow[]>> {
+  const tenantId = await getCurrentTenantId()
+  let contractorId: string | null
+
+  if (process.env.NODE_ENV === 'development') {
+    contractorId = DEV_CONTRACTOR_ID
+  } else {
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  }
+
+  const [y, m] = yearMonth.split('-').map(Number)
+  const from = `${yearMonth}-01`
+  const to   = new Date(y, m, 0).toISOString().slice(0, 10)
+
+  const service = createServiceClient()
+  const db = service as any
+
+  const { data, error } = await db
+    .from('schedules')
+    .select('id, contractor_id, project_id, date, status, created_at, updated_at')
+    .eq('contractor_id', contractorId)
+    .eq('tenant_id', tenantId)
+    .gte('date', from)
+    .lte('date', to)
+    .order('date', { ascending: true })
+
+  if (error) return { data: null, error: error.message }
+
+  return {
+    data: (data ?? []).map((r: any) => ({
+      id:           r.id,
+      contractorId: r.contractor_id,
+      projectId:    r.project_id,
+      date:         r.date,
+      status:       r.status,
+      createdAt:    r.created_at,
+      updatedAt:    r.updated_at,
+    })),
+    error: null,
+  }
+}
+
+// ================================================================
+// upsertSchedule
+// 子分カレンダー: 日付セルのタップで予定を登録／ステータス切り替え
+// UNIQUE(contractor_id, date) の upsert
+// ================================================================
+export async function upsertSchedule(params: {
+  projectId: string
+  date:      string
+  status:    ScheduleStatus
+}): Promise<ActionResult<{ id: string }>> {
+  const tenantId = await getCurrentTenantId()
+  let contractorId: string | null
+
+  if (process.env.NODE_ENV === 'development') {
+    contractorId = DEV_CONTRACTOR_ID
+  } else {
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  }
+
+  const service = createServiceClient()
+  const db = service as any
+
+  const { data, error } = await db
+    .from('schedules')
+    .upsert(
+      {
+        contractor_id: contractorId,
+        project_id:    params.projectId,
+        date:          params.date,
+        status:        params.status,
+        tenant_id:     tenantId,
+        updated_at:    new Date().toISOString(),
+      },
+      { onConflict: 'contractor_id,date', ignoreDuplicates: false },
+    )
+    .select('id')
+    .single()
+
+  if (error) return { data: null, error: error.message }
+  return { data: { id: data.id }, error: null }
+}
+
+// ================================================================
+// copyPrevMonthSchedules
+// 「前月予定の1クリック全コピー」ボタン
+// fromYearMonth の scheduled 行を toYearMonth に一括コピー
+// 既存行は upsert で上書き（ignoreDuplicates: false）
+// ================================================================
+export async function copyPrevMonthSchedules(params: {
+  fromYearMonth: string   // 'YYYY-MM' コピー元
+  toYearMonth:   string   // 'YYYY-MM' コピー先
+}): Promise<ActionResult<{ copied: number }>> {
+  const tenantId = await getCurrentTenantId()
+  let contractorId: string | null
+
+  if (process.env.NODE_ENV === 'development') {
+    contractorId = DEV_CONTRACTOR_ID
+  } else {
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  }
+
+  const service = createServiceClient()
+  const db = service as any
+
+  // コピー元の scheduled 行を全件取得
+  const [fy, fm] = params.fromYearMonth.split('-').map(Number)
+  const fromStart = `${params.fromYearMonth}-01`
+  const fromEnd   = new Date(fy, fm, 0).toISOString().slice(0, 10)
+
+  const { data: source, error: fetchErr } = await db
+    .from('schedules')
+    .select('project_id, date, status')
+    .eq('contractor_id', contractorId)
+    .eq('tenant_id', tenantId)
+    .eq('status', 'scheduled')
+    .gte('date', fromStart)
+    .lte('date', fromEnd)
+
+  if (fetchErr) return { data: null, error: fetchErr.message }
+  if (!source?.length) return { data: { copied: 0 }, error: null }
+
+  // 日付を翌月（toYearMonth）に変換してコピー行を生成
+  const fromMonthNum = fm
+  const toMonthNum   = parseInt(params.toYearMonth.split('-')[1], 10)
+  const toYear       = parseInt(params.toYearMonth.split('-')[0], 10)
+
+  const rows = (source as any[])
+    .map((r: any) => {
+      const srcDay = parseInt(r.date.split('-')[2], 10)
+      const maxDay = new Date(toYear, toMonthNum, 0).getDate()
+      if (srcDay > maxDay) return null   // コピー先月に存在しない日は除外
+      return {
+        contractor_id: contractorId!,
+        project_id:    r.project_id,
+        date:          `${params.toYearMonth}-${String(srcDay).padStart(2, '0')}`,
+        status:        'scheduled' as const,
+        tenant_id:     tenantId,
+        updated_at:    new Date().toISOString(),
+      }
+    })
+    .filter((r): r is NonNullable<typeof r> => r !== null)
+
+  if (!rows.length) return { data: { copied: 0 }, error: null }
+
+  const { error: insertErr } = await db
+    .from('schedules')
+    .upsert(rows, { onConflict: 'contractor_id,date', ignoreDuplicates: false })
+
+  if (insertErr) return { data: null, error: insertErr.message }
+  return { data: { copied: rows.length }, error: null }
+}

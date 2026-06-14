@@ -154,7 +154,7 @@ export async function fetchPaymentNoticePdfData(
     (service as any).from('payment_notices')
       .select('subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction')
       .eq('contractor_id', contractorId)
-      .eq('target_month', from)
+      .eq('notice_month', from)
       .maybeSingle(),
     service.from('work_records')
       .select('work_date, project_id, quantity, tax_excluded_payment')

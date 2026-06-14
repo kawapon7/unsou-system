@@ -76,7 +76,7 @@ function speakJa(text: string) {
 // ── Props ─────────────────────────────────────────────────
 
 interface VoiceButtonProps {
-  /** kobun コンテキストでのみ設定。設定時のみ経費の確認・保存フローが有効 */
+  /** driver コンテキストでのみ設定。設定時のみ経費の確認・保存フローが有効 */
   contractorId?: string
 }
 
@@ -188,7 +188,7 @@ export function VoiceButton({ contractorId }: VoiceButtonProps) {
           return
         }
 
-        // 経費確認（kobun のみ contractorId が設定されている）
+        // 経費確認（driver のみ contractorId が設定されている）
         if (r.intent === 'add_expense' && r.expenseData && contractorId) {
           setPhase('confirm_expense')
           speakJa(r.replyMessage)
