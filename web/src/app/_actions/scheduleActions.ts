@@ -152,9 +152,110 @@ export async function updateScheduleStatus(
   if (error) return { data: null, error: error.message }
 
   revalidatePath('/admin/dashboard')
+  revalidatePath('/admin/schedules')
   revalidatePath('/driver/schedule')
 
   return { data: undefined, error: null }
+}
+
+// ================================================================
+// fetchAdminMonthlySchedules
+// 管理者用カレンダー: 指定月の全ドライバー予定 + 実績突合
+// ================================================================
+
+export type AdminScheduleDisplayStatus = 'scheduled' | 'absent' | 'worked'
+
+export type AdminScheduleEntry = {
+  scheduleId:      string
+  contractorId:    string
+  contractorName:  string
+  projectId:       string
+  projectName:     string
+  date:            string
+  status:          ScheduleStatus
+  displayStatus:   AdminScheduleDisplayStatus
+  isMissingInput:  boolean
+}
+
+export async function fetchAdminMonthlySchedules(
+  yearMonth: string,
+): Promise<ActionResult<AdminScheduleEntry[]>> {
+  const tenantId = await getCurrentTenantId()
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+  const [y, m] = yearMonth.split('-').map(Number)
+  const from = `${yearMonth}-01`
+  const to   = new Date(y, m, 0).toISOString().slice(0, 10)
+
+  const db = createServiceClient() as any
+
+  const { data: schedules, error: sErr } = await db
+    .from('schedules')
+    .select(`
+      id,
+      contractor_id,
+      project_id,
+      date,
+      status,
+      contractors ( id, name ),
+      projects    ( id, project_name, name )
+    `)
+    .eq('tenant_id', tenantId)
+    .gte('date', from)
+    .lte('date', to)
+    .order('date', { ascending: true })
+
+  if (sErr) return { data: null, error: sErr.message }
+  if (!schedules?.length) return { data: [], error: null }
+
+  const contractorIds: string[] = [...new Set((schedules as any[]).map((s: any) => s.contractor_id))]
+
+  const { data: workRecords, error: wErr } = await db
+    .from('work_records')
+    .select('contractor_id, date, work_date')
+    .in('contractor_id', contractorIds)
+    .eq('tenant_id', tenantId)
+    .gte('work_date', from)
+    .lte('work_date', to)
+
+  if (wErr) return { data: null, error: wErr.message }
+
+  const workedSet = new Set(
+    (workRecords ?? []).map((w: any) => {
+      const recordDate = w.date ?? w.work_date
+      return `${w.contractor_id}:${recordDate}`
+    }),
+  )
+
+  const entries: AdminScheduleEntry[] = (schedules as any[]).map((s: any) => {
+    const hasWork = workedSet.has(`${s.contractor_id}:${s.date}`)
+    const isMissingInput =
+      s.status === 'scheduled' &&
+      s.date <= today &&
+      !hasWork
+
+    let displayStatus: AdminScheduleDisplayStatus
+    if (s.status === 'absent') {
+      displayStatus = 'absent'
+    } else if (hasWork) {
+      displayStatus = 'worked'
+    } else {
+      displayStatus = 'scheduled'
+    }
+
+    return {
+      scheduleId:     s.id,
+      contractorId:   s.contractor_id,
+      contractorName: s.contractors?.name ?? s.contractor_id,
+      projectId:      s.project_id,
+      projectName:    s.projects?.project_name ?? s.projects?.name ?? s.project_id,
+      date:           s.date,
+      status:         s.status,
+      displayStatus,
+      isMissingInput,
+    }
+  })
+
+  return { data: entries, error: null }
 }
 
 // ================================================================
