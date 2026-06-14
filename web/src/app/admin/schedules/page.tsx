@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useTransition, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
   fetchAdminMonthlySchedules,
   updateScheduleStatus,
@@ -8,19 +8,41 @@ import {
   type AdminScheduleDisplayStatus,
 } from '@/app/_actions/scheduleActions'
 
+// ── 型 ────────────────────────────────────────────────────
+
+type ViewMode = 'month' | 'week' | 'day'
+
 // ── ユーティリティ ────────────────────────────────────────
 
 const WEEKDAYS = ['日', '月', '火', '水', '木', '金', '土'] as const
 
-function currentYearMonth() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+function toISO(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-function shiftYearMonth(ym: string, delta: number) {
-  const [y, m] = ym.split('-').map(Number)
-  const d = new Date(y, m - 1 + delta, 1)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+function todayISO() {
+  return toISO(new Date())
+}
+
+function parseISO(date: string) {
+  const [y, m, d] = date.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+function addDays(date: string, delta: number) {
+  const d = parseISO(date)
+  d.setDate(d.getDate() + delta)
+  return toISO(d)
+}
+
+function addMonths(date: string, delta: number) {
+  const d = parseISO(date)
+  d.setMonth(d.getMonth() + delta)
+  return toISO(d)
+}
+
+function yearMonthOf(date: string) {
+  return date.slice(0, 7)
 }
 
 function fmtMonth(ym: string) {
@@ -28,7 +50,28 @@ function fmtMonth(ym: string) {
   return `${y}年${Number(m)}月`
 }
 
-function buildCalendarDays(yearMonth: string): (string | null)[] {
+function fmtDate(date: string, withWeekday = false) {
+  const d = parseISO(date)
+  const base = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`
+  return withWeekday ? `${base}（${WEEKDAYS[d.getDay()]}）` : base
+}
+
+function fmtShortDate(date: string) {
+  const d = parseISO(date)
+  return `${d.getMonth() + 1}/${d.getDate()}`
+}
+
+function startOfWeek(date: string) {
+  const d = parseISO(date)
+  d.setDate(d.getDate() - d.getDay())
+  return toISO(d)
+}
+
+function endOfWeek(date: string) {
+  return addDays(startOfWeek(date), 6)
+}
+
+function buildMonthGrid(yearMonth: string): (string | null)[] {
   const [y, m] = yearMonth.split('-').map(Number)
   const firstDay = new Date(y, m - 1, 1).getDay()
   const daysInMonth = new Date(y, m, 0).getDate()
@@ -40,9 +83,45 @@ function buildCalendarDays(yearMonth: string): (string | null)[] {
   return cells
 }
 
-function todayISO() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+function yearMonthsInRange(from: string, to: string): string[] {
+  const months = new Set([yearMonthOf(from), yearMonthOf(to)])
+  return [...months]
+}
+
+function navigateAnchor(date: string, viewMode: ViewMode, delta: -1 | 1): string {
+  if (viewMode === 'month') return addMonths(date, delta)
+  if (viewMode === 'week')  return addDays(date, delta * 7)
+  return addDays(date, delta)
+}
+
+function navLabel(date: string, viewMode: ViewMode): string {
+  if (viewMode === 'month') return fmtMonth(yearMonthOf(date))
+  if (viewMode === 'week') {
+    const from = startOfWeek(date)
+    const to   = endOfWeek(date)
+    if (yearMonthOf(from) === yearMonthOf(to)) {
+      return `${fmtMonth(yearMonthOf(from))} ${fmtShortDate(from)} 〜 ${fmtShortDate(to)}`
+    }
+    return `${fmtShortDate(from)} 〜 ${fmtShortDate(to)}`
+  }
+  return fmtDate(date, true)
+}
+
+function visibleRange(date: string, viewMode: ViewMode): { from: string; to: string; dates: string[] } {
+  if (viewMode === 'month') {
+    const ym = yearMonthOf(date)
+    const [y, m] = ym.split('-').map(Number)
+    const from = `${ym}-01`
+    const to   = toISO(new Date(y, m, 0))
+    const dates = buildMonthGrid(ym).filter((d): d is string => d != null)
+    return { from, to, dates }
+  }
+  if (viewMode === 'week') {
+    const from  = startOfWeek(date)
+    const dates = Array.from({ length: 7 }, (_, i) => addDays(from, i))
+    return { from, to: dates[6], dates }
+  }
+  return { from: date, to: date, dates: [date] }
 }
 
 const STATUS_LABEL: Record<AdminScheduleDisplayStatus, { label: string; cls: string }> = {
@@ -62,22 +141,22 @@ function ScheduleEditDialog({
   onClose: () => void
   onUpdated: () => void
 }) {
-  const [isPending, startTransition] = useTransition()
+  const [isPending, setIsPending] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  function handleStatusChange(status: 'scheduled' | 'absent') {
+  async function handleStatusChange(status: 'scheduled' | 'absent') {
     const label = status === 'absent' ? '本日休み（absent）' : '稼働予定（scheduled）'
     if (!window.confirm(`${entry.contractorName} の ${entry.date} を「${label}」に変更しますか？`)) return
 
-    startTransition(async () => {
-      const res = await updateScheduleStatus(entry.scheduleId, status)
-      if (res.error) {
-        setError(res.error)
-        return
-      }
-      onUpdated()
-      onClose()
-    })
+    setIsPending(true)
+    const res = await updateScheduleStatus(entry.scheduleId, status)
+    setIsPending(false)
+    if (res.error) {
+      setError(res.error)
+      return
+    }
+    onUpdated()
+    onClose()
   }
 
   const st = STATUS_LABEL[entry.displayStatus]
@@ -109,7 +188,7 @@ function ScheduleEditDialog({
           <button
             type="button"
             disabled={isPending || entry.status === 'absent'}
-            onClick={() => handleStatusChange('absent')}
+            onClick={() => void handleStatusChange('absent')}
             className="py-3.5 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-40 border-r border-zinc-100"
           >
             本日休み
@@ -117,7 +196,7 @@ function ScheduleEditDialog({
           <button
             type="button"
             disabled={isPending || entry.status === 'scheduled'}
-            onClick={() => handleStatusChange('scheduled')}
+            onClick={() => void handleStatusChange('scheduled')}
             className="py-3.5 text-sm font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-40"
           >
             稼働予定に戻す
@@ -135,34 +214,41 @@ function ScheduleEditDialog({
   )
 }
 
-// ── 1日セル内のドライバー行 ────────────────────────────────
+// ── ドライバー行 ──────────────────────────────────────────
 
 function DriverChip({
   entry,
   onSelect,
+  size = 'sm',
 }: {
   entry: AdminScheduleEntry
   onSelect: (entry: AdminScheduleEntry) => void
+  size?: 'sm' | 'md'
 }) {
   const st = STATUS_LABEL[entry.displayStatus]
+  const textSize = size === 'md' ? 'text-sm' : 'text-[11px]'
+  const badgeSize = size === 'md' ? 'text-xs' : 'text-[10px]'
 
   return (
     <button
       type="button"
       onClick={() => onSelect(entry)}
-      className={`w-full text-left rounded-md px-1.5 py-1 text-[11px] leading-tight border transition hover:ring-1 hover:ring-zinc-300 ${
+      className={`w-full text-left rounded-md px-2 py-1.5 ${textSize} leading-tight border transition hover:ring-1 hover:ring-zinc-300 ${
         entry.isMissingInput
           ? 'border-rose-300 bg-rose-50'
           : 'border-zinc-200 bg-white'
       }`}
     >
       <span className="font-medium text-zinc-800 truncate block">{entry.contractorName}</span>
+      {size === 'md' && (
+        <span className="text-zinc-500 truncate block text-xs mt-0.5">{entry.projectName}</span>
+      )}
       <span className="flex items-center gap-1 mt-0.5 flex-wrap">
-        <span className={`inline-flex rounded px-1 py-px text-[10px] font-medium ${st.cls}`}>
+        <span className={`inline-flex rounded px-1 py-px ${badgeSize} font-medium ${st.cls}`}>
           {st.label}
         </span>
         {entry.isMissingInput && (
-          <span className="inline-flex rounded bg-rose-600 px-1 py-px text-[10px] font-bold text-white">
+          <span className={`inline-flex rounded bg-rose-600 px-1 py-px ${badgeSize} font-bold text-white`}>
             未入力
           </span>
         )}
@@ -171,33 +257,290 @@ function DriverChip({
   )
 }
 
+function DayCell({
+  date,
+  entries,
+  today,
+  onSelect,
+  minHeight = 'min-h-[7rem]',
+}: {
+  date: string
+  entries: AdminScheduleEntry[]
+  today: string
+  onSelect: (entry: AdminScheduleEntry) => void
+  minHeight?: string
+}) {
+  const isToday = date === today
+  const dayNum  = parseInt(date.split('-')[2], 10)
+  const dow     = parseISO(date).getDay()
+
+  return (
+    <div
+      className={`${minHeight} p-1.5 bg-white ${isToday ? 'ring-2 ring-inset ring-blue-400' : ''}`}
+    >
+      <div className={`text-xs font-semibold mb-1 tabular-nums ${
+        isToday ? 'text-blue-600' : dow === 0 ? 'text-rose-500' : dow === 6 ? 'text-blue-500' : 'text-zinc-500'
+      }`}>
+        {dayNum}
+      </div>
+      <div className="space-y-1">
+        {entries.length === 0 ? (
+          <p className="text-[10px] text-zinc-300 px-1">—</p>
+        ) : (
+          entries.map(e => (
+            <DriverChip key={e.scheduleId} entry={e} onSelect={onSelect} />
+          ))
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── 月表示 ────────────────────────────────────────────────
+
+function MonthView({
+  yearMonth,
+  byDate,
+  today,
+  onSelect,
+}: {
+  yearMonth: string
+  byDate: Map<string, AdminScheduleEntry[]>
+  today: string
+  onSelect: (entry: AdminScheduleEntry) => void
+}) {
+  const cells = buildMonthGrid(yearMonth)
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden shadow-sm">
+      <div className="grid grid-cols-7 border-b border-zinc-200 bg-zinc-50">
+        {WEEKDAYS.map((wd, i) => (
+          <div
+            key={wd}
+            className={`py-2 text-center text-xs font-semibold ${
+              i === 0 ? 'text-rose-500' : i === 6 ? 'text-blue-500' : 'text-zinc-500'
+            }`}
+          >
+            {wd}
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7 divide-x divide-y divide-zinc-100">
+        {cells.map((date, idx) =>
+          date ? (
+            <DayCell
+              key={date}
+              date={date}
+              entries={byDate.get(date) ?? []}
+              today={today}
+              onSelect={onSelect}
+            />
+          ) : (
+            <div key={`empty-${idx}`} className="min-h-[7rem] bg-zinc-50/50" />
+          ),
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ── 週表示 ────────────────────────────────────────────────
+
+function WeekView({
+  dates,
+  byDate,
+  today,
+  onSelect,
+}: {
+  dates: string[]
+  byDate: Map<string, AdminScheduleEntry[]>
+  today: string
+  onSelect: (entry: AdminScheduleEntry) => void
+}) {
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden shadow-sm">
+      <div className="grid grid-cols-7 border-b border-zinc-200 bg-zinc-50">
+        {dates.map((date, i) => {
+          const dow = parseISO(date).getDay()
+          return (
+            <div
+              key={date}
+              className={`py-2 text-center text-xs font-semibold ${
+                dow === 0 ? 'text-rose-500' : dow === 6 ? 'text-blue-500' : 'text-zinc-500'
+              }`}
+            >
+              {WEEKDAYS[dow]}
+              <span className="block text-[10px] font-normal tabular-nums mt-0.5">
+                {fmtShortDate(date)}
+              </span>
+            </div>
+          )
+        })}
+      </div>
+      <div className="grid grid-cols-7 divide-x divide-zinc-100">
+        {dates.map(date => (
+          <DayCell
+            key={date}
+            date={date}
+            entries={byDate.get(date) ?? []}
+            today={today}
+            onSelect={onSelect}
+            minHeight="min-h-[10rem]"
+          />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// ── 日表示 ────────────────────────────────────────────────
+
+function DayView({
+  date,
+  entries,
+  onSelect,
+}: {
+  date: string
+  entries: AdminScheduleEntry[]
+  onSelect: (entry: AdminScheduleEntry) => void
+}) {
+  const missing  = entries.filter(e => e.isMissingInput)
+  const scheduled = entries.filter(e => e.displayStatus === 'scheduled' && !e.isMissingInput)
+  const absent   = entries.filter(e => e.displayStatus === 'absent')
+  const worked   = entries.filter(e => e.displayStatus === 'worked')
+
+  function Section({
+    title, items, accent,
+  }: {
+    title: string
+    items: AdminScheduleEntry[]
+    accent?: string
+  }) {
+    if (!items.length) return null
+    return (
+      <section className="space-y-2">
+        <h3 className={`text-sm font-semibold ${accent ?? 'text-zinc-700'}`}>
+          {title}（{items.length}）
+        </h3>
+        <div className="space-y-2">
+          {items.map(e => (
+            <DriverChip key={e.scheduleId} entry={e} onSelect={onSelect} size="md" />
+          ))}
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <div className="rounded-xl border border-zinc-200 bg-white p-5 shadow-sm space-y-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 pb-4">
+        <h2 className="text-lg font-bold text-zinc-900">{fmtDate(date, true)}</h2>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <span className="rounded-full bg-rose-100 text-rose-700 px-2.5 py-1 font-medium">
+            未入力 {missing.length}
+          </span>
+          <span className="rounded-full bg-blue-100 text-blue-800 px-2.5 py-1 font-medium">
+            予定 {scheduled.length}
+          </span>
+          <span className="rounded-full bg-zinc-200 text-zinc-600 px-2.5 py-1 font-medium">
+            休み {absent.length}
+          </span>
+          <span className="rounded-full bg-emerald-100 text-emerald-800 px-2.5 py-1 font-medium">
+            実績済 {worked.length}
+          </span>
+        </div>
+      </div>
+
+      {entries.length === 0 ? (
+        <p className="py-12 text-center text-sm text-zinc-400">この日の予定はありません</p>
+      ) : (
+        <div className="space-y-6">
+          <Section title="🔴 入力遅延（未入力）" items={missing} accent="text-rose-700" />
+          <Section title="予定（未実績）" items={scheduled} />
+          <Section title="休み" items={absent} />
+          <Section title="実績済" items={worked} />
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── 表示モードタブ ────────────────────────────────────────
+
+const VIEW_MODES: { id: ViewMode; label: string }[] = [
+  { id: 'month', label: '月' },
+  { id: 'week',  label: '週' },
+  { id: 'day',   label: '日' },
+]
+
+function ViewModeTabs({
+  viewMode,
+  onChange,
+}: {
+  viewMode: ViewMode
+  onChange: (mode: ViewMode) => void
+}) {
+  return (
+    <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-100 p-0.5">
+      {VIEW_MODES.map(({ id, label }) => (
+        <button
+          key={id}
+          type="button"
+          onClick={() => onChange(id)}
+          className={`rounded-md px-4 py-1.5 text-sm font-medium transition ${
+            viewMode === id
+              ? 'bg-white text-zinc-900 shadow-sm'
+              : 'text-zinc-500 hover:text-zinc-700'
+          }`}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 // ── メインページ ──────────────────────────────────────────
 
 export default function AdminSchedulesPage() {
-  const [yearMonth, setYearMonth] = useState(currentYearMonth)
-  const [entries,   setEntries]   = useState<AdminScheduleEntry[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState<string | null>(null)
-  const [selected,  setSelected]  = useState<AdminScheduleEntry | null>(null)
+  const [viewMode,   setViewMode]   = useState<ViewMode>('month')
+  const [anchorDate, setAnchorDate] = useState(todayISO)
+  const [entries,    setEntries]    = useState<AdminScheduleEntry[]>([])
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState<string | null>(null)
+  const [selected,   setSelected]   = useState<AdminScheduleEntry | null>(null)
 
-  const today = todayISO()
+  const today  = todayISO()
+  const range  = useMemo(() => visibleRange(anchorDate, viewMode), [anchorDate, viewMode])
 
-  const load = useCallback(async (ym: string) => {
+  const loadForRange = useCallback(async (from: string, to: string) => {
     setLoading(true)
     setError(null)
-    const res = await fetchAdminMonthlySchedules(ym)
-    if (res.error) {
-      setError(res.error)
+
+    const months = yearMonthsInRange(from, to)
+    const results = await Promise.all(months.map(m => fetchAdminMonthlySchedules(m)))
+
+    const firstErr = results.find(r => r.error)?.error
+    if (firstErr) {
+      setError(firstErr)
       setEntries([])
-    } else {
-      setEntries(res.data ?? [])
+      setLoading(false)
+      return
     }
+
+    const merged = new Map<string, AdminScheduleEntry>()
+    for (const res of results) {
+      for (const e of res.data ?? []) {
+        merged.set(e.scheduleId, e)
+      }
+    }
+    setEntries([...merged.values()])
     setLoading(false)
   }, [])
 
   useEffect(() => {
-    void load(yearMonth)
-  }, [load, yearMonth])
+    void loadForRange(range.from, range.to)
+  }, [loadForRange, range.from, range.to])
 
   const byDate = useMemo(() => {
     const map = new Map<string, AdminScheduleEntry[]>()
@@ -209,45 +552,72 @@ export default function AdminSchedulesPage() {
     return map
   }, [entries])
 
-  const missingCount = entries.filter(e => e.isMissingInput).length
-  const calendarDays = buildCalendarDays(yearMonth)
+  const visibleEntries = useMemo(
+    () => entries.filter(e => e.date >= range.from && e.date <= range.to),
+    [entries, range.from, range.to],
+  )
+
+  const missingCount = visibleEntries.filter(e => e.isMissingInput).length
+
+  function handleNavigate(delta: -1 | 1) {
+    setAnchorDate(d => navigateAnchor(d, viewMode, delta))
+  }
+
+  function handleViewModeChange(mode: ViewMode) {
+    setViewMode(mode)
+  }
+
+  const prevLabel = viewMode === 'month' ? '前月' : viewMode === 'week' ? '前週' : '前日'
+  const nextLabel = viewMode === 'month' ? '次月' : viewMode === 'week' ? '次週' : '次日'
 
   return (
     <div className="min-h-screen bg-zinc-50">
       <div className="mx-auto max-w-6xl px-4 sm:px-6 py-8">
 
         {/* ヘッダー */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
           <div>
             <h1 className="text-xl font-semibold text-zinc-900">配車＆予定管理</h1>
             <p className="text-sm text-zinc-500 mt-0.5">全ドライバーの稼働予定を俯瞰・操作</p>
           </div>
+          <ViewModeTabs viewMode={viewMode} onChange={handleViewModeChange} />
+        </div>
+
+        {/* ナビゲーション */}
+        <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setYearMonth(ym => shiftYearMonth(ym, -1))}
+              onClick={() => handleNavigate(-1)}
               className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
             >
-              ← 前月
+              ← {prevLabel}
             </button>
-            <span className="min-w-[7rem] text-center text-sm font-semibold text-zinc-900 tabular-nums">
-              {fmtMonth(yearMonth)}
+            <span className="min-w-[10rem] text-center text-sm font-semibold text-zinc-900 tabular-nums px-2">
+              {navLabel(anchorDate, viewMode)}
             </span>
             <button
               type="button"
-              onClick={() => setYearMonth(ym => shiftYearMonth(ym, 1))}
+              onClick={() => handleNavigate(1)}
               className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-700 hover:bg-zinc-50"
             >
-              次月 →
+              {nextLabel} →
             </button>
           </div>
+          <button
+            type="button"
+            onClick={() => setAnchorDate(todayISO())}
+            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50"
+          >
+            今日
+          </button>
         </div>
 
         {/* サマリー */}
         <div className="flex flex-wrap gap-3 mb-6">
           <div className="rounded-lg border border-zinc-200 bg-white px-4 py-2 text-sm">
-            <span className="text-zinc-500">予定件数 </span>
-            <span className="font-bold text-zinc-900 tabular-nums">{entries.length}</span>
+            <span className="text-zinc-500">表示範囲の予定 </span>
+            <span className="font-bold text-zinc-900 tabular-nums">{visibleEntries.length}</span>
           </div>
           {missingCount > 0 && (
             <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm">
@@ -264,62 +634,31 @@ export default function AdminSchedulesPage() {
         {loading ? (
           <div className="py-24 text-center text-sm text-zinc-400">読み込み中...</div>
         ) : (
-          <div className="rounded-xl border border-zinc-200 bg-white overflow-hidden shadow-sm">
-            {/* 曜日ヘッダー */}
-            <div className="grid grid-cols-7 border-b border-zinc-200 bg-zinc-50">
-              {WEEKDAYS.map((wd, i) => (
-                <div
-                  key={wd}
-                  className={`py-2 text-center text-xs font-semibold ${
-                    i === 0 ? 'text-rose-500' : i === 6 ? 'text-blue-500' : 'text-zinc-500'
-                  }`}
-                >
-                  {wd}
-                </div>
-              ))}
-            </div>
-
-            {/* カレンダーグリッド */}
-            <div className="grid grid-cols-7 divide-x divide-y divide-zinc-100">
-              {calendarDays.map((date, idx) => {
-                const dayEntries = date ? (byDate.get(date) ?? []) : []
-                const isToday = date === today
-                const dayNum = date ? parseInt(date.split('-')[2], 10) : null
-
-                return (
-                  <div
-                    key={idx}
-                    className={`min-h-[7rem] p-1.5 ${
-                      date ? 'bg-white' : 'bg-zinc-50/50'
-                    } ${isToday ? 'ring-2 ring-inset ring-blue-400' : ''}`}
-                  >
-                    {date && dayNum != null && (
-                      <>
-                        <div className={`text-xs font-semibold mb-1 tabular-nums ${
-                          isToday ? 'text-blue-600' : 'text-zinc-500'
-                        }`}>
-                          {dayNum}
-                        </div>
-                        <div className="space-y-1">
-                          {dayEntries.length === 0 ? (
-                            <p className="text-[10px] text-zinc-300 px-1">—</p>
-                          ) : (
-                            dayEntries.map(e => (
-                              <DriverChip
-                                key={e.scheduleId}
-                                entry={e}
-                                onSelect={setSelected}
-                              />
-                            ))
-                          )}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )
-              })}
-            </div>
-          </div>
+          <>
+            {viewMode === 'month' && (
+              <MonthView
+                yearMonth={yearMonthOf(anchorDate)}
+                byDate={byDate}
+                today={today}
+                onSelect={setSelected}
+              />
+            )}
+            {viewMode === 'week' && (
+              <WeekView
+                dates={range.dates}
+                byDate={byDate}
+                today={today}
+                onSelect={setSelected}
+              />
+            )}
+            {viewMode === 'day' && (
+              <DayView
+                date={anchorDate}
+                entries={byDate.get(anchorDate) ?? []}
+                onSelect={setSelected}
+              />
+            )}
+          </>
         )}
 
         {/* 凡例 */}
@@ -340,7 +679,7 @@ export default function AdminSchedulesPage() {
         <ScheduleEditDialog
           entry={selected}
           onClose={() => setSelected(null)}
-          onUpdated={() => void load(yearMonth)}
+          onUpdated={() => void loadForRange(range.from, range.to)}
         />
       )}
     </div>
