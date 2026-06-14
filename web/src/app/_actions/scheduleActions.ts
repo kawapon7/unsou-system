@@ -1,5 +1,6 @@
 'use server'
 
+import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
@@ -55,23 +56,28 @@ export type ScheduleRow = {
 }
 
 export type ScheduleStatus = 'scheduled' | 'absent' | 'completed'
+export type UpdatableScheduleStatus = 'scheduled' | 'absent'
+
+export type NotificationLogPayload = {
+  contractor_id: string
+  type:          string
+  destination:   string
+  status:        string
+  message_id?:   string | null
+}
 
 // ================================================================
 // getMissingInputs
-// 指定日に status='scheduled' だが work_records が存在しない子分を返す
-// date 省略時は本日（JST）
-// 親分ダッシュボード「入力遅延アラート」の検知ロジック
+// status='scheduled' かつ date<=本日 だが、同一 contractor_id×date の
+// work_records が存在しない予定を返す（未入力アラート）
 // ================================================================
-export async function getMissingInputs(
-  date?: string,
-): Promise<ActionResult<MissingInputRow[]>> {
+export async function getMissingInputs(): Promise<ActionResult<MissingInputRow[]>> {
   const tenantId = await getCurrentTenantId()
-  const targetDate = date ?? new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
 
   const service = createServiceClient()
   const db = service as any
 
-  // schedules で scheduled な行を全件取得
   const { data: schedules, error: sErr } = await db
     .from('schedules')
     .select(`
@@ -82,32 +88,34 @@ export async function getMissingInputs(
       contractors ( id, name ),
       projects    ( id, project_name, name )
     `)
-    .eq('date', targetDate)
     .eq('status', 'scheduled')
+    .lte('date', today)
     .eq('tenant_id', tenantId)
+    .order('date', { ascending: false })
 
   if (sErr) return { data: null, error: sErr.message }
   if (!schedules?.length) return { data: [], error: null }
 
-  // 同日・同 contractor の work_records を一括取得（IN句）
   const contractorIds: string[] = [...new Set((schedules as any[]).map((s: any) => s.contractor_id))]
 
   const { data: workRecords, error: wErr } = await db
     .from('work_records')
-    .select('contractor_id, project_id, date, work_date')
+    .select('contractor_id, date, work_date')
     .in('contractor_id', contractorIds)
     .eq('tenant_id', tenantId)
-    .or(`date.eq.${targetDate},work_date.eq.${targetDate}`)
+    .lte('work_date', today)
 
   if (wErr) return { data: null, error: wErr.message }
 
-  // work_records が存在しない schedule だけを残す
   const workedSet = new Set(
-    (workRecords ?? []).map((w: any) => `${w.contractor_id}:${w.project_id}`)
+    (workRecords ?? []).map((w: any) => {
+      const recordDate = w.date ?? w.work_date
+      return `${w.contractor_id}:${recordDate}`
+    }),
   )
 
   const missing: MissingInputRow[] = (schedules as any[])
-    .filter((s: any) => !workedSet.has(`${s.contractor_id}:${s.project_id}`))
+    .filter((s: any) => !workedSet.has(`${s.contractor_id}:${s.date}`))
     .map((s: any) => ({
       scheduleId:     s.id,
       contractorId:   s.contractor_id,
@@ -127,7 +135,7 @@ export async function getMissingInputs(
 // ================================================================
 export async function updateScheduleStatus(
   scheduleId: string,
-  status: ScheduleStatus,
+  status: UpdatableScheduleStatus,
 ): Promise<ActionResult> {
   const tenantId = await getCurrentTenantId()
   const service = createServiceClient()
@@ -140,7 +148,36 @@ export async function updateScheduleStatus(
     .eq('tenant_id', tenantId)
 
   if (error) return { data: null, error: error.message }
+
+  revalidatePath('/admin/dashboard')
+  revalidatePath('/driver/schedule')
+
   return { data: undefined, error: null }
+}
+
+// ================================================================
+// logNotification
+// 催促・監査履歴を notification_logs へ記録（不変ログ）
+// ================================================================
+export async function logNotification(
+  payload: NotificationLogPayload,
+): Promise<ActionResult<{ id: string }>> {
+  const db = createServiceClient() as any
+
+  const { data, error } = await db
+    .from('notification_logs')
+    .insert({
+      contractor_id: payload.contractor_id,
+      type:          payload.type,
+      destination:   payload.destination,
+      status:        payload.status,
+      message_id:    payload.message_id ?? null,
+    })
+    .select('id')
+    .single()
+
+  if (error || !data) return { data: null, error: error?.message ?? 'ログ記録に失敗しました' }
+  return { data: { id: data.id }, error: null }
 }
 
 // ================================================================

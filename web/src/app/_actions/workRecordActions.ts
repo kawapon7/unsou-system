@@ -4,6 +4,12 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import {
+  parseGoogleFormCsv,
+  parseGoogleSheetRows,
+  matchMasterData,
+  type MasterRecord,
+} from '@/utils/scan/fileConverter'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -45,6 +51,19 @@ export type WorkRecordParams = {
   pieceCount?:  number
   note?:        string
   rawSpotText?: string   // 汎用スポット時のテキスト
+}
+
+export type CreateWorkRecordPayload = {
+  contractor_id: string
+  project_id:    string
+  date:          string   // 'YYYY-MM-DD'
+  quantity:      number
+}
+
+export type ImportEmergencyResult = {
+  imported: number
+  skipped:  number
+  errors:   string[]
 }
 
 export type WorkRecordRow = {
@@ -105,6 +124,140 @@ async function findDuplicates(
   }))
 }
 
+// ── しきい値ガード ──────────────────────────────────────────
+
+function resolveWorkRecordStatus(quantity: number | null | undefined): string {
+  return quantity != null && quantity > 100 ? 'pending_review' : 'pending'
+}
+
+// ================================================================
+// createWorkRecord
+// 管理画面・緊急インポート経由の実績登録（個数100超は pending_review）
+// ================================================================
+export async function createWorkRecord(
+  payload: CreateWorkRecordPayload,
+): Promise<ActionResult<{ id: string }>> {
+  const tenantId = await getCurrentTenantId()
+  const db = createServiceClient() as any
+  const status = resolveWorkRecordStatus(payload.quantity)
+
+  const { data: inserted, error: insertErr } = await db
+    .from('work_records')
+    .insert({
+      contractor_id: payload.contractor_id,
+      project_id:    payload.project_id,
+      work_date:     payload.date,
+      date:          payload.date,
+      piece_count:   payload.quantity,
+      quantity:      payload.quantity,
+      status,
+      tenant_id:     tenantId,
+    })
+    .select('id')
+    .single()
+
+  if (insertErr || !inserted) {
+    return { data: null, error: insertErr?.message ?? '登録に失敗しました' }
+  }
+
+  revalidatePath('/admin/dashboard')
+  revalidatePath('/admin/sales')
+  revalidatePath('/driver')
+
+  return { data: { id: inserted.id }, error: null }
+}
+
+// ================================================================
+// importEmergencyRecords
+// Googleフォーム等のテキストをパースし createWorkRecord で一括登録
+// ================================================================
+export async function importEmergencyRecords(
+  fileData: string,
+  fileType: 'csv' | 'spreadsheet',
+): Promise<ActionResult<ImportEmergencyResult>> {
+  const tenantId = await getCurrentTenantId()
+  const db = createServiceClient() as any
+
+  const { data: contractorsRaw, error: cErr } = await db
+    .from('contractors')
+    .select('id, name')
+    .eq('tenant_id', tenantId)
+
+  if (cErr) return { data: null, error: cErr.message }
+
+  const { data: projectsRaw, error: pErr } = await db
+    .from('projects')
+    .select('id, project_name, name')
+    .eq('tenant_id', tenantId)
+
+  if (pErr) return { data: null, error: pErr.message }
+
+  const contractors: MasterRecord[] = (contractorsRaw ?? []).map((c: any) => ({
+    id:   c.id,
+    name: c.name,
+  }))
+
+  const projects: MasterRecord[] = (projectsRaw ?? []).map((p: any) => ({
+    id:   p.id,
+    name: p.project_name ?? p.name ?? p.id,
+  }))
+
+  let parseResult
+  if (fileType === 'csv') {
+    parseResult = parseGoogleFormCsv(fileData)
+  } else {
+    let rows: string[][]
+    try {
+      rows = JSON.parse(fileData) as string[][]
+    } catch {
+      rows = fileData
+        .split(/\r?\n/)
+        .filter((line) => line.trim())
+        .map((line) => line.split('\t'))
+    }
+    parseResult = parseGoogleSheetRows(rows)
+  }
+
+  const errors = [...parseResult.parseErrors]
+  const matched = matchMasterData(parseResult.records, contractors, projects)
+  errors.push(...matched.matchErrors)
+
+  let imported = 0
+  let skipped = 0
+
+  for (const rec of matched.records) {
+    if (
+      rec.needsManualReview ||
+      !rec.contractorId ||
+      !rec.projectId ||
+      !rec.date ||
+      rec.quantity == null
+    ) {
+      skipped++
+      continue
+    }
+
+    const result = await createWorkRecord({
+      contractor_id: rec.contractorId,
+      project_id:    rec.projectId,
+      date:          rec.date,
+      quantity:      rec.quantity,
+    })
+
+    if (result.error) {
+      errors.push(`行 ${rec.sourceRow ?? '?'}: ${result.error}`)
+      skipped++
+    } else {
+      imported++
+    }
+  }
+
+  revalidatePath('/admin/dashboard')
+  revalidatePath('/admin/sales')
+
+  return { data: { imported, skipped, errors }, error: null }
+}
+
 // ================================================================
 // submitWorkRecord
 // 子分アプリ「記録する」ボタンの送信先
@@ -155,6 +308,9 @@ export async function submitWorkRecord(
   }
 
   // 新規 INSERT
+  const pieceCount = params.pieceCount ?? null
+  const status = resolveWorkRecordStatus(pieceCount)
+
   const { data: inserted, error: insertErr } = await db
     .from('work_records')
     .insert({
@@ -165,10 +321,11 @@ export async function submitWorkRecord(
       start_time:     params.startTime   ?? null,
       end_time:       params.endTime     ?? null,
       break_minutes:  params.breakMinutes ?? 0,
-      piece_count:    params.pieceCount  ?? null,
+      piece_count:    pieceCount,
+      quantity:       pieceCount ?? 0,
       note:           params.note        ?? null,
       raw_spot_text:  params.rawSpotText ?? null,
-      status:         'pending',
+      status,
       tenant_id:      tenantId,
     })
     .select('id')

@@ -229,9 +229,7 @@ async function fetchLongPendingNotices(): Promise<PendingNoticeRow[]> {
 // getDefensiveAlerts
 // 5種のアラートを並列取得して返す統合エントリーポイント
 // ================================================================
-export async function getDefensiveAlerts(
-  date?: string,
-): Promise<ActionResult<DefensiveAlerts>> {
+export async function getDefensiveAlerts(): Promise<ActionResult<DefensiveAlerts>> {
   try {
     const [
       missingRes,
@@ -240,7 +238,7 @@ export async function getDefensiveAlerts(
       invoiceWarnings,
       pendingNotices,
     ] = await Promise.all([
-      getMissingInputs(date),
+      getMissingInputs(),
       getDuplicateInputs(),
       fetchAndLockThresholdViolations(),
       fetchInvoiceWarnings(),
