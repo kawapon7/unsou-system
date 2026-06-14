@@ -41,29 +41,24 @@ function calcDueDate(invoiceMonthEnd: Date, paymentSite: number): Date {
 }
 
 // ── 監査ログ挿入（approval_history は UPDATE/DELETE 禁止テーブル） ─
+// approval_history のカラム: payment_notice_id / action_by / action_type / unlock_reason
 
-async function insertAuditLog(
+async function insertPaymentNoticeAuditLog(
   service: ReturnType<typeof createServiceClient>,
   params: {
-    targetType: string
-    targetId:   string
-    actionType: string
-    operatorId: string
-    amountBefore?: number | null
-    amountAfter?:  number | null
-    memo?:         string | null
+    paymentNoticeId: string
+    actionType:      string
+    actionBy:        string
+    unlockReason?:   string | null
   },
 ): Promise<void> {
   const { error } = await service
     .from('approval_history')
     .insert({
-      target_type:   params.targetType,
-      target_id:     params.targetId,
-      action_type:   params.actionType,
-      operator_id:   params.operatorId,
-      amount_before: params.amountBefore ?? null,
-      amount_after:  params.amountAfter  ?? null,
-      memo:          params.memo         ?? null,
+      payment_notice_id: params.paymentNoticeId,
+      action_type:       params.actionType,
+      action_by:         params.actionBy,
+      unlock_reason:     params.unlockReason ?? null,
     })
 
   if (error) {
@@ -109,14 +104,7 @@ async function finalizeInvoice(
         error: `請求書はすでに「${existing.status}」状態のため変更できません。開発者アンロックが必要です。`,
       }
     }
-    await insertAuditLog(service, {
-      targetType:   'invoice',
-      targetId:     existing.id,
-      actionType:   'developer_unlock',
-      operatorId:   opts.userId,
-      amountBefore: existing.total_amount,
-      memo:         opts.unlockReason,
-    })
+    // invoices は approval_history に FK がないため監査ログは記録しない
   }
 
   // 締め日ベースの対象期間
@@ -160,18 +148,6 @@ async function finalizeInvoice(
     )
 
   if (upsertErr) return { data: null, error: upsertErr.message }
-
-  // アンロック後の amount_after を更新
-  if (isLocked && existing) {
-    await insertAuditLog(service, {
-      targetType:  'invoice',
-      targetId:    existing.id,
-      actionType:  'overwrite_after_unlock',
-      operatorId:  opts.userId,
-      amountAfter: newTotalAmount,
-      memo:        opts.unlockReason ?? null,
-    })
-  }
 
   return { data: undefined, error: null }
 }
@@ -225,13 +201,11 @@ async function finalizePaymentNotice(
     }
 
     // 開発者アンロックが有効 → 逃げられない証跡を approval_history に刻む
-    await insertAuditLog(service, {
-      targetType:   'payment_notice',
-      targetId:     existingNotice.id,
-      actionType:   'developer_unlock',
-      operatorId:   opts.userId,
-      amountBefore: existingNotice.total_amount,
-      memo:         opts.unlockReason,
+    await insertPaymentNoticeAuditLog(service, {
+      paymentNoticeId: existingNotice.id,
+      actionType:      'developer_unlock',
+      actionBy:        opts.userId,
+      unlockReason:    opts.unlockReason,
     })
   }
 
@@ -288,6 +262,8 @@ async function finalizePaymentNotice(
       {
         contractor_id:        contractorId,
         notice_month:         noticeMonthDate,
+        target_month:         noticeMonthDate,
+        status:               'pending',
         labor_tax_excluded:   laborResult.subtotal,
         labor_tax:            laborResult.taxAmount,
         deduction_rate:       totalDeductionRate,
@@ -303,15 +279,13 @@ async function finalizePaymentNotice(
 
   if (upsertErr) return { data: null, error: upsertErr.message }
 
-  // アンロック後の上書き完了ログ（amount_after を記録）
+  // アンロック後の上書き完了ログ
   if (isLocked && existingNotice) {
-    await insertAuditLog(service, {
-      targetType:  'payment_notice',
-      targetId:    existingNotice.id,
-      actionType:  'overwrite_after_unlock',
-      operatorId:  opts.userId,
-      amountAfter: newTotalAmount,
-      memo:        opts.unlockReason ?? null,
+    await insertPaymentNoticeAuditLog(service, {
+      paymentNoticeId: existingNotice.id,
+      actionType:      'overwrite_after_unlock',
+      actionBy:        opts.userId,
+      unlockReason:    opts.unlockReason ?? null,
     })
   }
 

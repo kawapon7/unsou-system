@@ -471,6 +471,8 @@ export async function generatePaymentNotice(
     .maybeSingle()
 
   const noticePayload = {
+    target_month:           targetMonth,
+    status:                 'approved',
     subtotal_registered:    subtotalRegistered,
     tax_registered:         taxRegistered,
     subtotal_unregistered:  subtotalUnregistered,
