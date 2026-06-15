@@ -20,9 +20,10 @@ $$;
 
 CREATE OR REPLACE FUNCTION my_contractor_id()
 RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
-  SELECT contractor_id FROM users
-  WHERE id = auth.uid()
-  LIMIT 1;
+  SELECT c.id FROM contractors c
+  JOIN users u ON u.email = c.email
+  WHERE u.id = auth.uid()
+  LIMIT 1
 $$;
 
 -- ================================================================
@@ -248,7 +249,7 @@ CREATE POLICY "payments_contractor_select" ON payments
 -- ================================================================
 -- approval_history（承認履歴）
 -- 親分: SELECT・INSERT のみ（UPDATE/DELETE はトリガーで禁止済み）
--- 子分: 自身の target_id に紐づく行のみSELECT
+-- 子分: 自身の payment_notice_id に紐づく行のみSELECT
 -- ================================================================
 ALTER TABLE approval_history ENABLE ROW LEVEL SECURITY;
 
@@ -264,7 +265,10 @@ CREATE POLICY "approval_history_contractor_select" ON approval_history
   FOR SELECT TO authenticated
   USING (
     NOT is_owner()
-    AND target_id = my_contractor_id()::TEXT
+    AND payment_notice_id IN (
+      SELECT id FROM payment_notices
+      WHERE contractor_id = my_contractor_id()
+    )
   );
 
 -- ================================================================

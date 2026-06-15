@@ -207,15 +207,12 @@ CREATE TABLE payments (
 -- updated_at は意図的に持たせない
 -- ================================================================
 CREATE TABLE approval_history (
-  id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-  target_type   TEXT         NOT NULL,
-  target_id     TEXT         NOT NULL,
-  action_type   TEXT         NOT NULL,
-  operator_id   TEXT         NOT NULL,
-  amount_before INTEGER,
-  amount_after  INTEGER,
-  memo          TEXT,
-  created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+  id                UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+  payment_notice_id UUID         NOT NULL REFERENCES payment_notices(id) ON DELETE RESTRICT,
+  action_by         UUID         NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  action_type       TEXT         NOT NULL,
+  unlock_reason     TEXT,
+  created_at        TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
 -- ================================================================
@@ -283,6 +280,6 @@ CREATE INDEX idx_work_records_work_date        ON work_records(work_date);
 CREATE INDEX idx_work_records_spot_generic_id  ON work_records(spot_generic_id) WHERE spot_generic_id IS NOT NULL;
 CREATE INDEX idx_expense_records_contractor_id ON expense_records(contractor_id);
 CREATE INDEX idx_expense_records_expense_date  ON expense_records(expense_date);
-CREATE INDEX idx_approval_history_target       ON approval_history(target_type, target_id);
+CREATE INDEX idx_approval_history_notice       ON approval_history(payment_notice_id);
 CREATE INDEX idx_payment_notices_contractor    ON payment_notices(contractor_id, notice_month);
 CREATE INDEX idx_invoices_client_month         ON invoices(client_id, invoice_month);

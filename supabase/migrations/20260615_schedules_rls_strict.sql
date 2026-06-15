@@ -16,9 +16,10 @@ $$;
 
 CREATE OR REPLACE FUNCTION my_contractor_id()
 RETURNS UUID LANGUAGE sql STABLE SECURITY DEFINER AS $$
-  SELECT contractor_id FROM public.users
-  WHERE id = auth.uid()
-  LIMIT 1;
+  SELECT c.id FROM contractors c
+  JOIN users u ON u.email = c.email
+  WHERE u.id = auth.uid()
+  LIMIT 1
 $$;
 
 ALTER TABLE schedules ENABLE ROW LEVEL SECURITY;

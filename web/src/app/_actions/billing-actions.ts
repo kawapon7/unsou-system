@@ -263,7 +263,7 @@ async function finalizePaymentNotice(
         contractor_id:        contractorId,
         notice_month:         noticeMonthDate,
         target_month:         noticeMonthDate,
-        status:               'pending',
+        status:               'locked',
         labor_tax_excluded:   laborResult.subtotal,
         labor_tax:            laborResult.taxAmount,
         deduction_rate:       totalDeductionRate,
