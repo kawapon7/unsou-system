@@ -1,67 +1,30 @@
 'use client'
 
-import { useState, useTransition, useCallback, useEffect, useRef } from 'react'
+import { useState, useTransition, useCallback, useEffect } from 'react'
+import {
+  fetchSchedules,
+  upsertSchedule,
+  deleteSchedule,
+  copyPrevMonthSchedules,
+  fetchDriverProjectOptions,
+  fetchMyWorkedDates,
+  type ScheduleStatus,
+} from '@/app/_actions/scheduleActions'
+import { submitWorkRecord, submitOffMasterReport } from '@/app/_actions/workRecordActions'
 
 // ── 型定義 ──────────────────────────────────────────────────────
-type ScheduleStatus = 'scheduled' | 'absent'
-type ScheduleMap   = Map<string, ScheduleStatus>  // key: 'YYYY-MM-DD'
 
-type WorkRecord = {
-  id:        string
-  date:      string   // 'YYYY-MM-DD'
-  projectId: string
-  note:      string
-}
+type ScheduleEntry = { id: string; status: ScheduleStatus; projectId: string }
+type ScheduleMap   = Map<string, ScheduleEntry>   // key: 'YYYY-MM-DD'
+type ProjectOption = { id: string; name: string }
 
-type MockProject = { id: string; name: string }
-
-// ── モック定数 ──────────────────────────────────────────────────
-const MOCK_PROJECTS: MockProject[] = [
-  { id: 'proj-001', name: '東京→大阪 定期便' },
-  { id: 'proj-002', name: '名古屋スポット' },
-  { id: 'proj-003', name: '横浜港 荷役' },
-]
-
-// ── モック API（実装時に Server Actions へ差し替え） ──────────────
-async function mockFetchSchedules(yearMonth: string): Promise<ScheduleMap> {
-  await delay(400)
-  // 当月の 3日・5日・10日を scheduled で返すサンプルデータ
-  const map: ScheduleMap = new Map()
-  const days = [3, 5, 10, 15, 20, 22, 25]
-  days.forEach(d => {
-    map.set(`${yearMonth}-${String(d).padStart(2, '0')}`, 'scheduled')
-  })
-  return map
-}
-
-async function mockUpsertSchedule(date: string, status: ScheduleStatus | null): Promise<void> {
-  await delay(500)
-  // null = 削除（クリア）
-}
-
-async function mockCopyPrevMonth(fromYM: string, toYM: string): Promise<number> {
-  await delay(800)
-  return 12  // コピーした件数（サンプル）
-}
-
-async function mockFetchWorkRecords(yearMonth: string): Promise<WorkRecord[]> {
-  await delay(300)
-  return [
-    { id: 'wr-001', date: `${yearMonth}-03`, projectId: 'proj-001', note: '' },
-    { id: 'wr-002', date: `${yearMonth}-10`, projectId: 'proj-002', note: '' },
-  ]
-}
-
-async function mockSubmitWorkRecord(rec: Omit<WorkRecord, 'id'>): Promise<string> {
-  await delay(700)
-  return `wr-${Date.now()}`
-}
-
-function delay(ms: number) {
-  return new Promise<void>(r => setTimeout(r, ms))
-}
+type BottomSheet =
+  | { type: 'complete'; date: string; entry: ScheduleEntry }
+  | { type: 'offmaster'; date: string }
+  | null
 
 // ── ユーティリティ ───────────────────────────────────────────────
+
 function currentYearMonth() {
   const d = new Date()
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
@@ -75,7 +38,7 @@ function prevYearMonth(ym: string) {
 
 function buildCalendarDays(yearMonth: string): (string | null)[] {
   const [y, m] = yearMonth.split('-').map(Number)
-  const firstDay = new Date(y, m - 1, 1).getDay()  // 0=Sun
+  const firstDay    = new Date(y, m - 1, 1).getDay()
   const daysInMonth = new Date(y, m, 0).getDate()
   const cells: (string | null)[] = Array(firstDay).fill(null)
   for (let d = 1; d <= daysInMonth; d++) {
@@ -90,44 +53,107 @@ function todayISO() {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
-// ── 重複警告モーダル ─────────────────────────────────────────────
-function DuplicateModal({
+const DAY_HEADERS = ['日', '月', '火', '水', '木', '金', '土']
+
+// ── DayCell ──────────────────────────────────────────────────────
+
+function DayCell({
+  date,
+  entry,
+  isToday,
+  isSunday,
+  isSaturday,
+  isWorked,
+  isPending,
+  onTap,
+}: {
+  date:       string
+  entry:      ScheduleEntry | undefined
+  isToday:    boolean
+  isSunday:   boolean
+  isSaturday: boolean
+  isWorked:   boolean
+  isPending:  boolean
+  onTap:      (date: string) => void
+}) {
+  const day = parseInt(date.split('-')[2], 10)
+
+  let bg = 'bg-white'
+  let textColor = isSunday ? 'text-rose-500' : isSaturday ? 'text-blue-500' : 'text-zinc-800'
+  let badge: React.ReactNode = null
+
+  if (isWorked) {
+    bg = 'bg-emerald-500'
+    textColor = 'text-white'
+    badge = <span className="block text-[8px] font-bold">完了</span>
+  } else if (entry?.status === 'scheduled') {
+    bg = 'bg-blue-500'
+    textColor = 'text-white'
+    badge = <span className="block text-[8px] font-bold">予定</span>
+  } else if (entry?.status === 'absent') {
+    bg = 'bg-zinc-200'
+    textColor = 'text-zinc-400'
+    badge = <span className="block text-[8px]">休み</span>
+  }
+
+  const ringCls = isToday ? 'ring-2 ring-offset-1 ring-zinc-900' : ''
+
+  return (
+    <button
+      type="button"
+      onClick={() => !isPending && onTap(date)}
+      disabled={isPending}
+      className={`
+        aspect-square w-full rounded-lg flex flex-col items-center justify-center gap-0.5
+        text-xs font-semibold transition-transform active:scale-95 select-none
+        ${bg} ${textColor} ${ringCls}
+        disabled:opacity-50
+      `}
+    >
+      <span>{day}</span>
+      {badge}
+    </button>
+  )
+}
+
+// ── 完了確認ボトムシート ─────────────────────────────────────────
+
+function CompleteSheet({
   date,
   projectName,
-  onConfirm,
-  onCancel,
+  onComplete,
+  onClose,
+  submitting,
 }: {
   date:        string
   projectName: string
-  onConfirm:   () => void
-  onCancel:    () => void
+  onComplete:  () => void
+  onClose:     () => void
+  submitting:  boolean
 }) {
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/40 px-4">
-      <div className="w-full max-w-sm rounded-2xl bg-white shadow-2xl overflow-hidden">
-        <div className="px-5 pt-6 pb-4">
-          <div className="flex items-center gap-3 mb-3">
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-100 text-xl">⚠️</span>
-            <h3 className="font-bold text-zinc-900 text-base">記録が重複しています</h3>
-          </div>
-          <p className="text-sm text-zinc-600 leading-relaxed">
-            <span className="font-semibold text-zinc-800">{date}</span>（
-            <span className="font-semibold text-zinc-800">{projectName}</span>）
-            には既に勤務記録があります。<br />本当に登録しますか？
-          </p>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40">
+      <div className="w-full max-w-sm rounded-t-2xl bg-white shadow-2xl overflow-hidden">
+        <div className="px-5 pt-6 pb-2">
+          <p className="text-xs text-zinc-500 mb-1 tabular-nums">{date}</p>
+          <h3 className="text-base font-bold text-zinc-900 mb-1">{projectName}</h3>
+          <p className="text-sm text-zinc-500">この案件の稼働を「完了」として報告します。</p>
         </div>
-        <div className="grid grid-cols-2 border-t border-zinc-100">
+        <div className="px-5 pb-6 pt-3 space-y-3">
           <button
-            onClick={onCancel}
-            className="py-4 text-sm font-medium text-zinc-600 hover:bg-zinc-50 transition border-r border-zinc-100"
+            type="button"
+            onClick={onComplete}
+            disabled={submitting}
+            className="w-full rounded-xl bg-emerald-600 py-4 text-sm font-bold text-white hover:bg-emerald-700 disabled:opacity-50 transition"
           >
-            キャンセル
+            {submitting ? '送信中…' : '✅ 完了報告する'}
           </button>
           <button
-            onClick={onConfirm}
-            className="py-4 text-sm font-bold text-rose-600 hover:bg-rose-50 transition"
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-xl border border-zinc-200 bg-white py-3 text-sm font-medium text-zinc-600 hover:bg-zinc-50"
           >
-            それでも登録
+            キャンセル
           </button>
         </div>
       </div>
@@ -135,264 +161,129 @@ function DuplicateModal({
   )
 }
 
-// ── カレンダーセル ───────────────────────────────────────────────
-const DAY_HEADERS = ['日', '月', '火', '水', '木', '金', '土']
+// ── 突発案件報告ボトムシート ─────────────────────────────────────
 
-const STATUS_STYLE: Record<ScheduleStatus, { bg: string; text: string; ring: string; label: string }> = {
-  scheduled: { bg: 'bg-blue-500', text: 'text-white', ring: 'ring-blue-300', label: '予定' },
-  absent:    { bg: 'bg-zinc-200', text: 'text-zinc-500', ring: 'ring-zinc-300', label: '休み' },
-}
-
-function DayCell({
+function OffMasterSheet({
   date,
-  status,
-  isToday,
-  isSunday,
-  isSaturday,
-  isPending,
-  onTap,
+  onSubmit,
+  onClose,
+  submitting,
 }: {
   date:       string
-  status:     ScheduleStatus | undefined
-  isToday:    boolean
-  isSunday:   boolean
-  isSaturday: boolean
-  isPending:  boolean
-  onTap:      (date: string) => void
+  onSubmit:   (jobName: string) => void
+  onClose:    () => void
+  submitting: boolean
 }) {
-  const day     = Number(date.split('-')[2])
-  const style   = status ? STATUS_STYLE[status] : null
-  const dayText = isSunday ? 'text-rose-500' : isSaturday ? 'text-blue-400' : 'text-zinc-700'
+  const [jobName, setJobName] = useState('')
 
   return (
-    <button
-      type="button"
-      onClick={() => onTap(date)}
-      disabled={isPending}
-      aria-label={`${date} ${status ?? '未設定'}`}
-      className={`
-        relative flex flex-col items-center justify-start gap-0.5 rounded-xl p-1.5 min-h-[52px] transition-all
-        ${style ? `${style.bg} ${style.text} ring-2 ${style.ring}` : 'bg-white hover:bg-zinc-50 active:bg-zinc-100'}
-        ${isToday && !style ? 'ring-2 ring-zinc-900' : ''}
-        ${isPending ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
-        border border-zinc-100
-      `}
-    >
-      <span className={`text-xs font-semibold tabular-nums ${style ? '' : dayText} ${isToday && !style ? 'text-zinc-900 font-bold' : ''}`}>
-        {day}
-      </span>
-      {style && (
-        <span className="text-[9px] font-medium leading-none opacity-90">{style.label}</span>
-      )}
-      {isToday && (
-        <span className={`absolute bottom-1 left-1/2 -translate-x-1/2 h-1 w-1 rounded-full ${style ? 'bg-white/60' : 'bg-zinc-900'}`} />
-      )}
-    </button>
-  )
-}
-
-// ── 凡例 ─────────────────────────────────────────────────────────
-function Legend() {
-  return (
-    <div className="flex items-center gap-4 text-xs text-zinc-500">
-      {Object.entries(STATUS_STYLE).map(([k, v]) => (
-        <span key={k} className="flex items-center gap-1.5">
-          <span className={`h-3 w-3 rounded-full ${v.bg}`} />
-          {v.label}
-        </span>
-      ))}
-      <span className="flex items-center gap-1.5">
-        <span className="h-3 w-3 rounded-full ring-2 ring-zinc-900 bg-white" />
-        今日
-      </span>
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40">
+      <div className="w-full max-w-sm rounded-t-2xl bg-white shadow-2xl overflow-hidden">
+        <div className="px-5 pt-6 pb-2">
+          <p className="text-xs text-zinc-500 mb-1 tabular-nums">{date}</p>
+          <h3 className="text-base font-bold text-zinc-900 mb-1">マスタ外の完了報告</h3>
+          <p className="text-sm text-zinc-500">
+            事前に登録されていない急な仕事の場合、案件名を入力して報告してください。<br />
+            金額は空欄のまま管理者に通知されます。
+          </p>
+        </div>
+        <div className="px-5 pb-6 pt-3 space-y-3">
+          <div>
+            <label className="block text-xs text-zinc-500 mb-1">案件名</label>
+            <input
+              type="text"
+              value={jobName}
+              onChange={e => setJobName(e.target.value)}
+              placeholder="例：〇〇配送、△△荷卸し…"
+              maxLength={100}
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+              autoFocus
+            />
+          </div>
+          <button
+            type="button"
+            onClick={() => jobName.trim() && onSubmit(jobName.trim())}
+            disabled={submitting || !jobName.trim()}
+            className="w-full rounded-xl bg-rose-600 py-4 text-sm font-bold text-white hover:bg-rose-700 disabled:opacity-50 transition"
+          >
+            {submitting ? '送信中…' : '📣 管理者へ報告する'}
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="w-full rounded-xl border border-zinc-200 bg-white py-3 text-sm font-medium text-zinc-600 hover:bg-zinc-50"
+          >
+            キャンセル
+          </button>
+        </div>
+      </div>
     </div>
   )
 }
 
-// ── 勤務記録フォーム ─────────────────────────────────────────────
-function WorkRecordForm({
-  yearMonth,
-  workRecords,
-  onSubmitted,
-}: {
-  yearMonth:   string
-  workRecords: WorkRecord[]
-  onSubmitted: (rec: WorkRecord) => void
-}) {
-  const [date,      setDate]      = useState(todayISO())
-  const [projectId, setProjectId] = useState(MOCK_PROJECTS[0].id)
-  const [note,      setNote]      = useState('')
-  const [err,       setErr]       = useState<string | null>(null)
-  const [ok,        setOk]        = useState(false)
-  const [submitting, setSubmitting] = useState(false)
+// ── 凡例 ─────────────────────────────────────────────────────────
 
-  // 重複モーダル
-  const [dupModal, setDupModal]   = useState<{ date: string; projectName: string } | null>(null)
-  const pendingSubmitRef = useRef<(() => Promise<void>) | null>(null)
-
-  function isDuplicate(d: string, pid: string) {
-    return workRecords.some(r => r.date === d && r.projectId === pid)
-  }
-
-  async function doSubmit() {
-    if (submitting) return          // 連打ガード
-    setSubmitting(true)             // 即座に disabled
-    setErr(null)
-    try {
-      const id = await mockSubmitWorkRecord({ date, projectId, note })
-      onSubmitted({ id, date, projectId, note })
-      setOk(true)
-      setNote('')
-      setTimeout(() => setOk(false), 3000)
-    } catch {
-      setErr('記録の送信に失敗しました')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  function handleSubmit(e: React.FormEvent) {
-    e.preventDefault()
-    if (submitting) return          // フォーム送信の二重防止
-
-    if (isDuplicate(date, projectId)) {
-      const proj = MOCK_PROJECTS.find(p => p.id === projectId)
-      pendingSubmitRef.current = doSubmit
-      setDupModal({ date, projectName: proj?.name ?? '' })
-      return
-    }
-    doSubmit()
-  }
-
-  function confirmDuplicate() {
-    setDupModal(null)
-    pendingSubmitRef.current?.()
-    pendingSubmitRef.current = null
-  }
-
+function Legend() {
   return (
-    <>
-      <form onSubmit={handleSubmit} className="rounded-2xl border border-zinc-200 bg-white p-5 space-y-4">
-        <h3 className="text-sm font-bold text-zinc-800">勤務実績の記録</h3>
-
-        <div className="grid grid-cols-2 gap-3">
-          {/* 日付 */}
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">日付</label>
-            <input
-              type="date"
-              value={date}
-              min={`${yearMonth}-01`}
-              max={`${yearMonth}-31`}
-              onChange={e => setDate(e.target.value)}
-              required
-              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
-            />
-          </div>
-
-          {/* 案件 */}
-          <div>
-            <label className="block text-xs text-zinc-500 mb-1">案件</label>
-            <select
-              value={projectId}
-              onChange={e => setProjectId(e.target.value)}
-              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500"
-            >
-              {MOCK_PROJECTS.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-          </div>
-
-          {/* メモ */}
-          <div className="col-span-2">
-            <label className="block text-xs text-zinc-500 mb-1">メモ（任意）</label>
-            <input
-              type="text"
-              value={note}
-              onChange={e => setNote(e.target.value)}
-              placeholder="特記事項など"
-              className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
-            />
-          </div>
-        </div>
-
-        {/* 重複インジケータ */}
-        {isDuplicate(date, projectId) && (
-          <div className="flex items-center gap-2 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-700">
-            <span>⚠️</span>
-            <span>この日付・案件の記録がすでに存在します（送信時に確認します）</span>
-          </div>
-        )}
-
-        {err && <p className="text-xs text-red-600">{err}</p>}
-        {ok  && <p className="text-xs text-emerald-600">✅ 記録しました</p>}
-
-        {/* 記録ボタン — 連打防止: submitting=true で即 disabled */}
-        <button
-          type="submit"
-          disabled={submitting}
-          className={`
-            w-full rounded-xl py-3.5 text-sm font-bold transition-all
-            ${submitting
-              ? 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
-              : 'bg-zinc-900 hover:bg-zinc-700 active:bg-zinc-800 text-white'
-            }
-          `}
-        >
-          {submitting ? (
-            <span className="flex items-center justify-center gap-2">
-              <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-              </svg>
-              送信中…
-            </span>
-          ) : '記録する'}
-        </button>
-      </form>
-
-      {/* 重複確認モーダル */}
-      {dupModal && (
-        <DuplicateModal
-          date={dupModal.date}
-          projectName={dupModal.projectName}
-          onConfirm={confirmDuplicate}
-          onCancel={() => { setDupModal(null); pendingSubmitRef.current = null }}
-        />
-      )}
-    </>
+    <div className="flex flex-wrap gap-3 text-[10px] text-zinc-500">
+      {[
+        { color: 'bg-blue-500',    label: '稼働予定' },
+        { color: 'bg-emerald-500', label: '完了' },
+        { color: 'bg-zinc-200',    label: '休み' },
+      ].map(s => (
+        <span key={s.label} className="flex items-center gap-1">
+          <span className={`inline-block w-2.5 h-2.5 rounded-sm ${s.color}`} />
+          {s.label}
+        </span>
+      ))}
+    </div>
   )
 }
 
-// ================================================================
-// ScheduleCalendar（メインコンポーネント）
-// ================================================================
-export default function ScheduleCalendar() {
-  const [yearMonth, setYearMonth]     = useState(currentYearMonth)
-  const [schedules, setSchedules]     = useState<ScheduleMap>(new Map())
-  const [workRecords, setWorkRecords] = useState<WorkRecord[]>([])
-  const [loadErr, setLoadErr]         = useState<string | null>(null)
-  const [loadingCal, setLoadingCal]   = useState(true)
-  const [isPending, startTransition]  = useTransition()
+// ── メインコンポーネント ─────────────────────────────────────────
 
-  // コピーボタン専用ローディング
-  const [copying, setCopying] = useState(false)
-  const [copyMsg, setCopyMsg] = useState<string | null>(null)
+export default function ScheduleCalendar() {
+  const [yearMonth,  setYearMonth]  = useState(currentYearMonth)
+  const [schedules,  setSchedules]  = useState<ScheduleMap>(new Map())
+  const [workedDates, setWorkedDates] = useState<string[]>([])
+  const [projects,   setProjects]   = useState<ProjectOption[]>([])
+  const [loadErr,    setLoadErr]    = useState<string | null>(null)
+  const [loadingCal, setLoadingCal] = useState(true)
+  const [isPending,  startTransition] = useTransition()
+
+  const [bottomSheet,  setBottomSheet]  = useState<BottomSheet>(null)
+  const [submitting,   setSubmitting]   = useState(false)
+  const [submitMsg,    setSubmitMsg]    = useState<{ text: string; ok: boolean } | null>(null)
+
+  const [copying,  setCopying]  = useState(false)
+  const [copyMsg,  setCopyMsg]  = useState<string | null>(null)
 
   const today = todayISO()
 
-  // ── データ読み込み ─────────────────────────────────────────
+  // ── 案件リスト取得 ──────────────────────────────────────
+  useEffect(() => {
+    fetchDriverProjectOptions().then(res => {
+      if (res.data) setProjects(res.data)
+    })
+  }, [])
+
+  // ── カレンダー読み込み ──────────────────────────────────
   const load = useCallback(async (ym: string) => {
     setLoadingCal(true)
     setLoadErr(null)
     try {
-      const [sched, recs] = await Promise.all([
-        mockFetchSchedules(ym),
-        mockFetchWorkRecords(ym),
+      const [schedRes, workedRes] = await Promise.all([
+        fetchSchedules(ym),
+        fetchMyWorkedDates(ym),
       ])
-      setSchedules(sched)
-      setWorkRecords(recs)
+      if (schedRes.error) { setLoadErr(schedRes.error); return }
+      if (workedRes.error) { setLoadErr(workedRes.error); return }
+      const map: ScheduleMap = new Map()
+      for (const row of schedRes.data ?? []) {
+        map.set(row.date, { id: row.id, status: row.status, projectId: row.projectId })
+      }
+      setSchedules(map)
+      setWorkedDates(workedRes.data ?? [])
     } catch {
       setLoadErr('予定データの読み込みに失敗しました')
     } finally {
@@ -402,65 +293,102 @@ export default function ScheduleCalendar() {
 
   useEffect(() => { load(yearMonth) }, [load, yearMonth])
 
-  // ── 日付セルタップ（scheduled → absent → clear → scheduled） ──
+  // ── セルタップ ──────────────────────────────────────────
   function handleDayTap(date: string) {
-    const current = schedules.get(date)
-    const next: ScheduleStatus | null =
-      current === 'scheduled' ? 'absent'
-      : current === 'absent'  ? null
-      : 'scheduled'
+    const entry = schedules.get(date)
+    const isAlreadyWorked = workedDates.includes(date)
 
-    // 楽観的UI更新
-    setSchedules(prev => {
-      const m = new Map(prev)
-      if (next === null) m.delete(date)
-      else m.set(date, next)
-      return m
-    })
+    if (isAlreadyWorked) return   // 完了済みは操作不可
 
-    // バックグラウンドで保存（startTransitionでisPendingを制御）
-    startTransition(async () => {
-      try {
-        await mockUpsertSchedule(date, next)
-      } catch {
-        // 失敗時はロールバック
-        setSchedules(prev => {
-          const m = new Map(prev)
-          if (current === undefined) m.delete(date)
-          else m.set(date, current)
-          return m
-        })
-        setLoadErr('予定の保存に失敗しました')
-      }
-    })
-  }
-
-  // ── 前月コピー ─────────────────────────────────────────────
-  async function handleCopyPrevMonth() {
-    if (copying) return
-    const from = prevYearMonth(yearMonth)
-    setCopying(true)
-    setCopyMsg(null)
-    try {
-      const count = await mockCopyPrevMonth(from, yearMonth)
-      setCopyMsg(`${from} の予定を ${count} 件コピーしました`)
-      await load(yearMonth)
-    } catch {
-      setCopyMsg('コピーに失敗しました')
-    } finally {
-      setCopying(false)
-      setTimeout(() => setCopyMsg(null), 4000)
+    if (entry?.status === 'scheduled') {
+      // 稼働予定セル → 完了確認シートを開く
+      setBottomSheet({ type: 'complete', date, entry })
+    } else if (!entry) {
+      // 空セル → 突発案件報告シートを開く
+      setBottomSheet({ type: 'offmaster', date })
+    } else {
+      // absent → toggle（休み取り消し）
+      const prev = entry
+      setSchedules(p => { const m = new Map(p); m.delete(date); return m })
+      startTransition(async () => {
+        if (!entry.id) return
+        const res = await deleteSchedule(entry.id)
+        if (res.error) {
+          setSchedules(p => new Map(p).set(date, prev))
+          setLoadErr(res.error)
+        }
+      })
     }
   }
 
-  // ── カレンダーグリッド構築 ─────────────────────────────────
+  // ── 完了報告（スケジュール済み案件） ──────────────────────
+  async function handleComplete() {
+    if (bottomSheet?.type !== 'complete') return
+    if (submitting) return
+    setSubmitting(true)
+    const { date, entry } = bottomSheet
+    const res = await submitWorkRecord({ projectId: entry.projectId, date }, { force: false })
+    setSubmitting(false)
+    if (res.error && res.error !== 'DUPLICATE_EXISTS') {
+      setSubmitMsg({ text: `エラー: ${res.error}`, ok: false })
+      setBottomSheet(null)
+      return
+    }
+    setWorkedDates(prev => [...new Set([...prev, date])])
+    setSubmitMsg({ text: '完了を報告しました', ok: true })
+    setBottomSheet(null)
+    setTimeout(() => setSubmitMsg(null), 3000)
+  }
+
+  // ── 突発案件報告 ──────────────────────────────────────────
+  async function handleOffMasterSubmit(jobName: string) {
+    if (bottomSheet?.type !== 'offmaster') return
+    if (submitting) return
+    setSubmitting(true)
+    const { date } = bottomSheet
+    const res = await submitOffMasterReport({ date, jobName })
+    setSubmitting(false)
+    if (res.error) {
+      setSubmitMsg({ text: `エラー: ${res.error}`, ok: false })
+      setBottomSheet(null)
+      return
+    }
+    setSubmitMsg({ text: '管理者へ報告しました', ok: true })
+    setBottomSheet(null)
+    setTimeout(() => setSubmitMsg(null), 3000)
+  }
+
+  // ── 前月コピー ─────────────────────────────────────────
+  async function handleCopyPrevMonth() {
+    if (copying) return
+    const fromYM = prevYearMonth(yearMonth)
+    setCopying(true)
+    setCopyMsg(null)
+    const res = await copyPrevMonthSchedules({ fromYearMonth: fromYM, toYearMonth: yearMonth })
+    if (res.error) {
+      setCopyMsg(`エラー: ${res.error}`)
+    } else {
+      const count = res.data?.copied ?? 0
+      setCopyMsg(count > 0
+        ? `${fromYM} の予定を ${count} 件コピーしました`
+        : `${fromYM} にコピー元の予定がありません`
+      )
+      await load(yearMonth)
+    }
+    setCopying(false)
+    setTimeout(() => setCopyMsg(null), 4000)
+  }
+
   const cells = buildCalendarDays(yearMonth)
   const [y, m] = yearMonth.split('-').map(Number)
 
-  return (
-    <div className="space-y-6">
+  const projectName = (id: string) =>
+    projects.find(p => p.id === id)?.name ?? '案件'
 
-      {/* ヘッダー：月選択 + コピーボタン */}
+  return (
+    <div className="space-y-5">
+
+      {/* ヘッダー */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2">
           <button
@@ -469,11 +397,8 @@ export default function ScheduleCalendar() {
               const d = new Date(y, m - 2, 1)
               setYearMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
             }}
-            className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 transition text-sm"
-            aria-label="前の月"
-          >
-            ‹
-          </button>
+            className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 text-sm"
+          >‹</button>
           <h2 className="text-base font-bold text-zinc-900 tabular-nums min-w-[90px] text-center">
             {y}年{m}月
           </h2>
@@ -483,71 +408,49 @@ export default function ScheduleCalendar() {
               const d = new Date(y, m, 1)
               setYearMonth(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
             }}
-            className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 transition text-sm"
-            aria-label="次の月"
-          >
-            ›
-          </button>
+            className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 text-sm"
+          >›</button>
         </div>
-
-        {/* 前月コピーボタン — 連打防止: copying=true で即 disabled */}
         <button
           type="button"
           onClick={handleCopyPrevMonth}
           disabled={copying || isPending || loadingCal}
-          className={`
-            flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition
-            ${copying
-              ? 'border-zinc-200 bg-zinc-100 text-zinc-400 cursor-not-allowed'
-              : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'
-            }
-          `}
+          className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-medium transition
+            ${copying ? 'border-zinc-200 bg-zinc-100 text-zinc-400 cursor-not-allowed'
+                      : 'border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100'}`}
         >
-          {copying ? (
-            <>
-              <svg className="h-3.5 w-3.5 animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
-                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
-              </svg>
-              コピー中…
-            </>
-          ) : (
-            <>📋 前月の予定をコピー</>
-          )}
+          {copying ? '…コピー中' : '📋 前月の予定をコピー'}
         </button>
       </div>
 
-      {/* コピー結果メッセージ */}
       {copyMsg && (
-        <div className="rounded-lg bg-blue-50 border border-blue-200 px-3 py-2 text-xs text-blue-700">
+        <div className={`rounded-lg px-3 py-2 text-xs border ${copyMsg.startsWith('エラー') ? 'bg-red-50 border-red-200 text-red-700' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
           {copyMsg}
         </div>
       )}
 
-      {/* エラー */}
+      {submitMsg && (
+        <div className={`rounded-lg px-3 py-2 text-xs border font-medium ${submitMsg.ok ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-red-50 border-red-200 text-red-700'}`}>
+          {submitMsg.ok ? '✅ ' : '✗ '}{submitMsg.text}
+        </div>
+      )}
+
       {loadErr && (
         <div className="rounded-lg bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-600">
           {loadErr}
         </div>
       )}
 
-      {/* カレンダー本体 */}
+      {/* カレンダー */}
       <div className="rounded-2xl border border-zinc-200 bg-zinc-50 p-3 sm:p-4">
-        {/* 曜日ヘッダー */}
         <div className="grid grid-cols-7 mb-2">
           {DAY_HEADERS.map((h, i) => (
-            <div
-              key={h}
-              className={`text-center text-[10px] font-semibold py-1 ${
-                i === 0 ? 'text-rose-400' : i === 6 ? 'text-blue-400' : 'text-zinc-400'
-              }`}
-            >
-              {h}
-            </div>
+            <div key={h} className={`text-center text-[10px] font-semibold py-1 ${
+              i === 0 ? 'text-rose-400' : i === 6 ? 'text-blue-400' : 'text-zinc-400'
+            }`}>{h}</div>
           ))}
         </div>
 
-        {/* 日付グリッド */}
         {loadingCal ? (
           <div className="py-16 text-center text-sm text-zinc-400">読み込み中…</div>
         ) : (
@@ -559,10 +462,11 @@ export default function ScheduleCalendar() {
                 <DayCell
                   key={date}
                   date={date}
-                  status={schedules.get(date)}
+                  entry={schedules.get(date)}
                   isToday={date === today}
                   isSunday={i % 7 === 0}
                   isSaturday={i % 7 === 6}
+                  isWorked={workedDates.includes(date)}
                   isPending={isPending}
                   onTap={handleDayTap}
                 />
@@ -571,7 +475,6 @@ export default function ScheduleCalendar() {
           </div>
         )}
 
-        {/* 凡例 */}
         <div className="mt-3 pt-3 border-t border-zinc-200">
           <Legend />
         </div>
@@ -581,9 +484,9 @@ export default function ScheduleCalendar() {
       {!loadingCal && (
         <div className="grid grid-cols-3 gap-2">
           {[
-            { label: '稼働予定', value: [...schedules.values()].filter(s => s === 'scheduled').length, color: 'text-blue-600' },
-            { label: '休み予定', value: [...schedules.values()].filter(s => s === 'absent').length,    color: 'text-zinc-400' },
-            { label: '記録済み', value: workRecords.length, color: 'text-emerald-600' },
+            { label: '稼働予定', value: [...schedules.values()].filter(s => s.status === 'scheduled').length, color: 'text-blue-600' },
+            { label: '休み予定', value: [...schedules.values()].filter(s => s.status === 'absent').length,    color: 'text-zinc-400' },
+            { label: '完了済み', value: workedDates.length, color: 'text-emerald-600' },
           ].map(s => (
             <div key={s.label} className="rounded-xl border border-zinc-200 bg-white px-3 py-3 text-center">
               <p className="text-xs text-zinc-500 mb-1">{s.label}</p>
@@ -593,14 +496,33 @@ export default function ScheduleCalendar() {
         </div>
       )}
 
-      {/* 勤務実績記録フォーム */}
-      <div className="mt-2">
-        <WorkRecordForm
-          yearMonth={yearMonth}
-          workRecords={workRecords}
-          onSubmitted={rec => setWorkRecords(prev => [...prev, rec])}
-        />
+      {/* 操作ガイド */}
+      <div className="rounded-xl border border-zinc-100 bg-zinc-50 px-4 py-3 text-xs text-zinc-500 space-y-1">
+        <p className="font-semibold text-zinc-700">使い方</p>
+        <p>• <span className="text-blue-600 font-medium">青（予定）</span>のセルをタップ → 完了報告（1タップで完了）</p>
+        <p>• <span className="text-zinc-600 font-medium">空白</span>のセルをタップ → マスタ外の突発案件を報告</p>
+        <p>• <span className="text-zinc-400 font-medium">休み</span>のセルをタップ → 休み取り消し</p>
       </div>
+
+      {/* ボトムシート */}
+      {bottomSheet?.type === 'complete' && (
+        <CompleteSheet
+          date={bottomSheet.date}
+          projectName={projectName(bottomSheet.entry.projectId)}
+          onComplete={handleComplete}
+          onClose={() => setBottomSheet(null)}
+          submitting={submitting}
+        />
+      )}
+
+      {bottomSheet?.type === 'offmaster' && (
+        <OffMasterSheet
+          date={bottomSheet.date}
+          onSubmit={handleOffMasterSubmit}
+          onClose={() => setBottomSheet(null)}
+          submitting={submitting}
+        />
+      )}
     </div>
   )
 }

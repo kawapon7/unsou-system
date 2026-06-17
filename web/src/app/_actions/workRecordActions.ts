@@ -439,6 +439,31 @@ export async function resolveDuplicateRecord(
 }
 
 // ================================================================
+// keepDuplicateRecord
+// 指定 keepId のレコードを残し、deleteIds を全て DELETE
+// ================================================================
+export async function keepDuplicateRecord(
+  keepId: string,
+  deleteIds: string[],
+): Promise<ActionResult> {
+  if (deleteIds.length === 0) return { data: undefined, error: null }
+
+  const db = createServiceClient() as any
+
+  const { error } = await db
+    .from('work_records')
+    .delete()
+    .in('id', deleteIds)
+
+  if (error) return { data: null, error: error.message }
+
+  revalidatePath('/admin/sales')
+  revalidatePath('/admin/dashboard')
+
+  return { data: undefined, error: null }
+}
+
+// ================================================================
 // fetchWorkRecords
 // 子分の月次実績一覧取得（明細画面用）
 // ================================================================
@@ -491,4 +516,53 @@ export async function fetchWorkRecords(
     })),
     error: null,
   }
+}
+
+// ================================================================
+// submitOffMasterReport
+// 子分アプリ「突発案件」報告
+// マスタにない急な仕事を案件名のみで報告する。
+// project_id は null（マイグレーションで nullable 化済み）
+// status = 'pending_review' でアドミンアラートに浮上する。
+// ================================================================
+export async function submitOffMasterReport(params: {
+  date:    string   // 'YYYY-MM-DD'
+  jobName: string   // 案件名テキスト（必須）
+}): Promise<ActionResult<{ id: string }>> {
+  const tenantId = await getCurrentTenantId()
+  let contractorId: string | null
+
+  if (process.env.NODE_ENV === 'development') {
+    contractorId = DEV_CONTRACTOR_ID
+  } else {
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  }
+
+  // NOTE: project_id を null で INSERT するため、migration で DROP NOT NULL 済みであること
+  const db = createServiceClient() as any
+  const { data, error } = await db
+    .from('work_records')
+    .insert({
+      contractor_id:      contractorId,
+      project_id:         null,
+      work_date:          params.date,
+      date:               params.date,
+      is_off_master:      true,
+      off_master_job_name: params.jobName,
+      status:             'pending_review',  // アドミンアラートに浮上
+      tenant_id:          tenantId,
+    })
+    .select('id')
+    .single()
+
+  if (error || !data) return { data: null, error: error?.message ?? '登録に失敗しました' }
+
+  revalidatePath('/driver')
+  revalidatePath('/admin/dashboard')
+
+  return { data: { id: data.id }, error: null }
 }

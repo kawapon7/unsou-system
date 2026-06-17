@@ -10,11 +10,11 @@ import { getCurrentTenantId } from '@/utils/tenant'
 
 export type ThresholdAlertRow = {
   id:             string
-  table:          'work_records' | 'expense_records'
+  table:          'work_records'
   contractorId:   string
   contractorName: string
   date:           string
-  reason:         string   // '個数100超' | '立替金3万超'
+  reason:         string   // '個数100超'
   value:          number
   status:         string
 }
@@ -107,43 +107,6 @@ async function fetchAndLockThresholdViolations(): Promise<ThresholdAlertRow[]> {
     }
   }
 
-  // ── expense_records: 立替金3万超 ─────────────────────────
-  const { data: erViolations } = await db
-    .from('expense_records')
-    .select(`
-      id, contractor_id, expense_date, date, amount_actual, status,
-      contractors ( id, name )
-    `)
-    .eq('tenant_id', tenantId)
-    .gt('amount_actual', 30000)
-    .neq('approval_status', 'approved')
-
-  if (erViolations?.length) {
-    const needsLock = (erViolations as any[]).filter(
-      (r: any) => r.status !== 'pending_review',
-    )
-    if (needsLock.length > 0) {
-      await db
-        .from('expense_records')
-        .update({ status: 'pending_review' })
-        .in('id', needsLock.map((r: any) => r.id))
-        .eq('tenant_id', tenantId)
-    }
-
-    for (const r of erViolations as any[]) {
-      results.push({
-        id:             r.id,
-        table:          'expense_records',
-        contractorId:   r.contractor_id,
-        contractorName: r.contractors?.name ?? r.contractor_id,
-        date:           r.date ?? r.expense_date ?? '',
-        reason:         '立替金3万超',
-        value:          r.amount_actual,
-        status:         'pending_review',
-      })
-    }
-  }
-
   return results
 }
 
@@ -180,7 +143,7 @@ async function fetchInvoiceWarnings(): Promise<InvoiceWarningRow[]> {
 }
 
 // ================================================================
-// ⑤ 長期間未承認: 送信後48時間以上 approval_status='pending' の支払通知書
+// ⑤ 長期間未承認: 送信後48時間以上 approval_status='unapproved' の支払通知書（未承認検知）
 // ================================================================
 export async function getPendingNotices(): Promise<ActionResult<PendingNoticeRow[]>> {
   try {
@@ -201,7 +164,7 @@ async function fetchLongPendingNotices(): Promise<PendingNoticeRow[]> {
       id, contractor_id, notice_month, approval_status, created_at,
       contractors ( id, name, phone, email )
     `)
-    .eq('approval_status', 'pending')
+    .eq('approval_status', 'unapproved') // 未承認状態のレコードを抽出
     .lt('created_at', threshold)
     .order('created_at', { ascending: true })
 
@@ -296,17 +259,17 @@ export async function resolveDuplicateRecord(
 
 // ================================================================
 // reviewThresholdRecord
-// 親分が「確認済み・承認」を押したとき: pending_review → confirmed
+// 親分が「手動確認（完了）」を押したとき: pending_review → approved
 // ================================================================
 export async function reviewThresholdRecord(
-  table: 'work_records' | 'expense_records',
+  table: 'work_records',
   id: string,
 ): Promise<ActionResult> {
   const db = createServiceClient() as any
 
   const { error } = await db
     .from(table)
-    .update({ status: 'confirmed' })
+    .update({ status: 'approved' })
     .eq('id', id)
     .eq('status', 'pending_review')
 
@@ -318,27 +281,26 @@ export async function reviewThresholdRecord(
 }
 
 // ================================================================
-// logPendingNoticeResend
-// 長期未承認通知書の再送操作を notification_logs に記録
+// deleteAlertRecord
+// 親分が「削除」を押したとき: work_records を即時削除
 // ================================================================
-export async function logPendingNoticeResend(
-  contractorId: string,
-  destination: string,
-  channel: 'email' | 'sms',
-): Promise<ActionResult<{ id: string }>> {
+export async function deleteAlertRecord(
+  table: 'work_records',
+  id: string,
+): Promise<ActionResult> {
+  const tenantId = await getCurrentTenantId()
   const db = createServiceClient() as any
 
-  const { data, error } = await db
-    .from('notification_logs')
-    .insert({
-      contractor_id: contractorId,
-      type:          channel === 'email' ? 'email' : 'sms',
-      destination,
-      status:        'sent',
-    })
-    .select('id')
-    .single()
+  const { error } = await db
+    .from(table)
+    .delete()
+    .eq('id', id)
+    .eq('tenant_id', tenantId)
 
-  if (error || !data) return { data: null, error: error?.message ?? '再送ログ記録に失敗しました' }
-  return { data: { id: data.id }, error: null }
+  if (error) return { data: null, error: error.message }
+
+  revalidatePath('/admin/dashboard')
+  revalidatePath('/admin/sales')
+  return { data: undefined, error: null }
 }
+

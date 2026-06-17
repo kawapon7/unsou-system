@@ -12,6 +12,56 @@ function toDbMonth(yearMonth: string): string {
   return yearMonth.length === 7 ? `${yearMonth}-01` : yearMonth
 }
 
+// ── 単価ルールから売上/支払金額を計算 ────────────────────────
+// work_records は tax_excluded_sales/payment を持たないため、
+// price_rules の calculation_type と各計測値から都度計算する。
+
+type PriceRuleRecord = {
+  project_id: string
+  calculation_type: string
+  selling_price: number | null
+  buying_price:  number | null
+  margin_fixed:  number | null
+}
+
+type RawWorkRecord = {
+  project_id:    string | null
+  piece_count:   number | null
+  start_time:    string | null
+  end_time:      string | null
+  break_minutes: number | null
+}
+
+function calcWorkAmount(
+  r: RawWorkRecord,
+  rule: PriceRuleRecord | undefined,
+  side: 'selling' | 'buying',
+): number {
+  if (!rule) return 0
+  const price = side === 'selling'
+    ? Number(rule.selling_price ?? 0)
+    : Number(rule.buying_price  ?? 0)
+
+  switch (rule.calculation_type) {
+    case 'piece':
+      return (r.piece_count ?? 0) * price
+    case 'hourly': {
+      if (!r.start_time || !r.end_time) return 0
+      const ms    = new Date(r.end_time).getTime() - new Date(r.start_time).getTime()
+      const hours = ms / 3_600_000 - (r.break_minutes ?? 0) / 60
+      return Math.round(hours * price)
+    }
+    case 'fixed':
+      return price
+    case 'hybrid': {
+      const pieceBonus = (r.piece_count ?? 0) * Number(rule.margin_fixed ?? 0)
+      return price + pieceBonus
+    }
+    default:
+      return 0
+  }
+}
+
 // ── 締め日ユーティリティ ──────────────────────────────────
 
 function closingRange(yearMonth: string, closingDay: string): { from: Date; to: Date } {
@@ -133,9 +183,10 @@ export async function fetchSalesList(
   })
 
   // work_records から未請求荷主の概算を算出
+  // ※ tax_excluded_sales カラムは実DBに存在しないため、price_rules から都度計算
   const workRes = await supabase
     .from('work_records')
-    .select('tax_excluded_sales, project_id')
+    .select('project_id, piece_count, start_time, end_time, break_minutes')
     .eq('tenant_id', tenantId)
     .gte('work_date', periodStart)
     .lte('work_date', periodEnd)
@@ -150,14 +201,16 @@ export async function fetchSalesList(
     ]
 
     if (projectIds.length > 0) {
-      const { data: projects } = await supabase
-        .from('projects')
-        .select('id, client_id')
-        .in('id', projectIds)
-        .eq('tenant_id', tenantId)
+      const [projectsData, rulesData] = await Promise.all([
+        supabase.from('projects').select('id, client_id').in('id', projectIds).eq('tenant_id', tenantId),
+        supabase.from('price_rules').select('project_id, calculation_type, selling_price, buying_price, margin_fixed').in('project_id', projectIds),
+      ])
 
       const projectClientMap = new Map<string, string>(
-        (projects ?? []).map(p => [p.id, p.client_id]),
+        (projectsData.data ?? []).map(p => [p.id, p.client_id]),
+      )
+      const priceRuleMap = new Map<string, PriceRuleRecord>(
+        (rulesData.data ?? []).map(r => [r.project_id, r as PriceRuleRecord]),
       )
 
       const clientNetMap = new Map<string, number>()
@@ -165,7 +218,9 @@ export async function fetchSalesList(
         if (!r.project_id) continue
         const clientId = projectClientMap.get(r.project_id)
         if (!clientId || invoicedClientIds.has(clientId)) continue
-        clientNetMap.set(clientId, (clientNetMap.get(clientId) ?? 0) + r.tax_excluded_sales)
+        const rule = priceRuleMap.get(r.project_id)
+        const net  = calcWorkAmount(r as RawWorkRecord, rule, 'selling')
+        clientNetMap.set(clientId, (clientNetMap.get(clientId) ?? 0) + net)
       }
 
       for (const [clientId, net] of clientNetMap) {
@@ -252,15 +307,19 @@ export async function computeInvoicePreview(
     }
   }
 
-  const [recordsRes, existingRes] = await Promise.all([
+  const [recordsRes, rulesRes, existingRes] = await Promise.all([
     supabase
       .from('work_records')
-      .select('id, work_date, project_id, tax_excluded_sales, quantity, memo')
+      .select('id, work_date, project_id, piece_count, start_time, end_time, break_minutes, note')
       .in('project_id', projectIds)
       .eq('tenant_id', tenantId)
       .gte('work_date', from.toISOString().slice(0, 10))
       .lte('work_date', to.toISOString().slice(0, 10))
       .order('work_date'),
+    supabase
+      .from('price_rules')
+      .select('project_id, calculation_type, selling_price, buying_price, margin_fixed')
+      .in('project_id', projectIds),
     supabase
       .from('invoices')
       .select('id, status')
@@ -271,15 +330,26 @@ export async function computeInvoicePreview(
 
   if (recordsRes.error) return { data: null, error: recordsRes.error.message }
 
+  const priceRuleMap = new Map<string, PriceRuleRecord>(
+    (rulesRes.data ?? []).map(r => [r.project_id, r as PriceRuleRecord]),
+  )
+
   const lines: InvoicePreviewLine[] = (recordsRes.data ?? []).map(r => {
     const proj = r.project_id ? projectMap.get(r.project_id) : null
+    const rule = r.project_id ? priceRuleMap.get(r.project_id) : undefined
+    const net  = calcWorkAmount(r as RawWorkRecord, rule, 'selling')
+    const qty  = rule?.calculation_type === 'hourly'
+      ? (r.start_time && r.end_time
+          ? (new Date(r.end_time).getTime() - new Date(r.start_time).getTime()) / 3_600_000 - (r.break_minutes ?? 0) / 60
+          : 0)
+      : (r.piece_count ?? 0)
     return {
       workDate:    r.work_date,
-      projectName: proj?.project_name ?? '（案件なし）',
-      projectCode: proj?.project_code ?? '',
-      quantity:    r.quantity,
-      netAmount:   r.tax_excluded_sales,
-      memo:        r.memo,
+      projectName: (proj as { project_name?: string; name?: string } | null)?.project_name ?? (proj as { name?: string } | null)?.name ?? '（案件なし）',
+      projectCode: (proj as { project_code?: string } | null)?.project_code ?? '',
+      quantity:    Math.round(qty * 10) / 10,
+      netAmount:   net,
+      memo:        r.note ?? null,
     }
   })
 
@@ -429,7 +499,8 @@ export async function fetchPaymentNoticeSummary(
       .order('name'),
     supabase
       .from('work_records')
-      .select('contractor_id, tax_excluded_payment')
+      // tax_excluded_payment は実DBに存在しないため project_id + 計測値を取得して都度計算
+      .select('contractor_id, project_id, piece_count, start_time, end_time, break_minutes')
       .eq('tenant_id', tenantId)
       .gte('work_date', from)
       .lte('work_date', to),
@@ -451,6 +522,19 @@ export async function fetchPaymentNoticeSummary(
     (noticesRes.data ?? []).map(n => [n.contractor_id, n]),
   )
 
+  // price_rules を一括取得して project_id → rule のマップを構築
+  const allProjectIds = [
+    ...new Set((workRes.data ?? []).map(r => r.project_id).filter((id): id is string => id !== null)),
+  ]
+  const priceRuleMapForPayment = new Map<string, PriceRuleRecord>()
+  if (allProjectIds.length > 0) {
+    const { data: rules } = await supabase
+      .from('price_rules')
+      .select('project_id, calculation_type, selling_price, buying_price, margin_fixed')
+      .in('project_id', allProjectIds)
+    for (const r of rules ?? []) priceRuleMapForPayment.set(r.project_id, r as PriceRuleRecord)
+  }
+
   // 稼働・経費の税抜き合計を contractor ごとに集計
   type WorkAccum  = { laborNet: number }
   type ExpAccum   = { expNetTaxable: number; expNetExempt: number }
@@ -458,8 +542,10 @@ export async function fetchPaymentNoticeSummary(
   const expMap    = new Map<string, ExpAccum>()
 
   for (const r of workRes.data ?? []) {
+    const rule = r.project_id ? priceRuleMapForPayment.get(r.project_id) : undefined
+    const payment = calcWorkAmount(r as RawWorkRecord, rule, 'buying')
     const acc = workMap.get(r.contractor_id) ?? { laborNet: 0 }
-    acc.laborNet += r.tax_excluded_payment
+    acc.laborNet += payment
     workMap.set(r.contractor_id, acc)
   }
   for (const r of expenseRes.data ?? []) {
@@ -536,4 +622,152 @@ export async function fetchPaymentNoticeSummary(
   }
 
   return { data: rows, error: null }
+}
+
+// ================================================================
+// 手入力インボイス（req 5）
+// ================================================================
+
+export type ManualInvoiceLine = {
+  id:          string   // フロントエンド一時ID（uuid v4 推奨）
+  date:        string   // 'YYYY-MM-DD'
+  projectName: string
+  amount:      number   // 税抜き金額
+  isTaxable:   boolean
+  checked:     boolean  // ✅ DB反映対象フラグ
+}
+
+export type ManualInvoicePreview = {
+  subtotal:        number
+  taxAmount:       number
+  deductionRate:   number
+  deductionAmount: number
+  finalAmount:     number
+}
+
+/**
+ * 手入力インボイスの計算プレビュー（保存しない・純粋計算）
+ * isRegistered: 荷主 or 委託先のインボイス登録状態
+ * targetDate: 取引日（最初の行の日付を代表として使用）
+ */
+export async function computeManualInvoicePreview(params: {
+  lines:        ManualInvoiceLine[]
+  isRegistered: boolean
+  targetDate:   string
+}): Promise<ActionResult<ManualInvoicePreview>> {
+  const { getTransitionalDeductionRate } = await import('@/utils/billing/taxCalculator')
+  const date = new Date(params.targetDate)
+
+  const taxableSub = params.lines
+    .filter(l => l.checked && l.isTaxable)
+    .reduce((s, l) => s + l.amount, 0)
+  const nonTaxSub = params.lines
+    .filter(l => l.checked && !l.isTaxable)
+    .reduce((s, l) => s + l.amount, 0)
+
+  const taxAmount = Math.round(taxableSub * 0.1)
+  const deductionRate   = getTransitionalDeductionRate(params.isRegistered, date)
+  const deductionAmount = params.isRegistered
+    ? 0
+    : Math.round((taxableSub + taxAmount) * deductionRate)
+
+  return {
+    data: {
+      subtotal:        taxableSub + nonTaxSub,
+      taxAmount,
+      deductionRate,
+      deductionAmount,
+      finalAmount:     taxableSub + nonTaxSub + taxAmount - deductionAmount,
+    },
+    error: null,
+  }
+}
+
+/**
+ * チェック済み行のみを DB（invoices + billing_records）に反映する。
+ * clientId: 「売上請求書（イン）」のとき荷主ID
+ * contractorId: 「支払請求書（アウト）」のとき委託先ID
+ * mode: 'in' | 'out'
+ */
+export async function commitManualInvoice(params: {
+  yearMonth:     string
+  lines:         ManualInvoiceLine[]   // checked=true の行のみ反映
+  clientId?:     string
+  contractorId?: string
+  mode:          'in' | 'out'
+  finalAmount:   number
+}): Promise<ActionResult<{ id: string }>> {
+  const tenantId = await getCurrentTenantId()
+  const db = createServiceClient() as any
+
+  const checkedLines = params.lines.filter(l => l.checked)
+  if (checkedLines.length === 0)
+    return { data: null, error: 'チェック済みの行がありません' }
+
+  const noticeMonth = `${params.yearMonth}-01`
+
+  if (params.mode === 'in') {
+    // 売上請求書（イン）→ invoices テーブルへ upsert
+    if (!params.clientId)
+      return { data: null, error: '荷主を選択してください' }
+
+    const { data, error } = await db
+      .from('invoices')
+      .insert({
+        client_id:      params.clientId,
+        invoice_month:  noticeMonth,
+        status:         'draft',
+        total_amount:   params.finalAmount,
+        tenant_id:      tenantId,
+        updated_at:     new Date().toISOString(),
+      })
+      .select('id')
+      .single()
+
+    if (error || !data) return { data: null, error: error?.message ?? '登録に失敗しました' }
+    return { data: { id: data.id }, error: null }
+  } else {
+    // 支払請求書（アウト）→ payment_notices テーブルへ insert
+    if (!params.contractorId)
+      return { data: null, error: '委託先を選択してください' }
+
+    const { data, error } = await db
+      .from('payment_notices')
+      .insert({
+        contractor_id:   params.contractorId,
+        notice_month:    noticeMonth,
+        total_amount:    params.finalAmount,
+        adjustment_amount: 0,
+        approval_status: 'unapproved',
+        tenant_id:       tenantId,
+        updated_at:      new Date().toISOString(),
+      })
+      .select('id')
+      .single()
+
+    if (error || !data) return { data: null, error: error?.message ?? '登録に失敗しました' }
+    return { data: { id: data.id }, error: null }
+  }
+}
+
+/** 取引先リスト（委託先）*/
+export async function fetchContractorOptions(): Promise<
+  ActionResult<{ id: string; name: string; isRegistered: boolean }[]>
+> {
+  const tenantId = await getCurrentTenantId()
+  const db = createServiceClient() as any
+  const { data, error } = await db
+    .from('contractors')
+    .select('id, name, invoice_registration_type')
+    .eq('tenant_id', tenantId)
+    .order('name')
+  if (error) return { data: null, error: error.message }
+  return {
+    data: (data ?? []).map((r: any) => ({
+      id:           r.id,
+      name:         r.name,
+      isRegistered: r.invoice_registration_type === 'registered' || r.invoice_registration_type === '適格',
+    })),
+    error: null,
+  }
 }

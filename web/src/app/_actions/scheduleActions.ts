@@ -60,13 +60,6 @@ export type ScheduleRow = {
 export type ScheduleStatus = 'scheduled' | 'absent' | 'completed'
 export type UpdatableScheduleStatus = 'scheduled' | 'absent'
 
-export type NotificationLogPayload = {
-  contractor_id: string
-  type:          string
-  destination:   string
-  status:        string
-  message_id?:   string | null
-}
 
 // ================================================================
 // getMissingInputs
@@ -76,6 +69,7 @@ export type NotificationLogPayload = {
 export async function getMissingInputs(): Promise<ActionResult<MissingInputRow[]>> {
   const tenantId = await getCurrentTenantId()
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+  const firstOfMonth = `${today.slice(0, 7)}-01`
 
   const service = createServiceClient()
   const db = service as any
@@ -91,6 +85,7 @@ export async function getMissingInputs(): Promise<ActionResult<MissingInputRow[]
       projects    ( id, project_name, name )
     `)
     .eq('status', 'scheduled')
+    .gte('date', firstOfMonth)
     .lte('date', today)
     .eq('tenant_id', tenantId)
     .order('date', { ascending: false })
@@ -260,30 +255,6 @@ export async function fetchAdminMonthlySchedules(
   return { data: entries, error: null }
 }
 
-// ================================================================
-// logNotification
-// 催促・監査履歴を notification_logs へ記録（不変ログ）
-// ================================================================
-export async function logNotification(
-  payload: NotificationLogPayload,
-): Promise<ActionResult<{ id: string }>> {
-  const db = createServiceClient() as any
-
-  const { data, error } = await db
-    .from('notification_logs')
-    .insert({
-      contractor_id: payload.contractor_id,
-      type:          payload.type,
-      destination:   payload.destination,
-      status:        payload.status,
-      message_id:    payload.message_id ?? null,
-    })
-    .select('id')
-    .single()
-
-  if (error || !data) return { data: null, error: error?.message ?? 'ログ記録に失敗しました' }
-  return { data: { id: data.id }, error: null }
-}
 
 // ================================================================
 // fetchSchedules
@@ -455,4 +426,121 @@ export async function copyPrevMonthSchedules(params: {
 
   if (insertErr) return { data: null, error: insertErr.message }
   return { data: { copied: rows.length }, error: null }
+}
+
+// ================================================================
+// deleteSchedule
+// 子分カレンダー: 日付セルのクリアで予定レコードを削除
+// ================================================================
+export async function deleteSchedule(
+  scheduleId: string,
+): Promise<ActionResult> {
+  const tenantId = await getCurrentTenantId()
+  const db = createServiceClient() as any
+
+  const { error } = await db
+    .from('schedules')
+    .delete()
+    .eq('id', scheduleId)
+    .eq('tenant_id', tenantId)
+
+  if (error) return { data: null, error: error.message }
+
+  revalidatePath('/driver/schedule')
+  revalidatePath('/admin/schedules')
+  revalidatePath('/admin/dashboard')
+
+  return { data: undefined, error: null }
+}
+
+// ================================================================
+// fetchDriverProjectOptions
+// 子分カレンダー: 予定登録時に使う案件プルダウン用リスト
+// project_payees にそのドライバーが payee として登録されている案件のみ返す
+// ================================================================
+export async function fetchDriverProjectOptions(): Promise<ActionResult<{ id: string; name: string }[]>> {
+  const tenantId = await getCurrentTenantId()
+  let contractorId: string | null
+
+  if (process.env.NODE_ENV === 'development') {
+    contractorId = DEV_CONTRACTOR_ID
+  } else {
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  }
+
+  const db = createServiceClient() as any
+
+  // そのドライバーが支払先として登録されている project_id を取得
+  // NOTE: project_payees に1件も登録がない場合は空配列を返す（プルダウンが空になる）
+  const { data: payees, error: payeeErr } = await db
+    .from('project_payees')
+    .select('project_id')
+    .eq('payee_contractor_id', contractorId)
+
+  if (payeeErr) return { data: null, error: payeeErr.message }
+
+  if (!payees?.length) return { data: [], error: null }
+
+  const projectIds: string[] = [...new Set((payees as any[]).map((p: any) => p.project_id))]
+
+  const { data, error } = await db
+    .from('projects')
+    .select('id, project_name, name')
+    .eq('tenant_id', tenantId)
+    .in('id', projectIds)
+    .order('project_name', { ascending: true })
+
+  if (error) return { data: null, error: error.message }
+
+  return {
+    data: (data ?? []).map((p: any) => ({
+      id:   p.id,
+      name: p.project_name ?? p.name ?? p.id,
+    })),
+    error: null,
+  }
+}
+
+// ================================================================
+// fetchMyWorkedDates
+// 子分カレンダー: 当月の実績入力済み日付一覧（サマリー表示用）
+// ================================================================
+export async function fetchMyWorkedDates(
+  yearMonth: string,
+): Promise<ActionResult<string[]>> {
+  const tenantId = await getCurrentTenantId()
+  let contractorId: string | null
+
+  if (process.env.NODE_ENV === 'development') {
+    contractorId = DEV_CONTRACTOR_ID
+  } else {
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  }
+
+  const [y, m] = yearMonth.split('-').map(Number)
+  const from = `${yearMonth}-01`
+  const to   = new Date(y, m, 0).toISOString().slice(0, 10)
+
+  const db = createServiceClient() as any
+
+  const { data, error } = await db
+    .from('work_records')
+    .select('work_date, date')
+    .eq('contractor_id', contractorId)
+    .eq('tenant_id', tenantId)
+    .gte('work_date', from)
+    .lte('work_date', to)
+
+  if (error) return { data: null, error: error.message }
+
+  const dates = [...new Set((data ?? []).map((r: any) => r.date ?? r.work_date))] as string[]
+  return { data: dates, error: null }
 }

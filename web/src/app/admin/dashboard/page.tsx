@@ -1,101 +1,137 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import DefensiveAlertPanel from '@/app/admin/_components/DefensiveAlertPanel'
 import {
-  fetchDashboardSummary,
-  fetchInvoiceSchedule,
-  fetchPaymentSchedule,
+  fetchCashflowSummary,
+  fetchTimelineIn,
+  fetchTimelineOut,
   fetchAlerts,
   fetchMonthlyTrend,
-  fetchClientPie,
-  type DashboardSummary,
-  type InvoiceScheduleRow,
-  type PaymentScheduleRow,
+  type PeriodType,
+  type CashflowSummary,
+  type TimelineInRow,
+  type TimelineOutRow,
   type AlertData,
   type MonthlyTrendRow,
-  type ClientPieRow,
 } from './actions'
 
 // ── ユーティリティ ────────────────────────────────────────
 
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
 
-function currentYearMonth() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+function todayISO() {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
 }
 
-function fmtMonth(ym: string) {
-  const [y, m] = ym.split('-')
-  return `${y}年${Number(m)}月`
+function currentYearMonth() {
+  return todayISO().slice(0, 7)
 }
 
 function fmtDate(iso: string | null) {
   if (!iso) return '未設定'
+  const [, m, d] = iso.split('-')
+  return `${Number(m)}/${Number(d)}`
+}
+
+function addDays(iso: string, n: number) {
   const d = new Date(iso)
-  return `${d.getMonth() + 1}/${d.getDate()}`
+  d.setDate(d.getDate() + n)
+  return d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+}
+
+function weekLabel(iso: string) {
+  const d = new Date(iso)
+  const dow = d.getDay()
+  const mon = new Date(d); mon.setDate(d.getDate() - ((dow + 6) % 7))
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6)
+  return `${mon.getMonth() + 1}/${mon.getDate()} 〜 ${sun.getMonth() + 1}/${sun.getDate()}`
+}
+
+// ── 期間ナビゲーションヘルパー ────────────────────────────
+
+function prevPeriod(period: PeriodType, ref: string): string {
+  if (period === 'month') {
+    const [y, m] = ref.split('-').map(Number)
+    const d = new Date(y, m - 2, 1)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }
+  if (period === 'week') return addDays(ref, -7)
+  return addDays(ref, -1)
+}
+
+function nextPeriod(period: PeriodType, ref: string): string {
+  if (period === 'month') {
+    const [y, m] = ref.split('-').map(Number)
+    const d = new Date(y, m, 1)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+  }
+  if (period === 'week') return addDays(ref, 7)
+  return addDays(ref, 1)
+}
+
+function periodLabel(period: PeriodType, ref: string): string {
+  if (period === 'month') {
+    const [y, m] = ref.split('-')
+    return `${y}年${Number(m)}月`
+  }
+  if (period === 'week') return weekLabel(ref)
+  const [, m, d] = ref.split('-')
+  return `${Number(m)}月${Number(d)}日`
 }
 
 // ── KPIカード ─────────────────────────────────────────────
 
-function KpiCard({
-  label, value, sub, accent,
+function KpiBlock({
+  label, confirmed, projected, accent,
 }: {
-  label: string; value: string; sub?: string; accent?: 'green' | 'red' | 'blue' | 'zinc'
+  label: string; confirmed: number; projected: number; accent: 'green' | 'red'
 }) {
-  const border = {
-    green: 'border-l-4 border-l-emerald-400',
-    red:   'border-l-4 border-l-rose-400',
-    blue:  'border-l-4 border-l-blue-400',
-    zinc:  'border-l-4 border-l-zinc-300',
-  }
+  const accentCls = accent === 'green'
+    ? 'border-l-4 border-l-emerald-400'
+    : 'border-l-4 border-l-rose-400'
   return (
-    <div className={`rounded-xl bg-white border border-zinc-200 px-5 py-4 ${accent ? border[accent] : ''}`}>
-      <p className="text-xs text-zinc-500 mb-1">{label}</p>
-      <p className="text-xl font-bold text-zinc-900 tabular-nums">{value}</p>
-      {sub && <p className="text-xs text-zinc-400 mt-0.5">{sub}</p>}
-    </div>
-  )
-}
-
-// ── アラートバナー ────────────────────────────────────────
-
-function AlertBanner({ alerts }: { alerts: AlertData }) {
-  const items: string[] = []
-  if (alerts.pendingApprovals > 0)
-    items.push(`支払通知書の未承認が ${alerts.pendingApprovals} 件あります`)
-  if (alerts.pendingCount > 0)
-    items.push(`未確定の請求書が ${alerts.pendingCount} 件あります`)
-  if (items.length === 0) return null
-  return (
-    <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
-      <p className="text-xs font-semibold text-amber-700 mb-1.5">⚠ 要対応</p>
-      <ul className="space-y-0.5">
-        {items.map((item, i) => (
-          <li key={i} className="text-sm text-amber-800">・{item}</li>
-        ))}
-      </ul>
-    </div>
-  )
-}
-
-// ── 入金スケジュール ──────────────────────────────────────
-
-const STATUS_LABEL: Record<string, { label: string; cls: string }> = {
-  issued:     { label: '未入金', cls: 'bg-rose-100 text-rose-700' },
-  paid:       { label: '入金済', cls: 'bg-emerald-100 text-emerald-700' },
-  draft:      { label: '未確定', cls: 'bg-zinc-100 text-zinc-500' },
-  no_invoice: { label: '未請求', cls: 'bg-amber-100 text-amber-700' },
-}
-
-function InvoiceScheduleCard({ rows }: { rows: InvoiceScheduleRow[] }) {
-  if (rows.length === 0)
-    return (
-      <div className="rounded-xl bg-white border border-zinc-200 px-5 py-8 text-center text-sm text-zinc-400">
-        今月の請求データはありません
+    <div className={`rounded-xl bg-white border border-zinc-200 px-5 py-4 ${accentCls}`}>
+      <p className="text-xs text-zinc-500 mb-2">{label}</p>
+      <div className="flex items-end gap-3 flex-wrap">
+        <div>
+          <p className="text-[10px] text-zinc-400 mb-0.5">確定</p>
+          <p className="text-xl font-bold text-zinc-900 tabular-nums">{yen(confirmed)}</p>
+        </div>
+        <div className="pb-0.5">
+          <p className="text-[10px] text-zinc-400 mb-0.5">予定</p>
+          <p className="text-sm font-semibold text-zinc-500 tabular-nums">{yen(projected)}</p>
+        </div>
       </div>
-    )
+    </div>
+  )
+}
+
+function GrossProfitCard({ value }: { value: number }) {
+  const color = value >= 0 ? 'text-emerald-700' : 'text-rose-700'
+  return (
+    <div className="rounded-xl bg-white border border-zinc-200 px-5 py-4 border-l-4 border-l-zinc-300">
+      <p className="text-xs text-zinc-500 mb-1">粗利概算（イン合計 − アウト合計）</p>
+      <p className={`text-xl font-bold tabular-nums ${color}`}>{yen(value)}</p>
+    </div>
+  )
+}
+
+// ── タイムライン：イン ────────────────────────────────────
+
+const IN_STATUS: Record<string, { label: string; cls: string; confirmed: boolean }> = {
+  paid:       { label: '入金済', cls: 'bg-emerald-100 text-emerald-700', confirmed: true },
+  issued:     { label: '未入金', cls: 'bg-rose-100 text-rose-700',       confirmed: false },
+  draft:      { label: '未確定', cls: 'bg-zinc-100 text-zinc-500',        confirmed: false },
+  no_invoice: { label: '未請求', cls: 'bg-amber-100 text-amber-700',      confirmed: false },
+}
+
+function TimelineInCard({ rows }: { rows: TimelineInRow[] }) {
+  const confirmed  = rows.filter(r => r.confirmed)
+  const projected  = rows.filter(r => !r.confirmed)
+
+  if (rows.length === 0)
+    return <EmptyCard>今期の請求データはありません</EmptyCard>
+
   return (
     <div className="rounded-xl bg-white border border-zinc-200 overflow-hidden">
       <table className="w-full text-sm">
@@ -108,29 +144,21 @@ function InvoiceScheduleCard({ rows }: { rows: InvoiceScheduleRow[] }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
-          {rows.map(r => {
-            const st = STATUS_LABEL[r.status] ?? { label: r.status, cls: 'bg-zinc-100 text-zinc-500' }
-            return (
-              <tr key={r.invoiceId} className="hover:bg-zinc-50">
-                <td className="px-4 py-3 font-medium text-zinc-900">{r.companyName}</td>
-                <td className="px-4 py-3 text-zinc-600 tabular-nums">{fmtDate(r.dueDate)}</td>
-                <td className="px-4 py-3 text-right font-semibold text-zinc-900 tabular-nums">
-                  {yen(r.totalAmount)}
-                </td>
-                <td className="px-4 py-3 text-center">
-                  <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${st.cls}`}>
-                    {st.label}
-                  </span>
-                </td>
-              </tr>
-            )
-          })}
+          {confirmed.map(r => <InRow key={r.id} r={r} />)}
+          {confirmed.length > 0 && projected.length > 0 && (
+            <tr>
+              <td colSpan={4} className="px-4 py-1 text-[10px] text-zinc-400 bg-zinc-50">
+                ↓ 予定（未入金）
+              </td>
+            </tr>
+          )}
+          {projected.map(r => <InRow key={r.id} r={r} muted />)}
         </tbody>
         <tfoot className="bg-zinc-50 border-t border-zinc-200">
           <tr>
             <td colSpan={2} className="px-4 py-2 text-xs text-zinc-500">合計</td>
             <td className="px-4 py-2 text-right font-bold text-zinc-900 tabular-nums">
-              {yen(rows.reduce((s, r) => s + r.totalAmount, 0))}
+              {yen(rows.reduce((s, r) => s + r.amount, 0))}
             </td>
             <td />
           </tr>
@@ -140,15 +168,31 @@ function InvoiceScheduleCard({ rows }: { rows: InvoiceScheduleRow[] }) {
   )
 }
 
-// ── 支払スケジュール ──────────────────────────────────────
+function InRow({ r, muted }: { r: TimelineInRow; muted?: boolean }) {
+  const st = IN_STATUS[r.status] ?? { label: r.status, cls: 'bg-zinc-100 text-zinc-500', confirmed: false }
+  return (
+    <tr className={`hover:bg-zinc-50 ${muted ? 'opacity-70' : ''}`}>
+      <td className="px-4 py-3 font-medium text-zinc-900">{r.companyName}</td>
+      <td className="px-4 py-3 text-zinc-600 tabular-nums">{fmtDate(r.dueDate)}</td>
+      <td className="px-4 py-3 text-right font-semibold text-zinc-900 tabular-nums">{yen(r.amount)}</td>
+      <td className="px-4 py-3 text-center">
+        <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${st.cls}`}>
+          {st.label}
+        </span>
+      </td>
+    </tr>
+  )
+}
 
-function PaymentScheduleCard({ rows }: { rows: PaymentScheduleRow[] }) {
+// ── タイムライン：アウト ──────────────────────────────────
+
+function TimelineOutCard({ rows }: { rows: TimelineOutRow[] }) {
+  const confirmed = rows.filter(r => r.approved)
+  const projected = rows.filter(r => !r.approved)
+
   if (rows.length === 0)
-    return (
-      <div className="rounded-xl bg-white border border-zinc-200 px-5 py-8 text-center text-sm text-zinc-400">
-        今月の支払通知書はありません
-      </div>
-    )
+    return <EmptyCard>今期の支払データはありません</EmptyCard>
+
   return (
     <div className="rounded-xl bg-white border border-zinc-200 overflow-hidden">
       <table className="w-full text-sm">
@@ -156,37 +200,28 @@ function PaymentScheduleCard({ rows }: { rows: PaymentScheduleRow[] }) {
           <tr>
             <th className="px-4 py-2.5 text-left text-xs font-medium text-zinc-500">委託先</th>
             <th className="px-4 py-2.5 text-right text-xs font-medium text-zinc-500">支払額</th>
-            <th className="px-4 py-2.5 text-center text-xs font-medium text-zinc-500">承認</th>
+            <th className="px-4 py-2.5 text-right text-xs font-medium text-zinc-500">調整金</th>
+            <th className="px-4 py-2.5 text-center text-xs font-medium text-zinc-500">状態</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-100">
-          {rows.map(r => (
-            <tr key={r.noticeId} className="hover:bg-zinc-50">
-              <td className="px-4 py-3 font-medium text-zinc-900">{r.contractorName}</td>
-              <td className="px-4 py-3 text-right font-semibold text-zinc-900 tabular-nums">
-                {yen(r.totalAmount)}
-              </td>
-              <td className="px-4 py-3 text-center">
-                {r.approvalStatus === 'approved' ? (
-                  <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700">
-                    ✅ 承認済
-                  </span>
-                ) : (
-                  <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700">
-                    未承認
-                  </span>
-                )}
+          {confirmed.map(r => <OutRow key={r.id} r={r} />)}
+          {confirmed.length > 0 && projected.length > 0 && (
+            <tr>
+              <td colSpan={4} className="px-4 py-1 text-[10px] text-zinc-400 bg-zinc-50">
+                ↓ 予定（未承認）
               </td>
             </tr>
-          ))}
+          )}
+          {projected.map(r => <OutRow key={r.id} r={r} muted />)}
         </tbody>
         <tfoot className="bg-zinc-50 border-t border-zinc-200">
           <tr>
             <td className="px-4 py-2 text-xs text-zinc-500">合計</td>
             <td className="px-4 py-2 text-right font-bold text-zinc-900 tabular-nums">
-              {yen(rows.reduce((s, r) => s + r.totalAmount, 0))}
+              {yen(rows.reduce((s, r) => s + r.amount, 0))}
             </td>
-            <td />
+            <td colSpan={2} />
           </tr>
         </tfoot>
       </table>
@@ -194,36 +229,55 @@ function PaymentScheduleCard({ rows }: { rows: PaymentScheduleRow[] }) {
   )
 }
 
-// ── 月別売上グラフ（CSS棒グラフ） ────────────────────────
+function OutRow({ r, muted }: { r: TimelineOutRow; muted?: boolean }) {
+  return (
+    <tr className={`hover:bg-zinc-50 ${muted ? 'opacity-70' : ''}`}>
+      <td className="px-4 py-3 font-medium text-zinc-900">{r.contractorName}</td>
+      <td className="px-4 py-3 text-right font-semibold text-zinc-900 tabular-nums">{yen(r.amount)}</td>
+      <td className="px-4 py-3 text-right text-zinc-500 tabular-nums text-xs">
+        {r.adjustmentAmount !== 0 ? (r.adjustmentAmount > 0 ? '+' : '') + yen(r.adjustmentAmount) : '—'}
+      </td>
+      <td className="px-4 py-3 text-center">
+        {r.approved
+          ? <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-emerald-100 text-emerald-700">確定</span>
+          : <span className="inline-flex rounded-full px-2 py-0.5 text-xs font-medium bg-amber-100 text-amber-700">予定</span>
+        }
+      </td>
+    </tr>
+  )
+}
+
+// ── 月別棒グラフ ──────────────────────────────────────────
 
 function MonthlyBarChart({ rows }: { rows: MonthlyTrendRow[] }) {
-  const max = Math.max(...rows.map(r => r.totalAmount), 1)
-  const BAR_H = 160
+  const max = Math.max(...rows.map(r => r.confirmedIn + r.projectedIn), 1)
+  const BAR_H = 140
 
   return (
     <div className="rounded-xl bg-white border border-zinc-200 px-5 pt-4 pb-3">
       <p className="text-xs font-semibold text-zinc-500 mb-4 uppercase tracking-widest">
-        月別売上（過去12ヶ月）
+        月別イン・アウト（過去12ヶ月）
       </p>
       <div className="flex items-end gap-1 pb-1">
         {rows.map(r => {
-          const totalH = Math.round((r.totalAmount / max) * BAR_H)
-          const paidH  = Math.round((r.paidAmount  / max) * BAR_H)
-          const label  = r.month.slice(5).replace(/^0/, '') + '月'
+          const inH     = Math.round(((r.confirmedIn + r.projectedIn) / max) * BAR_H)
+          const confH   = Math.round((r.confirmedIn / max) * BAR_H)
+          const outH    = Math.round((r.confirmedOut / max) * BAR_H)
+          const label   = r.month.slice(5).replace(/^0/, '') + '月'
           return (
-            <div key={r.month} className="flex flex-col items-center gap-1 flex-1 min-w-0">
-              <div
-                className="relative w-full rounded-sm bg-zinc-100"
-                style={{ height: BAR_H }}
-                title={`${fmtMonth(r.month)}\n請求: ${yen(r.totalAmount)}\n入金済: ${yen(r.paidAmount)}`}
-              >
-                {totalH > 0 && (
-                  <div className="absolute bottom-0 w-full bg-zinc-300 rounded-sm"
-                    style={{ height: totalH }} />
+            <div key={r.month} className="flex flex-col items-center gap-0.5 flex-1 min-w-0">
+              <div className="relative w-full rounded-sm bg-zinc-100" style={{ height: BAR_H }}>
+                {/* イン：薄（予定） */}
+                {inH > 0 && (
+                  <div className="absolute bottom-0 w-full bg-emerald-200 rounded-sm" style={{ height: inH }} />
                 )}
-                {paidH > 0 && (
-                  <div className="absolute bottom-0 w-full bg-zinc-700 rounded-sm"
-                    style={{ height: paidH }} />
+                {/* イン：濃（確定） */}
+                {confH > 0 && (
+                  <div className="absolute bottom-0 w-full bg-emerald-600 rounded-sm" style={{ height: confH }} />
+                )}
+                {/* アウト（右半分に重ねて表示） */}
+                {outH > 0 && (
+                  <div className="absolute bottom-0 right-0 w-1/2 bg-rose-400 rounded-sm opacity-80" style={{ height: outH }} />
                 )}
               </div>
               <span className="text-[9px] text-zinc-400 tabular-nums">{label}</span>
@@ -231,183 +285,193 @@ function MonthlyBarChart({ rows }: { rows: MonthlyTrendRow[] }) {
           )
         })}
       </div>
-      <div className="flex items-center gap-4 mt-1">
+      <div className="flex items-center gap-4 mt-2">
         <span className="flex items-center gap-1 text-[10px] text-zinc-500">
-          <span className="inline-block w-3 h-3 rounded-sm bg-zinc-300" />請求額
+          <span className="inline-block w-3 h-3 rounded-sm bg-emerald-600" />確定イン
         </span>
         <span className="flex items-center gap-1 text-[10px] text-zinc-500">
-          <span className="inline-block w-3 h-3 rounded-sm bg-zinc-700" />入金済
+          <span className="inline-block w-3 h-3 rounded-sm bg-emerald-200" />予定イン
+        </span>
+        <span className="flex items-center gap-1 text-[10px] text-zinc-500">
+          <span className="inline-block w-3 h-3 rounded-sm bg-rose-400" />アウト
         </span>
       </div>
     </div>
   )
 }
 
-// ── 荷主別売上構成 ────────────────────────────────────────
+// ── 共通 ─────────────────────────────────────────────────
 
-const PALETTE = ['bg-zinc-800', 'bg-zinc-500', 'bg-zinc-400', 'bg-zinc-300', 'bg-zinc-200']
-
-function ClientPieCard({ rows }: { rows: ClientPieRow[] }) {
-  const total = rows.reduce((s, r) => s + r.totalAmount, 0)
-  if (total === 0)
-    return (
-      <div className="rounded-xl bg-white border border-zinc-200 px-5 py-8 text-center text-sm text-zinc-400">
-        今月の請求データはありません
-      </div>
-    )
+function EmptyCard({ children }: { children: React.ReactNode }) {
   return (
-    <div className="rounded-xl bg-white border border-zinc-200 px-5 pt-4 pb-5">
-      <p className="text-xs font-semibold text-zinc-500 mb-4 uppercase tracking-widest">
-        荷主別売上構成
-      </p>
-      <div className="flex h-3 rounded-full overflow-hidden mb-4">
-        {rows.slice(0, 5).map((r, i) => (
-          <div
-            key={r.companyName}
-            className={PALETTE[i] ?? 'bg-zinc-100'}
-            style={{ width: `${(r.totalAmount / total) * 100}%` }}
-          />
-        ))}
-      </div>
-      <ul className="space-y-2">
-        {rows.slice(0, 5).map((r, i) => (
-          <li key={r.companyName} className="flex items-center justify-between gap-2">
-            <span className="flex items-center gap-2 min-w-0">
-              <span className={`inline-block w-2.5 h-2.5 rounded-sm shrink-0 ${PALETTE[i] ?? 'bg-zinc-100'}`} />
-              <span className="text-sm text-zinc-700 truncate">{r.companyName}</span>
-            </span>
-            <span className="text-sm font-medium text-zinc-900 tabular-nums shrink-0">
-              {Math.round((r.totalAmount / total) * 100)}%
-            </span>
-          </li>
-        ))}
-      </ul>
+    <div className="rounded-xl bg-white border border-zinc-200 px-5 py-8 text-center text-sm text-zinc-400">
+      {children}
     </div>
   )
 }
 
-// ── メインページ ──────────────────────────────────────────
+// ── 期間タブ ──────────────────────────────────────────────
+
+const PERIOD_TABS: { key: PeriodType; label: string }[] = [
+  { key: 'month', label: '月次' },
+  { key: 'week',  label: '週次' },
+  { key: 'day',   label: '日次' },
+]
+
+// ================================================================
+// メインページ
+// ================================================================
 
 export default function OyabunDashboard() {
-  const [yearMonth, setYearMonth] = useState(currentYearMonth)
-  const [summary,   setSummary]   = useState<DashboardSummary | null>(null)
-  const [invoices,  setInvoices]  = useState<InvoiceScheduleRow[]>([])
-  const [payments,  setPayments]  = useState<PaymentScheduleRow[]>([])
-  const [alerts,    setAlerts]    = useState<AlertData | null>(null)
-  const [trend,     setTrend]     = useState<MonthlyTrendRow[]>([])
-  const [pie,       setPie]       = useState<ClientPieRow[]>([])
-  const [loading,   setLoading]   = useState(true)
-  const [error,     setError]     = useState<string | null>(null)
+  const today = todayISO()
 
-  const load = useCallback(async (ym: string) => {
+  const [period,   setPeriod]   = useState<PeriodType>('month')
+  const [refDate,  setRefDate]  = useState(currentYearMonth())   // 月次='YYYY-MM', 週/日='YYYY-MM-DD'
+
+  const [summary,  setSummary]  = useState<CashflowSummary | null>(null)
+  const [inRows,   setInRows]   = useState<TimelineInRow[]>([])
+  const [outRows,  setOutRows]  = useState<TimelineOutRow[]>([])
+  const [alerts,   setAlerts]   = useState<AlertData | null>(null)
+  const [trend,    setTrend]    = useState<MonthlyTrendRow[]>([])
+  const [loading,  setLoading]  = useState(true)
+  const [error,    setError]    = useState<string | null>(null)
+
+  // 期間切り替え時に refDate をリセット
+  function handlePeriodChange(p: PeriodType) {
+    setPeriod(p)
+    setRefDate(p === 'month' ? currentYearMonth() : today)
+  }
+
+  const load = useCallback(async (p: PeriodType, ref: string) => {
     setLoading(true)
     setError(null)
-    const [summaryRes, invoiceRes, paymentRes, alertRes, trendRes, pieRes] =
-      await Promise.all([
-        fetchDashboardSummary(ym),
-        fetchInvoiceSchedule(ym),
-        fetchPaymentSchedule(ym),
-        fetchAlerts(ym),
-        fetchMonthlyTrend(),
-        fetchClientPie(ym),
-      ])
-    const firstErr = [summaryRes, invoiceRes, paymentRes, alertRes, trendRes, pieRes]
+    const [summaryRes, inRes, outRes, alertRes, trendRes] = await Promise.all([
+      fetchCashflowSummary(p, ref),
+      fetchTimelineIn(p, ref),
+      fetchTimelineOut(p, ref),
+      fetchAlerts(p === 'month' ? ref.slice(0, 7) : ref.slice(0, 7)),
+      fetchMonthlyTrend(),
+    ])
+    const firstErr = [summaryRes, inRes, outRes, alertRes, trendRes]
       .map(r => r.error).find(Boolean)
     if (firstErr) setError(firstErr)
     if (summaryRes.data) setSummary(summaryRes.data)
-    if (invoiceRes.data) setInvoices(invoiceRes.data)
-    if (paymentRes.data) setPayments(paymentRes.data)
+    if (inRes.data)      setInRows(inRes.data)
+    if (outRes.data)     setOutRows(outRes.data)
     if (alertRes.data)   setAlerts(alertRes.data)
     if (trendRes.data)   setTrend(trendRes.data)
-    if (pieRes.data)     setPie(pieRes.data)
     setLoading(false)
   }, [])
 
-  useEffect(() => { load(yearMonth) }, [load, yearMonth])
+  useEffect(() => { load(period, refDate) }, [load, period, refDate])
 
   return (
     <div className="min-h-screen bg-zinc-50">
-      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-8">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6 py-8 space-y-6">
 
-        {/* ヘッダー */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <h1 className="text-xl font-semibold text-zinc-900">ダッシュボード</h1>
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-zinc-500">対象年月</label>
-            <input
-              type="month"
-              value={yearMonth}
-              onChange={e => setYearMonth(e.target.value)}
-              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
-            />
+        {/* 期間タブ + ナビゲーション */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* タブ */}
+          <div className="flex rounded-xl border border-zinc-200 bg-white overflow-hidden text-sm font-medium">
+            {PERIOD_TABS.map(tab => (
+              <button
+                key={tab.key}
+                type="button"
+                onClick={() => handlePeriodChange(tab.key)}
+                className={`px-5 py-2 transition ${
+                  period === tab.key
+                    ? 'bg-zinc-900 text-white'
+                    : 'text-zinc-600 hover:bg-zinc-50'
+                }`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
+
+          {/* 期間ナビゲーター */}
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setRefDate(r => prevPeriod(period, r))}
+              className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 text-sm"
+            >‹</button>
+            <span className="text-sm font-semibold text-zinc-900 tabular-nums min-w-[140px] text-center">
+              {periodLabel(period, refDate)}
+            </span>
+            <button
+              type="button"
+              onClick={() => setRefDate(r => nextPeriod(period, r))}
+              className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 text-sm"
+            >›</button>
+          </div>
+
+          {/* 今日/今月に戻る */}
+          <button
+            type="button"
+            onClick={() => setRefDate(period === 'month' ? currentYearMonth() : today)}
+            className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50"
+          >
+            今{period === 'month' ? '月' : period === 'week' ? '週' : '日'}
+          </button>
         </div>
 
         {error && (
-          <p className="mb-4 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>
+          <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600">{error}</p>
+        )}
+
+        {alerts && alerts.pendingInvoices > 0 && (
+          <div className="rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
+            <p className="text-xs font-semibold text-amber-700">
+              ⚠ 未確定の請求書が {alerts.pendingInvoices} 件あります
+            </p>
+          </div>
         )}
 
         {loading ? (
-          <div className="py-24 text-center text-sm text-zinc-400">読み込み中...</div>
+          <div className="py-24 text-center text-sm text-zinc-400">読み込み中…</div>
         ) : (
           <div className="space-y-6">
 
-            {/* 5大ディフェンシブ・アラート（最上部・常駐） */}
-            <DefensiveAlertPanel />
-
-            {/* KPIカード（2列 → 4列） */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-              <KpiCard
-                label="入金予定総額"
-                value={yen(summary?.totalReceivable ?? 0)}
-                sub={`${fmtMonth(yearMonth)} 未入金`}
-                accent="blue"
-              />
-              <KpiCard
-                label="入金済額"
-                value={yen(summary?.totalReceived ?? 0)}
-                sub={`${fmtMonth(yearMonth)} 確認済`}
+            {/* KPI：確定 / 予定 の2カラム */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              <KpiBlock
+                label="イン（売上）"
+                confirmed={summary?.confirmedIn ?? 0}
+                projected={summary?.projectedIn ?? 0}
                 accent="green"
               />
-              <KpiCard
-                label="支払予定総額"
-                value={yen(summary?.totalPayable ?? 0)}
-                sub="委託先への支払"
+              <KpiBlock
+                label="アウト（支払）"
+                confirmed={summary?.confirmedOut ?? 0}
+                projected={summary?.projectedOut ?? 0}
                 accent="red"
               />
-              <KpiCard
-                label="粗利（概算）"
-                value={yen(summary?.grossProfit ?? 0)}
-                sub="入金予定 − 支払予定"
-                accent="zinc"
-              />
+              <GrossProfitCard value={summary?.grossProfit ?? 0} />
             </div>
 
-            {/* 既存アラート */}
-            {alerts && <AlertBanner alerts={alerts} />}
-
-            {/* スケジュール（左） + グラフ（右） */}
+            {/* タイムライン：イン / アウト 並列 */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div className="space-y-6">
-                <section>
-                  <h2 className="text-sm font-semibold text-zinc-700 mb-2">入金スケジュール</h2>
-                  <InvoiceScheduleCard rows={invoices} />
-                </section>
-                <section>
-                  <h2 className="text-sm font-semibold text-zinc-700 mb-2">支払スケジュール</h2>
-                  <PaymentScheduleCard rows={payments} />
-                </section>
-              </div>
-              <div className="space-y-6">
-                {trend.length > 0 && <MonthlyBarChart rows={trend} />}
-                {pie.length   > 0 && <ClientPieCard  rows={pie} />}
-                {trend.length === 0 && pie.length === 0 && (
-                  <div className="rounded-xl bg-white border border-zinc-200 px-5 py-8 text-center text-sm text-zinc-400">
-                    グラフ表示には請求データが必要です
-                  </div>
-                )}
-              </div>
+              <section>
+                <h2 className="text-sm font-semibold text-zinc-700 mb-2 flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-emerald-500" />
+                  イン（売上・入金）
+                </h2>
+                <TimelineInCard rows={inRows} />
+              </section>
+              <section>
+                <h2 className="text-sm font-semibold text-zinc-700 mb-2 flex items-center gap-2">
+                  <span className="inline-block w-2 h-2 rounded-full bg-rose-500" />
+                  アウト（外注費・支払）
+                </h2>
+                <TimelineOutCard rows={outRows} />
+              </section>
             </div>
+
+            {/* 月次グラフ（月次表示のときのみ） */}
+            {period === 'month' && trend.length > 0 && (
+              <MonthlyBarChart rows={trend} />
+            )}
 
           </div>
         )}

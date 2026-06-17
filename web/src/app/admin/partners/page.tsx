@@ -49,7 +49,8 @@ type ClientForm = {
   phone: string
   email: string
   closing_day: string
-  payment_site: string
+  payment_month_offset: string   // '0'=当月, '1'=翌月, '2'=翌々月, '3'=3ヶ月後
+  payment_day: string            // '1'-'28' or '月末'
   tax_type: string
   invoice_registered: boolean
   bank_name: string
@@ -65,7 +66,8 @@ const defaultClientForm = (): ClientForm => ({
   phone: '',
   email: '',
   closing_day: '月末',
-  payment_site: '30',
+  payment_month_offset: '1',
+  payment_day: '月末',
   tax_type: 'exclusive',
   invoice_registered: false,
   bank_name: '',
@@ -83,7 +85,9 @@ type ContractorForm = {
   email: string
   login_email: string
   payment_method: string
-  payment_site: string
+  closing_day: string
+  payment_month_offset: string
+  payment_day: string
   tax_type: string
   invoice_registration_type: string
   invoice_number: string
@@ -101,7 +105,9 @@ const defaultContractorForm = (): ContractorForm => ({
   email: '',
   login_email: '',
   payment_method: '振込',
-  payment_site: '30',
+  closing_day: '月末',
+  payment_month_offset: '1',
+  payment_day: '月末',
   tax_type: 'exclusive',
   invoice_registration_type: '免税',
   invoice_number: '',
@@ -212,13 +218,31 @@ function ClientFormFields({
         </div>
       </div>
 
-      <SectionTitle>請求ルール</SectionTitle>
+      <SectionTitle>入金ルール（締め日・支払サイト）</SectionTitle>
       <div className="grid grid-cols-2 gap-4">
         <Field label="締め日" required>
-          <input className={inputCls} placeholder="例: 20, 25, 月末" value={form.closing_day} onChange={e => set('closing_day', e.target.value)} required />
+          <select className={selectCls} value={form.closing_day} onChange={e => set('closing_day', e.target.value)}>
+            <option value="月末">月末</option>
+            {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+              <option key={d} value={String(d)}>{d}日</option>
+            ))}
+          </select>
         </Field>
-        <Field label="入金サイト（日）" required>
-          <input className={inputCls} type="number" min="0" value={form.payment_site} onChange={e => set('payment_site', e.target.value)} required />
+        <Field label="支払月" required>
+          <select className={selectCls} value={form.payment_month_offset} onChange={e => set('payment_month_offset', e.target.value)}>
+            <option value="0">当月</option>
+            <option value="1">翌月</option>
+            <option value="2">翌々月</option>
+            <option value="3">3ヶ月後</option>
+          </select>
+        </Field>
+        <Field label="支払日" required>
+          <select className={selectCls} value={form.payment_day} onChange={e => set('payment_day', e.target.value)}>
+            <option value="月末">月末</option>
+            {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+              <option key={d} value={String(d)}>{d}日</option>
+            ))}
+          </select>
         </Field>
         <Field label="消費税区分" required>
           <select className={selectCls} value={form.tax_type} onChange={e => set('tax_type', e.target.value)}>
@@ -299,15 +323,36 @@ function ContractorFormFields({
         </div>
       </div>
 
-      <SectionTitle>支払いルール</SectionTitle>
+      <SectionTitle>出金ルール（締め日・支払サイト）</SectionTitle>
       <div className="grid grid-cols-2 gap-4">
         <Field label="支払方式" required>
           <select className={selectCls} value={form.payment_method} onChange={e => set('payment_method', e.target.value)}>
             {PAYMENT_METHODS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
         </Field>
-        <Field label="支払サイト（日）" required>
-          <input className={inputCls} type="number" min="0" value={form.payment_site} onChange={e => set('payment_site', e.target.value)} required />
+        <Field label="締め日" required>
+          <select className={selectCls} value={form.closing_day} onChange={e => set('closing_day', e.target.value)}>
+            <option value="月末">月末</option>
+            {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+              <option key={d} value={String(d)}>{d}日</option>
+            ))}
+          </select>
+        </Field>
+        <Field label="支払月" required>
+          <select className={selectCls} value={form.payment_month_offset} onChange={e => set('payment_month_offset', e.target.value)}>
+            <option value="0">当月</option>
+            <option value="1">翌月</option>
+            <option value="2">翌々月</option>
+            <option value="3">3ヶ月後</option>
+          </select>
+        </Field>
+        <Field label="支払日" required>
+          <select className={selectCls} value={form.payment_day} onChange={e => set('payment_day', e.target.value)}>
+            <option value="月末">月末</option>
+            {Array.from({ length: 28 }, (_, i) => i + 1).map(d => (
+              <option key={d} value={String(d)}>{d}日</option>
+            ))}
+          </select>
         </Field>
         <Field label="消費税区分" required>
           <select className={selectCls} value={form.tax_type} onChange={e => set('tax_type', e.target.value)}>
@@ -412,10 +457,11 @@ function ClientsTab() {
       contact_name: row.contact_name ?? '',
       phone: row.phone ?? '',
       email: row.email ?? '',
-      closing_day: row.closing_day === 31 ? '月末' : String(row.closing_day),
-      payment_site: String(row.payment_site),
+      closing_day: (row as any).closing_day === 31 ? '月末' : String((row as any).closing_day ?? '月末'),
+      payment_month_offset: String((row as any).payment_month_offset ?? 1),
+      payment_day: String((row as any).payment_day ?? '月末'),
       tax_type: row.tax_type,
-      invoice_registered: row.invoice_registered ?? row.is_invoice_registered ?? false,
+      invoice_registered: (row as any).invoice_registered ?? (row as any).is_invoice_registered ?? false,
       bank_name: row.bank_name ?? '',
       bank_branch: row.bank_branch ?? '',
       account_type: row.account_type ?? '普通',
@@ -431,13 +477,14 @@ function ClientsTab() {
     setSaving(true)
     setFormError(null)
 
-    const payload: ClientInsert = {
+    const payload: any = {
       company_name: form.company_name,
       contact_name: form.contact_name || null,
       phone: form.phone || null,
       email: form.email || null,
-      closing_day: form.closing_day === '月末' ? 31 : Number(form.closing_day),
-      payment_site: Number(form.payment_site),
+      closing_day: form.closing_day === '月末' ? '月末' : form.closing_day,
+      payment_month_offset: Number(form.payment_month_offset),
+      payment_day: form.payment_day,
       tax_type: form.tax_type,
       invoice_registered: form.invoice_registered,
       bank_name: form.bank_name || null,
@@ -587,9 +634,11 @@ function ContractorsTab() {
       phone: row.phone ?? '',
       email: row.email ?? '',
       login_email: row.email ?? '',
-      payment_method: row.payment_type,
-      payment_site: String(row.payment_site),
-      tax_type: row.tax_category,
+      payment_method: (row as any).payment_type ?? '振込',
+      closing_day: String((row as any).closing_day ?? '月末'),
+      payment_month_offset: String((row as any).payment_month_offset ?? 1),
+      payment_day: String((row as any).payment_day ?? '月末'),
+      tax_type: (row as any).tax_category ?? (row as any).tax_type ?? 'exclusive',
       invoice_registration_type: row.invoice_registration_type,
       invoice_number: row.invoice_number ?? '',
       same_person_id: row.same_person_id ?? '',
@@ -615,12 +664,14 @@ function ContractorsTab() {
     setSaving(true)
     setFormError(null)
 
-    const payload: ContractorInsert = {
+    const payload: any = {
       name: form.name,
       phone: form.phone || null,
       email: form.email || form.login_email || 'noreply@local.dev',
       payment_type: form.payment_method === '振込' ? 'bank_transfer' : form.payment_method,
-      payment_site: Number(form.payment_site),
+      closing_day: form.closing_day,
+      payment_month_offset: Number(form.payment_month_offset),
+      payment_day: form.payment_day,
       tax_category: form.tax_type,
       invoice_registration_type: form.invoice_registration_type,
       invoice_number: form.invoice_number || null,
