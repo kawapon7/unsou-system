@@ -29,7 +29,7 @@ export type ExpenseSaveParams = {
 
 // ── Gemini 設定 ───────────────────────────────────────────
 
-const MODEL = 'gemini-2.0-flash'
+const MODEL = 'gemini-2.5-flash'
 
 const RESPONSE_SCHEMA: ResponseSchema = {
   type: SchemaType.OBJECT,
