@@ -64,6 +64,7 @@
   * **v_2_1（2026年6月14日）：** v_2_1 ルーティングの admin/driver 移行に伴う全記述の完全同期。および5大アラートActionsの基盤実装完了を反映。
   * **v_2_2（2026年6月21日）：** ドライバー案件フィルターの設計再構築（`driver_project_assignments` 起点化）・ドライバー別案件振り分けパネルUI・支払計算エンジン拡張（`project_payees` 件数単価・端数調整金・再委託対応）を反映。
   * **v_2_3（2026年6月21日）：** 管理画面サイドバーを3カテゴリ（日常業務・月次締め業務・マスタ設定）に再構成。「配車カレンダー」→「案件カレンダー」改名。`/admin/scan`（AIスキャン IN/OUT 分離）・`/admin/cashflow`（収支管理ビュアー）新設。`/admin/sales` を3タブに集約。`saveClientScanResult` Server Action 実装（invoices テーブルへのドラフト保存）。Cloudflare Pages デプロイ基盤（`open-next.config.ts`・`middleware.ts`・`@opennextjs/cloudflare`）整備。
+  * **v_2_3_1（2026年6月21日）：** Gitコミット前セキュリティチェック規約を最重要事項（§2-6S）として明文化。自動生成成果物（`.open-next/cloudflare/next-env.mjs`）からのAPIキー漏洩防止策を永続化。発生経緯（全シークレット漏洩 → git-filter-repo による履歴書き換え → 全キーローテーション）を記録。
 
 ### 2-1. プロジェクト概要
 
@@ -491,6 +492,47 @@
   * Googleフォーム緊急インポート関数の口作成 ✅
 * **【フェーズ3】** 子分への展開
 * **【フェーズ4】** 横展開（他業種・拡張機能解放）
+
+### 2-6S. ⚠️ 最重要：Gitコミット前セキュリティ・差分チェックの義務化
+
+> **発生経緯（2026年6月21日）：** Cloudflare/OpenNext のビルド時に `.env.local` の全シークレット（`SUPABASE_SERVICE_ROLE_KEY`・`GEMINI_API_KEY`・`RESEND_API_KEY`・`ENCRYPTION_KEY` 等）が `web/.open-next/cloudflare/next-env.mjs` に平文で焼き込まれ、ビルド成果物ごと `git add .` でコミット・プッシュされた結果、GitHub Secret Scanning に検知された。git履歴の強制書き換え（`git-filter-repo`）と全キーのローテーションを余儀なくされた。
+
+本プロジェクトでは、Cloudflare/OpenNext等のデプロイ環境を採用しており、ビルド時に `.env.local` のシークレット情報がビルド成果物（`next-env.mjs` 等）に平文で焼き込まれる特性があります。時間とトークンの浪費、および重大なセキュリティリスクを完全に防ぐため、**コミット前に以下の3ステップを必ず実行すること。**
+
+#### ステップ1：未追跡ファイル・成果物の厳格な遮断
+
+`git add` を行う前に必ず `git status` を実行し、自動生成ディレクトリ（`.next/`・`.open-next/` など）がステージング候補（Untracked files）に含まれていないことを確認する。プロジェクトルートおよび `web/` 階層の `.gitignore` に以下が登録されていることを検証すること。
+
+```
+# .gitignore 必須エントリ
+.next/
+web/.next/
+.open-next/
+web/.open-next/
+```
+
+#### ステップ2：環境変数の露出スキャン（コミット前検収）
+
+ビルド成果物やキャッシュディレクトリ内に、`.env.local` に記載されている秘密鍵が平文で露出していないかを事前スキャンする。
+
+```bash
+# ステージング予定ファイルのシークレット漏れチェック
+git diff --cached | grep -E "SERVICE_ROLE_KEY|GEMINI_API_KEY|RESEND_API_KEY|ENCRYPTION_KEY"
+# 何も出力されなければ安全
+```
+
+#### ステップ3：純粋なソースコード差分のみのステージング
+
+一括追加（`git add .` や `git add -A`）を盲目的に実行せず、変更されたソースコードの純粋な差分だけを厳選してコミット対象とすること。自動生成ファイルは絶対に巻き込んではならない。
+
+```bash
+# NG: git add .       ← ビルド成果物を巻き込む危険あり
+# NG: git add -A      ← 同上
+# OK: git add web/src/... web/package.json などファイルを明示
+# OK: または git add . の後に git status で必ず目視確認
+```
+
+> **クロちゃんCode（Claude Code）への指示：** `git add` を実行する際は必ずファイルを明示するか、`git add .` 後に `git status` で成果物が含まれていないことを確認してから `git commit` に進むこと。確認ステップをスキップしてはならない。
 
 ### 2-7. GASプロトタイプ 接続情報（開発用）
 * スプレッドシートID：`1Uv2f1WoUyWwfhDLVp-Xwg6V9zlgTTBzPVZuh5mU5fy0`
