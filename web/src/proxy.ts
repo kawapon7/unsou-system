@@ -1,11 +1,7 @@
-// Cloudflare Pages (Edge Runtime) 用ミドルウェア
-// proxy.ts（Next.js 16 の新形式）は常に Node.js runtime でビルドされるため、
-// Cloudflare Pages では使用不可。deprecated だが Edge でビルドされる middleware.ts を使う。
-// ミドルウェアは Edge runtime がデフォルトのため runtime 宣言は不要。
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
   let supabaseResponse = NextResponse.next({ request })
@@ -66,5 +62,9 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/login', '/admin/:path*', '/driver/:path*'],
+  matcher: [
+    '/login',
+    '/admin/:path*',
+    '/driver/:path*',
+  ],
 }
