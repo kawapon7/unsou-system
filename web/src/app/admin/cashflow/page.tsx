@@ -6,10 +6,23 @@ import { useMonth } from '@/contexts/MonthContext'
 import { fetchSalesList } from '@/app/admin/sales/actions'
 import { fetchPaymentByContractor } from '@/app/admin/billing/actions'
 import { fetchMonthlyTrend, type MonthlyTrendRow } from '@/app/admin/dashboard/actions'
+import {
+  fetchDailyCashflowCalendar,
+  type DailyDetail,
+  type DailyCashflowCalendarResult,
+} from '@/app/_actions/cashflowActions'
 
 // ── ユーティリティ ────────────────────────────────────────
 
-type CashflowTab = 'pnl' | 'client' | 'trend'
+type CashflowTab = 'pnl' | 'client' | 'trend' | 'calendar'
+
+// 万単位で丸めてコンパクト表示（カレンダーセル用）
+function fmtAmt(n: number): string {
+  const abs = Math.abs(n)
+  const sign = n < 0 ? '-' : ''
+  if (abs >= 10000) return `${sign}${parseFloat((abs / 10000).toFixed(1))}万`
+  return `${sign}${abs.toLocaleString('ja-JP')}`
+}
 
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
 
@@ -292,12 +305,254 @@ function TrendTab() {
   )
 }
 
+// ── 金額カレンダー：明細モーダル ──────────────────────────
+
+function CalendarDetailModal({
+  date,
+  details,
+  onClose,
+}: {
+  date:    string
+  details: DailyDetail[]
+  onClose: () => void
+}) {
+  const yen = (n: number) => `¥${Math.abs(n).toLocaleString('ja-JP')}`
+  const totalSale   = details.reduce((s, d) => s + d.saleAmount, 0)
+  const totalBuy    = details.reduce((s, d) => s + d.buyAmount,  0)
+  const totalProfit = totalSale - totalBuy
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-lg rounded-xl bg-white shadow-xl"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
+          <h2 className="text-base font-semibold text-zinc-900">{date} の明細</h2>
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+          >
+            ✕
+          </button>
+        </div>
+
+        <div className="px-6 py-4 max-h-[70vh] overflow-y-auto">
+          {details.length === 0 ? (
+            <p className="py-8 text-center text-sm text-zinc-400">この日の予定・実績データがありません</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-zinc-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-zinc-500">荷主</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-zinc-500">案件名</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-zinc-500">売上</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-zinc-500">仕入</th>
+                    <th className="px-3 py-2 text-right text-xs font-medium text-zinc-500">粗利</th>
+                    <th className="px-3 py-2 text-center text-xs font-medium text-zinc-500">区分</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-zinc-100">
+                  {details.map((d, i) => {
+                    const profit = d.saleAmount - d.buyAmount
+                    return (
+                      <tr key={i} className="hover:bg-zinc-50">
+                        <td className="px-3 py-2 text-xs text-zinc-500">{d.clientName}</td>
+                        <td className="px-3 py-2 font-medium text-zinc-900">{d.projectName}</td>
+                        <td className="px-3 py-2 text-right text-emerald-700 tabular-nums">{yen(d.saleAmount)}</td>
+                        <td className="px-3 py-2 text-right text-rose-600 tabular-nums">{yen(d.buyAmount)}</td>
+                        <td className={`px-3 py-2 text-right font-semibold tabular-nums ${profit >= 0 ? 'text-violet-700' : 'text-red-700'}`}>
+                          {profit < 0 ? '-' : ''}{yen(profit)}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-medium ${d.confirmed ? 'bg-emerald-100 text-emerald-700' : 'bg-zinc-100 text-zinc-500'}`}>
+                            {d.confirmed ? '確定' : '予定'}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+                <tfoot className="border-t border-zinc-200 bg-zinc-50">
+                  <tr>
+                    <td colSpan={2} className="px-3 py-2 text-xs font-semibold text-zinc-500">合計</td>
+                    <td className="px-3 py-2 text-right font-bold text-emerald-700 tabular-nums">{yen(totalSale)}</td>
+                    <td className="px-3 py-2 text-right font-bold text-rose-600 tabular-nums">{yen(totalBuy)}</td>
+                    <td className={`px-3 py-2 text-right font-bold tabular-nums ${totalProfit >= 0 ? 'text-violet-700' : 'text-red-700'}`}>
+                      {totalProfit < 0 ? '-' : ''}{yen(totalProfit)}
+                    </td>
+                    <td />
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── 金額カレンダータブ ────────────────────────────────────
+
+const DOW_LABELS = ['月', '火', '水', '木', '金', '土', '日']
+
+function CalendarTab({ yearMonth }: { yearMonth: string }) {
+  const [calData,       setCalData]       = useState<DailyCashflowCalendarResult | null>(null)
+  const [loading,       setLoading]       = useState(true)
+  const [error,         setError]         = useState<string | null>(null)
+  const [selectedDate,  setSelectedDate]  = useState<string | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    setError(null)
+    fetchDailyCashflowCalendar(yearMonth).then(res => {
+      if (res.error) setError(res.error)
+      else           setCalData(res.data)
+      setLoading(false)
+    })
+  }, [yearMonth])
+
+  if (loading) return <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
+  if (error)   return <p className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</p>
+
+  // カレンダーグリッド構築
+  const [y, m]   = yearMonth.split('-').map(Number)
+  const daysInMonth = new Date(y, m, 0).getDate()
+  const firstDow    = new Date(y, m - 1, 1).getDay()   // 0=日
+  const startOffset = (firstDow + 6) % 7                // 月=0 に変換
+  const cells: (number | null)[] = [
+    ...Array<null>(startOffset).fill(null),
+    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+  ]
+  while (cells.length % 7 !== 0) cells.push(null)
+
+  const weeks: (number | null)[][] = []
+  for (let i = 0; i < cells.length; i += 7) weeks.push(cells.slice(i, i + 7))
+
+  const dayMap = new Map((calData?.daily ?? []).map(d => [d.date, d]))
+
+  return (
+    <div className="space-y-3">
+      {/* カレンダー本体 */}
+      <div className="overflow-x-auto -mx-1">
+        <div className="min-w-[480px] rounded-xl border border-zinc-200 bg-white overflow-hidden">
+          {/* 曜日ヘッダー */}
+          <div className="grid grid-cols-7 border-b border-zinc-200 bg-zinc-50">
+            {DOW_LABELS.map((d, i) => (
+              <div
+                key={d}
+                className={`py-2 text-center text-xs font-semibold ${i >= 5 ? 'text-rose-400' : 'text-zinc-500'}`}
+              >
+                {d}
+              </div>
+            ))}
+          </div>
+
+          {/* 日付セル */}
+          {weeks.map((week, wi) => (
+            <div key={wi} className="grid grid-cols-7 border-b last:border-b-0 border-zinc-100">
+              {week.map((day, di) => {
+                if (!day) {
+                  return <div key={di} className={`min-h-[80px] ${di >= 5 ? 'bg-rose-50/40' : 'bg-zinc-50/60'}`} />
+                }
+
+                const dateStr = `${yearMonth}-${String(day).padStart(2, '0')}`
+                const entry   = dayMap.get(dateStr)
+                const totalS  = (entry?.confirmedSales ?? 0) + (entry?.projectedSales ?? 0)
+                const totalC  = (entry?.confirmedCost  ?? 0) + (entry?.projectedCost  ?? 0)
+                const profit  = totalS - totalC
+                const hasData = !!entry && totalS > 0
+
+                return (
+                  <button
+                    key={di}
+                    type="button"
+                    onClick={() => hasData && setSelectedDate(dateStr)}
+                    className={[
+                      'min-h-[80px] border-l border-zinc-100 first:border-l-0 p-1.5 text-left align-top transition-colors',
+                      di >= 5 ? 'bg-rose-50/30' : '',
+                      hasData ? 'hover:bg-zinc-50 cursor-pointer' : 'cursor-default',
+                    ].join(' ')}
+                  >
+                    <p className={`text-[10px] font-semibold mb-1 ${di >= 5 ? 'text-rose-400' : 'text-zinc-500'}`}>
+                      {day}
+                    </p>
+                    {hasData && entry && (
+                      <div className="space-y-0.5">
+                        {/* 売上 */}
+                        <p className="text-[9px] leading-tight">
+                          <span className="text-zinc-400">売 </span>
+                          {entry.confirmedSales > 0 && (
+                            <span className="text-emerald-700 font-semibold">{fmtAmt(entry.confirmedSales)}</span>
+                          )}
+                          {entry.projectedSales > 0 && (
+                            <span className="text-zinc-400">
+                              {entry.confirmedSales > 0 ? '+' : ''}{fmtAmt(entry.projectedSales)}
+                            </span>
+                          )}
+                        </p>
+                        {/* 仕入 */}
+                        <p className="text-[9px] leading-tight">
+                          <span className="text-zinc-400">仕 </span>
+                          {entry.confirmedCost > 0 && (
+                            <span className="text-rose-600 font-semibold">{fmtAmt(entry.confirmedCost)}</span>
+                          )}
+                          {entry.projectedCost > 0 && (
+                            <span className="text-zinc-400">
+                              {entry.confirmedCost > 0 ? '+' : ''}{fmtAmt(entry.projectedCost)}
+                            </span>
+                          )}
+                        </p>
+                        {/* 粗利 */}
+                        <p className={`text-[9px] leading-tight font-bold ${profit >= 0 ? 'text-violet-700' : 'text-red-600'}`}>
+                          <span className="font-normal text-zinc-400">粗 </span>
+                          {profit < 0 ? '-' : ''}{fmtAmt(profit)}
+                        </p>
+                      </div>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 凡例 */}
+      <div className="flex flex-wrap items-center gap-4 text-[10px] text-zinc-400 px-1">
+        <span className="flex items-center gap-1">
+          <span className="text-emerald-700 font-bold">●</span> 実績（今日まで）
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="text-zinc-400">●</span> 予定残
+        </span>
+        <span className="text-zinc-300">| セルをタップで荷主別明細を表示</span>
+      </div>
+
+      {/* 明細モーダル */}
+      {selectedDate && calData && (
+        <CalendarDetailModal
+          date={selectedDate}
+          details={calData.details.filter(d => d.date === selectedDate)}
+          onClose={() => setSelectedDate(null)}
+        />
+      )}
+    </div>
+  )
+}
+
 // ── メインページ ──────────────────────────────────────────
 
 const TABS: { key: CashflowTab; label: string }[] = [
-  { key: 'pnl',    label: '月次損益' },
-  { key: 'client', label: '荷主別粗利' },
-  { key: 'trend',  label: '推移グラフ' },
+  { key: 'pnl',      label: '月次損益' },
+  { key: 'client',   label: '荷主別粗利' },
+  { key: 'trend',    label: '推移グラフ' },
+  { key: 'calendar', label: '金額カレンダー' },
 ]
 
 export default function CashflowPage() {
@@ -336,9 +591,10 @@ export default function CashflowPage() {
           ))}
         </div>
 
-        {tab === 'pnl'    && <PnlTab yearMonth={yearMonth} />}
-        {tab === 'client' && <ClientProfitTab yearMonth={yearMonth} />}
-        {tab === 'trend'  && <TrendTab />}
+        {tab === 'pnl'      && <PnlTab         yearMonth={yearMonth} />}
+        {tab === 'client'   && <ClientProfitTab yearMonth={yearMonth} />}
+        {tab === 'trend'    && <TrendTab />}
+        {tab === 'calendar' && <CalendarTab     yearMonth={yearMonth} />}
       </div>
     </div>
   )

@@ -15,7 +15,11 @@
 
 # next.js
 /.next/
+/.open-next/
 /out/
+
+# claude dev tools
+/.claude/
 
 # production
 /build

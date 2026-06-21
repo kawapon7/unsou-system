@@ -27,7 +27,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       {
         href:  '/admin/dashboard',
-        label: '運行・実績確認',
+        label: '業績サマリー',
         icon:  (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
@@ -68,7 +68,7 @@ const NAV_GROUPS: NavGroup[] = [
       },
       {
         href:  '/admin/billing',
-        label: '支払・支出管理（OUT）',
+        label: '請求・支払管理(OUT)',
         icon:  (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z" />
@@ -91,7 +91,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       {
         href:  '/admin/partners',
-        label: '取引先一覧',
+        label: '取引先マスタ',
         icon:  (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M18 18.72a9.094 9.094 0 0 0 3.741-.479 3 3 0 0 0-4.682-2.72m.94 3.198.001.031c0 .225-.012.447-.037.666A11.944 11.944 0 0 1 12 21c-2.17 0-4.207-.576-5.963-1.584A6.062 6.062 0 0 1 6 18.719m12 0a5.971 5.971 0 0 0-.941-3.197m0 0A5.995 5.995 0 0 0 12 12.75a5.995 5.995 0 0 0-5.058 2.772m0 0a3 3 0 0 0-4.681 2.72 8.986 8.986 0 0 0 3.74.477m.94-3.197a5.971 5.971 0 0 0-.94 3.197M15 6.75a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm6 3a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Zm-13.5 0a2.25 2.25 0 1 1-4.5 0 2.25 2.25 0 0 1 4.5 0Z" />
@@ -134,7 +134,12 @@ type PageDef = {
 
 const PAGE_DEFS: Record<string, PageDef> = {
   '/admin/dashboard': {
-    label: '運行・実績確認',
+    label:    '業績サマリー',
+    paramKey: 'tab',
+    tabs: {
+      summary:  'サマリー',
+      projects: '案件別',
+    },
   },
   '/admin/schedules': {
     label: '案件カレンダー',
@@ -158,10 +163,9 @@ const PAGE_DEFS: Record<string, PageDef> = {
     },
   },
   '/admin/billing': {
-    label:    '支払・支出管理（OUT）',
+    label:    '請求・支払管理(OUT)',
     paramKey: 'tab',
     tabs: {
-      billing: '荷主向け請求管理',
       payment: '委託先向け支払管理',
       expense: '立替金承認',
     },
@@ -170,9 +174,10 @@ const PAGE_DEFS: Record<string, PageDef> = {
     label:    '収支管理ビュアー',
     paramKey: 'tab',
     tabs: {
-      pnl:    '月次損益',
-      client: '荷主別粗利',
-      trend:  '推移グラフ',
+      pnl:      '月次損益',
+      client:   '荷主別粗利',
+      trend:    '推移グラフ',
+      calendar: '金額カレンダー',
     },
   },
   '/admin/partners': {
@@ -220,7 +225,7 @@ function StarButtonInner() {
       onClick={() => toggle({ id: url, label, url })}
       aria-label={starred ? 'ショートカットから削除' : 'ショートカットに追加'}
       title={starred ? `「${label}」をショートカットから削除` : `「${label}」をサイドバーにピン留め`}
-      className="text-lg leading-none transition-transform duration-150 hover:scale-125 active:scale-95 select-none"
+      className={`text-lg leading-none transition-transform duration-150 hover:scale-125 active:scale-95 select-none ${!starred ? 'text-gray-500' : ''}`}
     >
       {starred ? '⭐' : '☆'}
     </button>

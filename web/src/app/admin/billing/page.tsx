@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { useMonth } from '@/contexts/MonthContext'
 import {
-  fetchBillingByClient,
   fetchPaymentByContractor,
   fetchExpensesForApproval,
   fetchPaymentNoticeStatuses,
@@ -12,7 +11,6 @@ import {
   generateAllPaymentNotices,
   approveExpense,
   rejectExpense,
-  type BillingRow,
   type PaymentRow,
   type PaymentNoticeStatus,
   type ExpenseApprovalRow,
@@ -23,17 +21,17 @@ import { finalizeInvoiceAndNotice } from '@/app/_actions/billing-actions'
 
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
 
+const TAX_LABEL: Record<string, string> = {
+  exclusive: '外税',
+  inclusive: '内税',
+  exempt:    '非課税',
+}
+
 const EXPENSE_TYPE_LABEL: Record<string, string> = {
   toll:    '高速道路料金',
   parking: '駐車場代',
   fuel:    '燃料費',
   other:   'その他',
-}
-
-const TAX_LABEL: Record<string, string> = {
-  exclusive: '外税',
-  inclusive: '内税',
-  exempt:    '非課税',
 }
 
 // ── 共通 UI ───────────────────────────────────────────────
@@ -62,138 +60,6 @@ function SummaryCard({ label, value, sub }: { label: string; value: string; sub?
       <p className="text-xs text-zinc-500 mb-1">{label}</p>
       <p className="text-xl font-bold text-zinc-900 tabular-nums">{value}</p>
       {sub && <p className="text-xs text-zinc-400 mt-0.5">{sub}</p>}
-    </div>
-  )
-}
-
-// ── 荷主請求タブ ──────────────────────────────────────────
-
-function BillingTab({ yearMonth }: { yearMonth: string }) {
-  const [rows, setRows]     = useState<BillingRow[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError]   = useState<string | null>(null)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    const res = await fetchBillingByClient(yearMonth)
-    if (res.error) setError(res.error)
-    else setRows(res.data ?? [])
-    setLoading(false)
-  }, [yearMonth])
-
-  useEffect(() => { load() }, [load])
-
-  const totals = rows.reduce(
-    (acc, r) => ({
-      net:   acc.net   + r.saleAmountNet,
-      tax:   acc.tax   + r.taxAmount,
-      gross: acc.gross + r.totalGross,
-      count: acc.count + r.projectCount,
-    }),
-    { net: 0, tax: 0, gross: 0, count: 0 },
-  )
-
-  function exportCsv() {
-    const BOM = '﻿'
-    const header = ['荷主', '締め日', '消費税区分', 'インボイス', '案件数', '受託運賃（税抜）', '消費税額', '税込請求金額', '入金サイト']
-    const body = rows.map(r => [
-      r.companyName,
-      r.closingDay === '月末' || r.closingDay === '末日' ? '月末締め' : `${r.closingDay}日締め`,
-      TAX_LABEL[r.taxType] ?? r.taxType,
-      r.invoiceRegistered ? '登録済' : '未登録',
-      r.projectCount,
-      r.saleAmountNet,
-      r.taxAmount,
-      r.totalGross,
-      `${r.paymentSite}日後`,
-    ])
-    const csv = BOM + [header, ...body].map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n')
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `請求一覧_${yearMonth}.csv`
-    a.click()
-  }
-
-  if (loading) return <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
-  if (error)   return <p className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</p>
-
-  return (
-    <div>
-      {/* サマリー */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <SummaryCard label="請求先数"     value={`${rows.length} 社`}   sub={`案件 ${totals.count} 件`} />
-        <SummaryCard label="受託運賃合計（税抜）" value={yen(totals.net)}   />
-        <SummaryCard label="消費税合計"   value={yen(totals.tax)}   />
-        <SummaryCard label="税込請求合計" value={yen(totals.gross)} />
-      </div>
-
-      {rows.length === 0 ? (
-        <div className="py-16 text-center text-sm text-zinc-400">対象データがありません</div>
-      ) : (
-        <div>
-        <div className="flex justify-end mb-3">
-          <button
-            type="button"
-            onClick={exportCsv}
-            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
-          >
-            &#128229; CSV出力
-          </button>
-        </div>
-        <div className="overflow-x-auto rounded-lg border border-zinc-200">
-          <table className="w-full">
-            <thead className="bg-zinc-50 border-b border-zinc-200">
-              <tr>
-                <Th>荷主</Th>
-                <Th>締め日</Th>
-                <Th>消費税区分</Th>
-                <Th>インボイス</Th>
-                <Th right>案件数</Th>
-                <Th right>受託運賃（税抜）</Th>
-                <Th right>消費税額</Th>
-                <Th right>税込請求金額</Th>
-                <Th right>入金サイト</Th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {rows.map(r => (
-                <tr key={r.clientId} className="hover:bg-zinc-50">
-                  <Td bold>{r.companyName}</Td>
-                  <Td>{r.closingDay === '月末' || r.closingDay === '末日' ? '月末締め' : `${r.closingDay}日締め`}</Td>
-                  <Td>
-                    <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
-                      {TAX_LABEL[r.taxType] ?? r.taxType}
-                    </span>
-                  </Td>
-                  <Td>
-                    {r.invoiceRegistered
-                      ? <span className="rounded-full bg-blue-50 text-blue-700 px-2 py-0.5 text-xs">登録済</span>
-                      : <span className="rounded-full bg-zinc-100 text-zinc-500 px-2 py-0.5 text-xs">未登録</span>}
-                  </Td>
-                  <Td right>{r.projectCount}</Td>
-                  <Td right>{yen(r.saleAmountNet)}</Td>
-                  <Td right muted={r.taxType === 'exempt'}>{yen(r.taxAmount)}</Td>
-                  <Td right bold>{yen(r.totalGross)}</Td>
-                  <Td right muted>{r.paymentSite}日後</Td>
-                </tr>
-              ))}
-            </tbody>
-            <tfoot className="border-t-2 border-zinc-200 bg-zinc-50">
-              <tr>
-                <td colSpan={4} className="px-4 py-3 text-xs font-semibold text-zinc-500">合計</td>
-                <Td right bold>{totals.count}</Td>
-                <Td right bold>{yen(totals.net)}</Td>
-                <Td right bold>{yen(totals.tax)}</Td>
-                <Td right bold>{yen(totals.gross)}</Td>
-                <td />
-              </tr>
-            </tfoot>
-          </table>
-        </div>
-        </div>
-      )}
     </div>
   )
 }
@@ -650,19 +516,18 @@ function ExpenseApprovalTab({ yearMonth }: { yearMonth: string }) {
 
 // ── メインページ ──────────────────────────────────────────
 
-type Tab = 'billing' | 'payment' | 'expense'
+type Tab = 'payment' | 'expense'
 
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'billing', label: '① 荷主向け請求管理' },
-  { key: 'payment', label: '② 委託先向け支払管理' },
-  { key: 'expense', label: '③ 立替金承認' },
+  { key: 'payment', label: '委託先向け支払管理' },
+  { key: 'expense', label: '立替金承認' },
 ]
 
 export default function BillingPage() {
   const searchParams = useSearchParams()
   const router       = useRouter()
   const pathname     = usePathname()
-  const tab          = (searchParams.get('tab') as Tab | null) ?? 'billing'
+  const tab          = (searchParams.get('tab') as Tab | null) ?? 'payment'
   const setTab       = (t: Tab) => router.replace(`${pathname}?tab=${t}`)
   const { yearMonth } = useMonth()
 
@@ -692,8 +557,7 @@ export default function BillingPage() {
           ))}
         </div>
 
-        {tab === 'billing' && <BillingTab  yearMonth={yearMonth} />}
-        {tab === 'payment' && <PaymentTab  yearMonth={yearMonth} />}
+        {tab === 'payment' && <PaymentTab         yearMonth={yearMonth} />}
         {tab === 'expense' && <ExpenseApprovalTab yearMonth={yearMonth} />}
       </div>
     </div>

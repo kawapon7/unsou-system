@@ -1,6 +1,7 @@
 'use server'
 
 import { createServiceClient } from '@/utils/supabase/service'
+import { getCurrentTenantId } from '@/utils/tenant'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -305,6 +306,197 @@ export async function fetchMonthlyTrend(): Promise<ActionResult<MonthlyTrendRow[
         confirmedOut: outMap.get(m) ?? 0,
       }))
       .reverse(),
+    error: null,
+  }
+}
+
+// ================================================================
+// スケジュールベース 発生主義サマリー
+// schedules × projects.sale_amount / buy_amount で算出
+// 実績 = date <= 今日 かつ status != absent
+// 予定 = date >  今日 かつ status = scheduled
+// ================================================================
+
+function todayJST(): string {
+  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+}
+
+export type ScheduleSummary = {
+  confirmedSales: number
+  projectedSales: number
+  confirmedCost:  number
+  projectedCost:  number
+  confirmedDays:  number
+  projectedDays:  number
+  absentDays:     number
+}
+
+export type ProjectBreakdownRow = {
+  projectId:     string
+  projectName:   string
+  clientName:    string
+  confirmedDays: number
+  projectedDays: number
+  landingSales:  number
+  landingCost:   number
+  prevDays:      number
+}
+
+export type ScheduleTrendRow = {
+  month:          string
+  confirmedSales: number
+  projectedSales: number
+}
+
+async function querySchedulesForMonth(
+  db: any,
+  tenantId: string,
+  yearMonth: string,
+) {
+  const { from, to } = monthRange(yearMonth)
+  return db
+    .from('schedules')
+    .select('date, status, projects(id, project_name, sale_amount, buy_amount, clients(company_name))')
+    .eq('tenant_id', tenantId)
+    .gte('date', from)
+    .lte('date', to)
+}
+
+export async function fetchScheduleSummary(
+  yearMonth: string,
+): Promise<ActionResult<ScheduleSummary>> {
+  const tenantId = await getCurrentTenantId()
+  const db       = createServiceClient() as any
+  const today    = todayJST()
+
+  const { data, error } = await querySchedulesForMonth(db, tenantId, yearMonth)
+  if (error) return { data: null, error: error.message }
+
+  let confirmedSales = 0, projectedSales = 0
+  let confirmedCost  = 0, projectedCost  = 0
+  let confirmedDays  = 0, projectedDays  = 0, absentDays = 0
+
+  for (const s of (data ?? [])) {
+    if (s.status === 'absent') { absentDays++; continue }
+    const p    = s.projects as any
+    const sale = p?.sale_amount ?? 0
+    const cost = p?.buy_amount  ?? 0
+    if (s.date <= today) {
+      confirmedSales += sale; confirmedCost += cost; confirmedDays++
+    } else if (s.status === 'scheduled') {
+      projectedSales += sale; projectedCost += cost; projectedDays++
+    }
+  }
+
+  return {
+    data: { confirmedSales, projectedSales, confirmedCost, projectedCost, confirmedDays, projectedDays, absentDays },
+    error: null,
+  }
+}
+
+export async function fetchProjectBreakdown(
+  yearMonth: string,
+): Promise<ActionResult<ProjectBreakdownRow[]>> {
+  const tenantId = await getCurrentTenantId()
+  const db       = createServiceClient() as any
+  const today    = todayJST()
+
+  const [y, m]  = yearMonth.split('-').map(Number)
+  const prevDate = new Date(y, m - 2, 1)
+  const prevYM   = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`
+
+  const [currRes, prevRes] = await Promise.all([
+    querySchedulesForMonth(db, tenantId, yearMonth),
+    querySchedulesForMonth(db, tenantId, prevYM),
+  ])
+  if (currRes.error) return { data: null, error: currRes.error.message }
+
+  type Internal = ProjectBreakdownRow & { saleAmount: number; buyAmount: number }
+  const map = new Map<string, Internal>()
+
+  for (const s of (currRes.data ?? [])) {
+    if (s.status === 'absent') continue
+    const p = s.projects as any
+    if (!p?.id) continue
+    if (!map.has(p.id)) {
+      map.set(p.id, {
+        projectId:     p.id,
+        projectName:   p.project_name,
+        clientName:    p.clients?.company_name ?? '—',
+        confirmedDays: 0,
+        projectedDays: 0,
+        landingSales:  0,
+        landingCost:   0,
+        prevDays:      0,
+        saleAmount:    p.sale_amount ?? 0,
+        buyAmount:     p.buy_amount  ?? 0,
+      })
+    }
+    const row = map.get(p.id)!
+    if (s.date <= today) row.confirmedDays++
+    else if (s.status === 'scheduled') row.projectedDays++
+  }
+
+  for (const row of map.values()) {
+    const total      = row.confirmedDays + row.projectedDays
+    row.landingSales = total * row.saleAmount
+    row.landingCost  = total * row.buyAmount
+  }
+
+  const prevMap = new Map<string, number>()
+  for (const s of (prevRes.data ?? [])) {
+    if (s.status === 'absent') continue
+    const pid = (s.projects as any)?.id
+    if (pid) prevMap.set(pid, (prevMap.get(pid) ?? 0) + 1)
+  }
+  for (const [pid, row] of map) row.prevDays = prevMap.get(pid) ?? 0
+
+  return {
+    data: [...map.values()]
+      .map(({ saleAmount: _s, buyAmount: _b, ...rest }) => rest)
+      .sort((a, b) => b.landingSales - a.landingSales),
+    error: null,
+  }
+}
+
+export async function fetchScheduleTrend(): Promise<ActionResult<ScheduleTrendRow[]>> {
+  const tenantId = await getCurrentTenantId()
+  const db       = createServiceClient() as any
+  const today    = todayJST()
+  const months   = pastMonths(12)
+
+  const fromDate = `${months[months.length - 1]}-01`
+  const [lastY, lastM] = months[0].split('-').map(Number)
+  const toDate   = new Date(lastY, lastM, 0).toISOString().slice(0, 10)
+
+  const { data, error } = await db
+    .from('schedules')
+    .select('date, status, projects(sale_amount)')
+    .eq('tenant_id', tenantId)
+    .gte('date', fromDate)
+    .lte('date', toDate)
+    .neq('status', 'absent')
+
+  if (error) return { data: null, error: error.message }
+
+  const trendMap = new Map<string, { confirmed: number; projected: number }>()
+  for (const m of months) trendMap.set(m, { confirmed: 0, projected: 0 })
+
+  for (const s of (data ?? [])) {
+    const ym   = (s.date as string).slice(0, 7)
+    const entry = trendMap.get(ym)
+    if (!entry) continue
+    const sale = (s.projects as any)?.sale_amount ?? 0
+    if (s.date <= today) entry.confirmed += sale
+    else                 entry.projected += sale
+  }
+
+  return {
+    data: months.map(m => ({
+      month:          m,
+      confirmedSales: trendMap.get(m)!.confirmed,
+      projectedSales: trendMap.get(m)!.projected,
+    })).reverse(),
     error: null,
   }
 }

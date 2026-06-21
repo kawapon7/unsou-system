@@ -88,7 +88,7 @@ export default function AdminSchedulesPage() {
 
         <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
           <div>
-            <h1 className="text-xl font-semibold text-zinc-900">配車＆予定管理</h1>
+            <h1 className="text-xl font-semibold text-zinc-900">案件カレンダー</h1>
             <p className="text-sm text-zinc-500 mt-0.5">全ドライバーの稼働予定を俯瞰・操作</p>
           </div>
           <ViewModeTabs viewMode={viewMode} onChange={setViewMode} />

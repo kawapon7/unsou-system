@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { updateScheduleStatus, type AdminScheduleEntry } from '@/app/_actions/scheduleActions'
+import { updateScheduleStatus, deleteSchedule, type AdminScheduleEntry } from '@/app/_actions/scheduleActions'
 import { STATUS_LABEL } from './constants'
 
 type ScheduleEditDialogProps = {
@@ -20,6 +20,20 @@ export function ScheduleEditDialog({ entry, onClose, onUpdated }: ScheduleEditDi
 
     setIsPending(true)
     const res = await updateScheduleStatus(entry.scheduleId, status)
+    setIsPending(false)
+    if (res.error) {
+      setError(res.error)
+      return
+    }
+    onUpdated()
+    onClose()
+  }
+
+  async function handleDelete() {
+    if (!window.confirm(`${entry.contractorName} の ${entry.date} の予定を削除しますか？\nこの操作は取り消せません。`)) return
+
+    setIsPending(true)
+    const res = await deleteSchedule(entry.scheduleId)
     setIsPending(false)
     if (res.error) {
       setError(res.error)
@@ -72,6 +86,14 @@ export function ScheduleEditDialog({ entry, onClose, onUpdated }: ScheduleEditDi
             稼働予定に戻す
           </button>
         </div>
+        <button
+          type="button"
+          disabled={isPending}
+          onClick={() => void handleDelete()}
+          className="w-full py-3 text-sm font-medium text-red-600 border-t border-zinc-100 hover:bg-red-50 disabled:opacity-40"
+        >
+          予定を削除
+        </button>
         <button
           type="button"
           onClick={onClose}
