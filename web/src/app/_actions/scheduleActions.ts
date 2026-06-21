@@ -314,7 +314,7 @@ export async function fetchSchedules(
 // UNIQUE(contractor_id, date) の upsert
 // ================================================================
 export async function upsertSchedule(params: {
-  projectId: string
+  projectId: string | null
   date:      string
   status:    ScheduleStatus
 }): Promise<ActionResult<{ id: string }>> {
@@ -355,15 +355,17 @@ export async function upsertSchedule(params: {
 }
 
 // ================================================================
-// copyPrevMonthSchedules
-// 「前月予定の1クリック全コピー」ボタン
-// fromYearMonth の scheduled 行を toYearMonth に一括コピー
-// 既存行は upsert で上書き（ignoreDuplicates: false）
+// bulkUpsertSchedules
+// 複数日付を同一案件・ステータスで一括登録（多選択カレンダー用）
+// UNIQUE(contractor_id, date) の upsert — 既存行は上書き
 // ================================================================
-export async function copyPrevMonthSchedules(params: {
-  fromYearMonth: string   // 'YYYY-MM' コピー元
-  toYearMonth:   string   // 'YYYY-MM' コピー先
-}): Promise<ActionResult<{ copied: number }>> {
+export async function bulkUpsertSchedules(params: {
+  dates:     string[]
+  projectId: string | null
+  status:    ScheduleStatus
+}): Promise<ActionResult<{ ids: string[]; count: number }>> {
+  if (!params.dates.length) return { data: { ids: [], count: 0 }, error: null }
+
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
@@ -377,8 +379,72 @@ export async function copyPrevMonthSchedules(params: {
     if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
   }
 
-  const service = createServiceClient()
-  const db = service as any
+  const now = new Date().toISOString()
+  const rows = params.dates.map(date => ({
+    contractor_id: contractorId!,
+    project_id:    params.projectId,
+    date,
+    status:        params.status,
+    tenant_id:     tenantId,
+    updated_at:    now,
+  }))
+
+  const db = createServiceClient() as any
+  const { data, error } = await db
+    .from('schedules')
+    .upsert(rows, { onConflict: 'contractor_id,date', ignoreDuplicates: false })
+    .select('id')
+
+  if (error) return { data: null, error: error.message }
+  const ids = (data ?? []).map((r: any) => r.id as string)
+  return { data: { ids, count: ids.length }, error: null }
+}
+
+// ================================================================
+// copyPrevMonthSchedules
+// 「前月予定の1クリック全コピー」ボタン
+// 曜日ベース: 前月の「第N○曜日」→ 今月の「第N○曜日」にマッピング
+// 今月に該当する曜日が存在しない場合（第5週など）はスキップ
+// ================================================================
+
+/** 'YYYY-MM-DD' の日付から「第N○曜日」を返す (0-indexed weekday, 1-indexed nth) */
+function getNthWeekday(dateStr: string): { nth: number; weekday: number } {
+  const d       = new Date(dateStr + 'T00:00:00')
+  const weekday = d.getDay()                          // 0=日 〜 6=土
+  const nth     = Math.ceil(d.getDate() / 7)          // 1〜5
+  return { nth, weekday }
+}
+
+/** year/month の第 nth・weekday の日付文字列を返す（存在しなければ null） */
+function findNthWeekdayDate(year: number, month: number, nth: number, weekday: number): string | null {
+  // 月の1日の曜日
+  const firstDow = new Date(year, month - 1, 1).getDay()
+  // 最初の該当曜日の日
+  const firstOccurrence = 1 + ((weekday - firstDow + 7) % 7)
+  const day = firstOccurrence + (nth - 1) * 7
+  const maxDay = new Date(year, month, 0).getDate()
+  if (day > maxDay) return null
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+export async function copyPrevMonthSchedules(params: {
+  fromYearMonth: string   // 'YYYY-MM' コピー元
+  toYearMonth:   string   // 'YYYY-MM' コピー先
+}): Promise<ActionResult<{ copied: number; skipped: number }>> {
+  const tenantId = await getCurrentTenantId()
+  let contractorId: string | null
+
+  if (process.env.NODE_ENV === 'development') {
+    contractorId = DEV_CONTRACTOR_ID
+  } else {
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+  }
+
+  const db = createServiceClient() as any
 
   // コピー元の scheduled 行を全件取得
   const [fy, fm] = params.fromYearMonth.split('-').map(Number)
@@ -395,37 +461,36 @@ export async function copyPrevMonthSchedules(params: {
     .lte('date', fromEnd)
 
   if (fetchErr) return { data: null, error: fetchErr.message }
-  if (!source?.length) return { data: { copied: 0 }, error: null }
+  if (!source?.length) return { data: { copied: 0, skipped: 0 }, error: null }
 
-  // 日付を翌月（toYearMonth）に変換してコピー行を生成
-  const fromMonthNum = fm
-  const toMonthNum   = parseInt(params.toYearMonth.split('-')[1], 10)
-  const toYear       = parseInt(params.toYearMonth.split('-')[0], 10)
+  const [ty, tm] = params.toYearMonth.split('-').map(Number)
+  const now = new Date().toISOString()
 
+  let skipped = 0
   const rows = (source as any[])
     .map((r: any) => {
-      const srcDay = parseInt(r.date.split('-')[2], 10)
-      const maxDay = new Date(toYear, toMonthNum, 0).getDate()
-      if (srcDay > maxDay) return null   // コピー先月に存在しない日は除外
+      const { nth, weekday } = getNthWeekday(r.date)
+      const toDate = findNthWeekdayDate(ty, tm, nth, weekday)
+      if (!toDate) { skipped++; return null }   // 今月に対応する曜日が存在しない
       return {
         contractor_id: contractorId!,
         project_id:    r.project_id,
-        date:          `${params.toYearMonth}-${String(srcDay).padStart(2, '0')}`,
+        date:          toDate,
         status:        'scheduled' as const,
         tenant_id:     tenantId,
-        updated_at:    new Date().toISOString(),
+        updated_at:    now,
       }
     })
     .filter((r): r is NonNullable<typeof r> => r !== null)
 
-  if (!rows.length) return { data: { copied: 0 }, error: null }
+  if (!rows.length) return { data: { copied: 0, skipped }, error: null }
 
   const { error: insertErr } = await db
     .from('schedules')
     .upsert(rows, { onConflict: 'contractor_id,date', ignoreDuplicates: false })
 
   if (insertErr) return { data: null, error: insertErr.message }
-  return { data: { copied: rows.length }, error: null }
+  return { data: { copied: rows.length, skipped }, error: null }
 }
 
 // ================================================================
@@ -455,8 +520,9 @@ export async function deleteSchedule(
 
 // ================================================================
 // fetchDriverProjectOptions
-// 子分カレンダー: 予定登録時に使う案件プルダウン用リスト
-// project_payees にそのドライバーが payee として登録されている案件のみ返す
+// ドライバーカレンダー: 予定登録時の案件プルダウン用リスト
+// 表示制御の起点は driver_project_assignments（このドライバーに見せる案件）。
+// project_payees は支払い計算レイヤーであり、ここでは参照しない。
 // ================================================================
 export async function fetchDriverProjectOptions(): Promise<ActionResult<{ id: string; name: string }[]>> {
   const tenantId = await getCurrentTenantId()
@@ -474,23 +540,22 @@ export async function fetchDriverProjectOptions(): Promise<ActionResult<{ id: st
 
   const db = createServiceClient() as any
 
-  // そのドライバーが支払先として登録されている project_id を取得
-  // NOTE: project_payees に1件も登録がない場合は空配列を返す（プルダウンが空になる）
-  const { data: payees, error: payeeErr } = await db
-    .from('project_payees')
+  // このドライバーに割り当てられた案件IDを取得
+  const { data: assignments, error: assignErr } = await db
+    .from('driver_project_assignments')
     .select('project_id')
-    .eq('payee_contractor_id', contractorId)
+    .eq('contractor_id', contractorId)
 
-  if (payeeErr) return { data: null, error: payeeErr.message }
+  if (assignErr) return { data: null, error: assignErr.message }
+  if (!assignments?.length) return { data: [], error: null }
 
-  if (!payees?.length) return { data: [], error: null }
-
-  const projectIds: string[] = [...new Set((payees as any[]).map((p: any) => p.project_id))]
+  const projectIds: string[] = assignments.map((a: any) => a.project_id)
 
   const { data, error } = await db
     .from('projects')
     .select('id, project_name, name')
     .eq('tenant_id', tenantId)
+    .eq('driver_visible', true)
     .in('id', projectIds)
     .order('project_name', { ascending: true })
 
@@ -543,4 +608,38 @@ export async function fetchMyWorkedDates(
 
   const dates = [...new Set((data ?? []).map((r: any) => r.date ?? r.work_date))] as string[]
   return { data: dates, error: null }
+}
+
+// ================================================================
+// logNotification
+// notification_logs への不変ログ INSERT（service_role 経由）
+// UPDATE / DELETE は RLS で全ロール禁止 — INSERT のみ許可
+// ================================================================
+
+export type NotificationLogType   = 'email' | 'sms' | 'import_log' | 'reminder'
+export type NotificationLogStatus = 'sent' | 'failed' | 'delivered'
+
+export async function logNotification(params: {
+  contractorId: string
+  type:         NotificationLogType
+  destination:  string
+  status:       NotificationLogStatus
+  messageId?:   string | null
+}): Promise<ActionResult<{ id: string }>> {
+  const db = createServiceClient() as any
+
+  const { data, error } = await db
+    .from('notification_logs')
+    .insert({
+      contractor_id: params.contractorId,
+      type:          params.type,
+      destination:   params.destination,
+      status:        params.status,
+      message_id:    params.messageId ?? null,
+    })
+    .select('id')
+    .single()
+
+  if (error) return { data: null, error: error.message }
+  return { data: { id: data.id as string }, error: null }
 }

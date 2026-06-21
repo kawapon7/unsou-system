@@ -1,52 +1,34 @@
 /**
  * TODO 8: 承認フロー3段構え保護の検証スクリプト
  *
- * 検証項目:
- *   [T1] approval_history への INSERT は成功する
- *   [T2] approval_history への UPDATE はトリガーで弾かれる
- *   [T3] approval_history への DELETE はトリガーで弾かれる
- *   [T4] 未ロック payment_notice は通常更新を通す
- *   [T5] approval_status='approved' の notice はロックエラーを返す
- *   [T6] locked=true の notice はロックエラーを返す
- *   [T7] isDeveloperUnlock=true + unlockReason で developer_unlock ログが approval_history に記録される
- *   [T8] developer_unlock ログ自体は UPDATE 不可（不変性の連鎖）
+ * シナリオ(a): 'unapproved' 状態 → 通常操作が通ること（ガードレール未作動）
+ * シナリオ(b): 'approved' 状態  → 再編集ブロック＋approval_historyへの不変ログ記録
+ * シナリオ(c): 'locked' 状態    → developer_unlock時にunlock_reasonが欠損なく記録される
  *
- * 実際のDBスキーマ:
- *   approval_history: { id, payment_notice_id, action_by, action_type, unlock_reason, created_at }
- *   payment_notices:  { id, contractor_id, notice_month, target_month, status, approval_status, locked, ... }
+ * 環境変数:
+ *   SUPABASE_URL             省略時 http://127.0.0.1:54321 (ローカル)
+ *   SUPABASE_SERVICE_ROLE_KEY 省略時 ローカルデフォルトキー
  */
 
-import { readFileSync } from 'fs'
-import { resolve, dirname } from 'path'
-import { fileURLToPath } from 'url'
 import { createClient } from '@supabase/supabase-js'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const envPath = resolve(__dirname, '../.env.local')
-const env = Object.fromEntries(
-  readFileSync(envPath, 'utf8')
-    .split('\n')
-    .filter(l => l && !l.startsWith('#') && l.includes('='))
-    .map(l => { const i = l.indexOf('='); return [l.slice(0, i), l.slice(i + 1)] }),
-)
+const LOCAL_URL = 'http://127.0.0.1:54321'
+const LOCAL_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU'
 
-const url = env.NEXT_PUBLIC_SUPABASE_URL
-const key = env.SUPABASE_SERVICE_ROLE_KEY
-if (!url || !key) {
-  console.error('Missing NEXT_PUBLIC_SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
-  process.exit(1)
-}
+const url = process.env.SUPABASE_URL             || LOCAL_URL
+const key = process.env.SUPABASE_SERVICE_ROLE_KEY || LOCAL_KEY
 
 const db = createClient(url, key, { auth: { persistSession: false } })
 
 const TENANT_ID    = 'local-dev'
 const NOTICE_MONTH = '2026-01-01'
 
-// ── カラー出力 ────────────────────────────────────────────────
+// ── カラー出力 ──────────────────────────────────────────────────
 
 const green = s => `\x1b[32m${s}\x1b[0m`
 const red   = s => `\x1b[31m${s}\x1b[0m`
 const bold  = s => `\x1b[1m${s}\x1b[0m`
+const cyan  = s => `\x1b[36m${s}\x1b[0m`
 
 let passed = 0
 let failed = 0
@@ -61,7 +43,7 @@ function ng(label, detail = '') {
   console.log(`  ${red('✗')} ${label}${detail ? `  → ${detail}` : ''}`)
 }
 
-// ── テスト用マスタデータの準備 ────────────────────────────────
+// ── マスタデータ準備 ────────────────────────────────────────────
 
 async function ensureContractor() {
   const { data: ex } = await db
@@ -91,13 +73,12 @@ async function ensureContractor() {
   return data.id
 }
 
-/** users テーブルから実在するユーザーIDを取得（approval_history.action_by FK 用） */
 async function findAnyUserId() {
   const { data } = await db.from('users').select('id').limit(1).maybeSingle()
   return data?.id ?? null
 }
 
-// ── 3段構えロジックの再現（billing-actions.ts と同ロジック） ─────
+// ── 支払通知書の3段構えロジック（billing-actions.ts と同ロジック） ───
 
 async function tryFinalizeNotice(contractorId, userId, opts = {}) {
   const { isDeveloperUnlock = false, unlockReason = null } = opts
@@ -109,14 +90,11 @@ async function tryFinalizeNotice(contractorId, userId, opts = {}) {
     .eq('notice_month', NOTICE_MONTH)
     .maybeSingle()
 
-  // 段1: 存在確認
-  // 段2: ロックチェック
   const isLocked =
     existing &&
     (existing.approval_status === 'approved' || existing.locked === true)
 
   if (isLocked) {
-    // 段3: 開発者アンロック確認
     if (!isDeveloperUnlock || !unlockReason) {
       return {
         ok:    false,
@@ -124,7 +102,6 @@ async function tryFinalizeNotice(contractorId, userId, opts = {}) {
       }
     }
 
-    // 証跡を approval_history に記録（実際のDBスキーマ列名を使用）
     const { error: logErr } = await db
       .from('approval_history')
       .insert({
@@ -141,7 +118,31 @@ async function tryFinalizeNotice(contractorId, userId, opts = {}) {
   return { ok: true, unlockedId: null }
 }
 
-// ── テスト実行 ────────────────────────────────────────────────
+// ── シード: payment_notice を指定 approval_status で作成 ────────
+
+async function seedNotice(contractorId, approvalStatus, locked = false) {
+  // approval_history の ON DELETE RESTRICT があるため DELETE は使わず upsert で状態を上書き
+  const { data, error } = await db
+    .from('payment_notices')
+    .upsert(
+      {
+        contractor_id:   contractorId,
+        notice_month:    NOTICE_MONTH,
+        target_month:    NOTICE_MONTH,
+        status:          'locked',
+        total_amount:    10000,
+        approval_status: approvalStatus,
+        locked,
+      },
+      { onConflict: 'contractor_id,notice_month' },
+    )
+    .select('id')
+    .single()
+  if (error) throw new Error(`seed notice (${approvalStatus}): ${error.message}`)
+  return data.id
+}
+
+// ── メイン ──────────────────────────────────────────────────────
 
 async function main() {
   console.log(bold('\n=== approval_history 不変性 + 3段構え保護 検証スクリプト ==='))
@@ -150,41 +151,21 @@ async function main() {
   const contractorId = await ensureContractor()
   const userId = await findAnyUserId()
   if (!userId) {
-    console.error(red('[FATAL] users テーブルにレコードがありません。ログインユーザーを先に作成してください。'))
+    console.error(red('[FATAL] users テーブルにレコードがありません。ローカルDBにログインユーザーを先に作成してください。'))
     process.exit(1)
   }
 
-  // ── グループ1: approval_history の不変性 ──────────────────
+  // ── グループ1: approval_history の不変性（共通前提） ──────────
 
   console.log(bold('[グループ1] approval_history トリガー検証'))
 
-  // approval_history は payment_notice_id FK が必須なので先に notice を作成
-  await db
-    .from('payment_notices')
-    .delete()
-    .eq('contractor_id', contractorId)
-    .eq('notice_month', NOTICE_MONTH)
-
-  const { data: seedNotice, error: seedErr } = await db
-    .from('payment_notices')
-    .insert({
-      contractor_id:   contractorId,
-      notice_month:    NOTICE_MONTH,
-      target_month:    NOTICE_MONTH,
-      status:          'locked',
-      total_amount:    10000,
-      approval_status: 'pending',
-      locked:          false,
-    })
-    .select('id')
-    .single()
-  if (seedErr) throw new Error(`seed notice: ${seedErr.message}`)
+  const g1NoticeId = await seedNotice(contractorId, 'unapproved', false)
 
   // [T1] INSERT は成功するはず
   const { data: inserted, error: insertErr } = await db
     .from('approval_history')
     .insert({
-      payment_notice_id: seedNotice.id,
+      payment_notice_id: g1NoticeId,
       action_type:       'test_insert',
       action_by:         userId,
       unlock_reason:     '[T1] トリガー検証用INSERT',
@@ -201,7 +182,7 @@ async function main() {
 
   const testLogId = inserted.id
 
-  // [T2] UPDATE は禁止トリガーで弾かれるはず
+  // [T2] UPDATE はトリガーで弾かれるはず
   const { error: updateErr } = await db
     .from('approval_history')
     .update({ unlock_reason: '改ざん試行' })
@@ -217,7 +198,7 @@ async function main() {
     ng('[T2] approval_history UPDATE が通ってしまった（トリガー未適用の可能性）')
   }
 
-  // [T3] DELETE は禁止トリガーで弾かれるはず
+  // [T3] DELETE はトリガーで弾かれるはず
   const { error: deleteErr } = await db
     .from('approval_history')
     .delete()
@@ -233,26 +214,31 @@ async function main() {
     ng('[T3] approval_history DELETE が通ってしまった（トリガー未適用の可能性）')
   }
 
-  // ── グループ2: 支払通知書の3段構えロックチェック ─────────
+  // ════════════════════════════════════════════════════════════════
+  // シナリオ(a): 'unapproved' 状態 — ガードレール未作動を確認
+  // ════════════════════════════════════════════════════════════════
 
-  console.log(bold('\n[グループ2] 支払通知書 3段構えロック検証'))
+  console.log(cyan(bold('\n[シナリオ(a)] unapproved 状態 — 通常操作が通ること')))
 
-  // [T4] 未ロック（pending 状態）→ 通常更新を通す
+  await seedNotice(contractorId, 'unapproved', false)
+
+  // [T4] unapproved 状態 → 3段ロックは作動せず通過するはず
   const r4 = await tryFinalizeNotice(contractorId, userId)
   if (r4.ok) {
-    ok('[T4] notice が pending 状態 → ロックなし、通過')
+    ok('[T4] unapproved 状態 → ロックなし、通常操作が通過')
   } else {
-    ng('[T4] pending 状態なのに拒否された', r4.error)
+    ng('[T4] unapproved 状態なのに拒否された', r4.error)
   }
 
-  // approval_status='approved' に更新
-  await db
-    .from('payment_notices')
-    .update({ approval_status: 'approved', locked: false })
-    .eq('contractor_id', contractorId)
-    .eq('notice_month', NOTICE_MONTH)
+  // ════════════════════════════════════════════════════════════════
+  // シナリオ(b): 'approved' 状態 — 再編集ブロック＋不変ログ記録
+  // ════════════════════════════════════════════════════════════════
 
-  // [T5] approved 状態 → ロックエラー
+  console.log(cyan(bold('\n[シナリオ(b)] approved 状態 — 再編集ブロック＋approval_history記録')))
+
+  await seedNotice(contractorId, 'approved', false)
+
+  // [T5] approved 状態 → ロックエラーが返るはず
   const r5 = await tryFinalizeNotice(contractorId, userId)
   if (!r5.ok && r5.error.includes('ロック済み')) {
     ok('[T5] approval_status=approved → 正しくロックエラー')
@@ -260,45 +246,30 @@ async function main() {
     ng('[T5] approved 状態なのにロックされなかった', r5.error ?? '通過')
   }
 
-  // locked=true に更新（approval_status は pending に戻す）
-  await db
-    .from('payment_notices')
-    .update({ approval_status: 'pending', locked: true })
-    .eq('contractor_id', contractorId)
-    .eq('notice_month', NOTICE_MONTH)
-
-  // [T6] locked=true → ロックエラー
-  const r6 = await tryFinalizeNotice(contractorId, userId)
-  if (!r6.ok && r6.error.includes('ロック済み')) {
-    ok('[T6] locked=true → 正しくロックエラー')
-  } else {
-    ng('[T6] locked=true なのにロックされなかった', r6.error ?? '通過')
-  }
-
-  // [T7] isDeveloperUnlock=true + unlockReason → approval_history に証跡が記録されること
-  const r7 = await tryFinalizeNotice(contractorId, userId, {
+  // [T7-b] approved 状態で isDeveloperUnlock=true → approval_history に証跡が記録されること
+  const r7b = await tryFinalizeNotice(contractorId, userId, {
     isDeveloperUnlock: true,
-    unlockReason:      '[T7] 検証用 developer unlock',
+    unlockReason:      '[T7-b] approved状態からの developer unlock 検証',
   })
-  if (r7.ok) {
+  if (r7b.ok) {
     const { data: logs } = await db
       .from('approval_history')
       .select('id, action_type, unlock_reason')
-      .eq('payment_notice_id', r7.unlockedId)
+      .eq('payment_notice_id', r7b.unlockedId)
       .eq('action_type', 'developer_unlock')
 
-    if (logs && logs.length > 0) {
-      ok('[T7] developer_unlock → 証跡ログが approval_history に記録された',
-        `log_id=${logs[0].id.slice(0, 8)}...`)
+    if (logs && logs.length > 0 && logs[0].unlock_reason) {
+      ok('[T7-b] developer_unlock → 証跡ログが approval_history に記録された',
+        `log_id=${logs[0].id.slice(0, 8)}... unlock_reason="${logs[0].unlock_reason.slice(0, 20)}"`)
     } else {
-      ng('[T7] developer_unlock は通過したがログが見つからない')
+      ng('[T7-b] developer_unlock は通過したがログが見つからない、またはunlock_reasonが欠損')
     }
   } else {
-    ng('[T7] developer_unlock が拒否された', r7.error)
+    ng('[T7-b] developer_unlock が拒否された', r7b.error)
   }
 
   // [T8] developer_unlock ログ自体も UPDATE 不可（不変性の連鎖）
-  const { data: devLog } = await db
+  const { data: devLogB } = await db
     .from('approval_history')
     .select('id')
     .eq('action_type', 'developer_unlock')
@@ -306,26 +277,67 @@ async function main() {
     .limit(1)
     .maybeSingle()
 
-  if (devLog?.id) {
+  if (devLogB?.id) {
     const { error: t8Err } = await db
       .from('approval_history')
       .update({ unlock_reason: '改ざん試行' })
-      .eq('id', devLog.id)
+      .eq('id', devLogB.id)
 
-    if (t8Err) {
-      if (t8Err.message.includes('変更・削除は禁止') || t8Err.message.includes('禁止')) {
-        ok('[T8] developer_unlock ログ自体も UPDATE 不可（不変性の連鎖を確認）')
-      } else {
-        ng('[T8] developer_unlock ログ UPDATE が別エラー', t8Err.message)
-      }
+    if (t8Err && (t8Err.message.includes('変更・削除は禁止') || t8Err.message.includes('禁止'))) {
+      ok('[T8] developer_unlock ログ自体も UPDATE 不可（不変性の連鎖を確認）')
+    } else if (t8Err) {
+      ng('[T8] developer_unlock ログ UPDATE が別エラー', t8Err.message)
     } else {
       ng('[T8] developer_unlock ログが UPDATE できてしまった')
     }
   } else {
-    ng('[T8] developer_unlock ログが見つからず（T7 が失敗している可能性）')
+    ng('[T8] developer_unlock ログが見つからず（T7-b が失敗している可能性）')
   }
 
-  // ── クリーンアップ ────────────────────────────────────────
+  // ════════════════════════════════════════════════════════════════
+  // シナリオ(c): 'locked' 状態 — developer_unlock時のunlock_reason記録
+  // ════════════════════════════════════════════════════════════════
+
+  console.log(cyan(bold('\n[シナリオ(c)] locked 状態 — developer_unlockのunlock_reason欠損なし確認')))
+
+  await seedNotice(contractorId, 'unapproved', true) // locked=true
+
+  // [T6] locked=true → ロックエラーが返るはず
+  const r6 = await tryFinalizeNotice(contractorId, userId)
+  if (!r6.ok && r6.error.includes('ロック済み')) {
+    ok('[T6] locked=true → 正しくロックエラー')
+  } else {
+    ng('[T6] locked=true なのにロックされなかった', r6.error ?? '通過')
+  }
+
+  // [T7-c] locked 状態で isDeveloperUnlock=true + unlockReason → unlock_reason が欠損なく記録されること
+  const r7c = await tryFinalizeNotice(contractorId, userId, {
+    isDeveloperUnlock: true,
+    unlockReason:      '[T7-c] locked状態からの developer unlock 検証',
+  })
+  if (r7c.ok) {
+    const { data: logs } = await db
+      .from('approval_history')
+      .select('id, action_type, unlock_reason')
+      .eq('payment_notice_id', r7c.unlockedId)
+      .eq('action_type', 'developer_unlock')
+      .order('created_at', { ascending: false })
+      .limit(1)
+
+    const log = logs?.[0]
+    if (log?.unlock_reason) {
+      ok('[T7-c] developer_unlock → unlock_reason が欠損なく approval_history に記録された',
+        `unlock_reason="${log.unlock_reason.slice(0, 30)}"`)
+    } else if (log) {
+      ng('[T7-c] ログは記録されたが unlock_reason が NULL または空')
+    } else {
+      ng('[T7-c] developer_unlock は通過したがログが見つからない')
+    }
+  } else {
+    ng('[T7-c] locked状態での developer_unlock が拒否された', r7c.error)
+  }
+
+  // ── クリーンアップ ──────────────────────────────────────────
   // approval_history は不変ログのため削除不可（テスト用ログは残る）
   await db
     .from('payment_notices')
@@ -339,7 +351,7 @@ async function main() {
     .eq('name', '[TEST] 検証用委託先')
     .eq('tenant_id', TENANT_ID)
 
-  // ── 結果サマリー ──────────────────────────────────────────
+  // ── 結果サマリー ────────────────────────────────────────────
   console.log(bold('\n=== 結果サマリー ==='))
   console.log(`  ${green('PASS')}: ${passed} / ${passed + failed}`)
   if (failed > 0) {

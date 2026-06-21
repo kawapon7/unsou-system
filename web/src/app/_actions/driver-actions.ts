@@ -49,7 +49,7 @@ export type MyPaymentNotice = {
   deductionRate:  number
   deduction:      number
   totalAmount:    number
-  approvalStatus: string   // 'pending' | 'approved'
+  approvalStatus: string   // 'unapproved' | 'approved' | 'locked'
   locked:         boolean
 }
 
@@ -99,7 +99,7 @@ export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNot
       deductionRate,
       deduction,
       totalAmount:    totalEx + totalTax - deduction,
-      approvalStatus: r.approval_status ?? 'pending',
+      approvalStatus: r.approval_status ?? 'unapproved', // デフォルトは未承認状態
       locked:         r.approval_status === 'approved',
     }
   })

@@ -7,7 +7,7 @@
       "runtimeArgs": ["run", "dev"],
       "port": 3000,
       "autoPort": false,
-      "cwd": "web"
+      "cwd": "/Users/kawasakiatsushi/developer/unsou-system/web"
     },
     {
       "name": "Cloudflare Pages preview",

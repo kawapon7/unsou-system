@@ -35,61 +35,108 @@ type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 // dev bypass 用テスト委託先ID（鈴木次郎・免税）
 const DEV_CONTRACTOR_ID = 'cc31ee16-660a-42db-acb4-05f148a3fce8'
 
+const DEV_CONTRACTOR_MOCK: ContractorRow = {
+  id:                          DEV_CONTRACTOR_ID,
+  name:                        '開発用ドライバー',
+  email:                       'dev-driver@local',
+  contractor_type:             'individual',
+  created_at:                  new Date(0).toISOString(),
+  has_withholding:             false,
+  invoice_registration_type:   'unregistered',
+  invoice_status:              null,
+  invoice_number:              null,
+  payment_site:                30,
+  payment_type:                'monthly',
+  show_detail_switch:          false,
+  tax_category:                'exclusive',
+  tenant_id:                   'local-dev',
+  user_id:                     null,
+  phone:                       null,
+  account_holder:              null,
+  account_number:              null,
+  account_type:                null,
+  bank_branch:                 null,
+  bank_name:                   null,
+  branch_name:                 null,
+  same_person_id:              null,
+}
+
 export async function fetchMyContractor(): Promise<ActionResult<ContractorRow>> {
-  if (process.env.NODE_ENV === 'development') {
-    const service = createServiceClient()
-    const { data, error } = await service
-      .from('contractors').select('*').eq('id', DEV_CONTRACTOR_ID).single()
-    if (error || !data) return { data: null, error: error?.message ?? 'dev contractor not found' }
-    return { data, error: null }
-  }
+  try {
+    if (process.env.NODE_ENV === 'development') {
+      try {
+        const service = createServiceClient()
+        const { data, error } = await service
+          .from('contractors').select('*').eq('id', DEV_CONTRACTOR_ID).single()
+        if (!error && data) return { data, error: null }
+        console.warn('[fetchMyContractor] dev contractor not in DB — fallback mock を使用')
+      } catch (e) {
+        console.warn('[fetchMyContractor] Supabase 接続不可 — fallback mock を使用:', e)
+      }
+      return { data: DEV_CONTRACTOR_MOCK, error: null }
+    }
 
-  const supabase = await createClient()
+    const supabase = await createClient()
 
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) return { data: null, error: '未ログインです' }
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
 
-  // users テーブル経由で contractor_id を取得
-  const { data: userRow, error: userErr } = await supabase
-    .from('users')
-    .select('contractor_id')
-    .eq('id', user.id)
-    .single()
+    // users テーブル経由で contractor_id を取得
+    const { data: userRow, error: userErr } = await supabase
+      .from('users')
+      .select('contractor_id')
+      .eq('id', user.id)
+      .single()
 
-  if (userErr || !userRow?.contractor_id) {
-    // フォールバック: email で contractors を直接検索（service_role 必須）
+    if (userErr || !userRow?.contractor_id) {
+      // フォールバック: email で contractors を直接検索（service_role 必須）
+      const service = createServiceClient()
+      const { data: contractor, error: cErr } = await service
+        .from('contractors')
+        .select('*')
+        .eq('email', user.email ?? '')
+        .single()
+      if (cErr || !contractor) return { data: null, error: '委託先レコードが見つかりません' }
+      return { data: contractor, error: null }
+    }
+
     const service = createServiceClient()
     const { data: contractor, error: cErr } = await service
       .from('contractors')
       .select('*')
-      .eq('email', user.email ?? '')
+      .eq('id', userRow.contractor_id)
       .single()
+
     if (cErr || !contractor) return { data: null, error: '委託先レコードが見つかりません' }
     return { data: contractor, error: null }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : '委託先の取得に失敗しました'
+    console.error('[fetchMyContractor]', msg)
+    return { data: null, error: msg }
   }
-
-  const service = createServiceClient()
-  const { data: contractor, error: cErr } = await service
-    .from('contractors')
-    .select('*')
-    .eq('id', userRow.contractor_id)
-    .single()
-
-  if (cErr || !contractor) return { data: null, error: '委託先レコードが見つかりません' }
-  return { data: contractor, error: null }
 }
 
 export async function fetchMyProjects(contractorId: string): Promise<ActionResult<AssignedProject[]>> {
   const supabase = await createClient()
 
-  const { data, error } = await supabase
-    .from('projects')
-    .select(`
-      *,
-      clients ( company_name )
-    `)
+  // ドライバーに個別割り当てがあればそのIDのみ取得、なければ全件
+  const { data: assignments } = await supabase
+    .from('driver_project_assignments')
+    .select('project_id')
     .eq('contractor_id', contractorId)
+
+  let query = supabase
+    .from('projects')
+    .select(`*, clients ( company_name )`)
+    .eq('contractor_id', contractorId)
+    .eq('driver_visible', true)
     .order('operation_start', { ascending: true })
+
+  if (assignments && assignments.length > 0) {
+    query = query.in('id', assignments.map((a: { project_id: string }) => a.project_id))
+  }
+
+  const { data, error } = await query
 
   if (error) return { data: null, error: error.message }
 

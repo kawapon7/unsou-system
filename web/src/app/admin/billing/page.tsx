@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import { useMonth } from '@/contexts/MonthContext'
 import {
   fetchBillingByClient,
   fetchPaymentByContractor,
@@ -16,15 +17,11 @@ import {
   type PaymentNoticeStatus,
   type ExpenseApprovalRow,
 } from './actions'
+import { finalizeInvoiceAndNotice } from '@/app/_actions/billing-actions'
 
 // ── ユーティリティ ────────────────────────────────────────
 
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
-
-function currentYearMonth() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-}
 
 const EXPENSE_TYPE_LABEL: Record<string, string> = {
   toll:    '高速道路料金',
@@ -97,6 +94,28 @@ function BillingTab({ yearMonth }: { yearMonth: string }) {
     { net: 0, tax: 0, gross: 0, count: 0 },
   )
 
+  function exportCsv() {
+    const BOM = '﻿'
+    const header = ['荷主', '締め日', '消費税区分', 'インボイス', '案件数', '受託運賃（税抜）', '消費税額', '税込請求金額', '入金サイト']
+    const body = rows.map(r => [
+      r.companyName,
+      r.closingDay === '月末' || r.closingDay === '末日' ? '月末締め' : `${r.closingDay}日締め`,
+      TAX_LABEL[r.taxType] ?? r.taxType,
+      r.invoiceRegistered ? '登録済' : '未登録',
+      r.projectCount,
+      r.saleAmountNet,
+      r.taxAmount,
+      r.totalGross,
+      `${r.paymentSite}日後`,
+    ])
+    const csv = BOM + [header, ...body].map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `請求一覧_${yearMonth}.csv`
+    a.click()
+  }
+
   if (loading) return <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
   if (error)   return <p className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</p>
 
@@ -113,6 +132,16 @@ function BillingTab({ yearMonth }: { yearMonth: string }) {
       {rows.length === 0 ? (
         <div className="py-16 text-center text-sm text-zinc-400">対象データがありません</div>
       ) : (
+        <div>
+        <div className="flex justify-end mb-3">
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
+          >
+            &#128229; CSV出力
+          </button>
+        </div>
         <div className="overflow-x-auto rounded-lg border border-zinc-200">
           <table className="w-full">
             <thead className="bg-zinc-50 border-b border-zinc-200">
@@ -163,6 +192,7 @@ function BillingTab({ yearMonth }: { yearMonth: string }) {
             </tfoot>
           </table>
         </div>
+        </div>
       )}
     </div>
   )
@@ -176,6 +206,14 @@ const NOTICE_STYLE: Record<string, { label: string; cls: string }> = {
   rejected: { label: '却下',     cls: 'bg-rose-100 text-rose-600' },
 }
 
+type UnlockState = {
+  contractorId: string
+  noticeId:     string
+  reason:       string
+  loading:      boolean
+  error:        string | null
+}
+
 function PaymentTab({ yearMonth }: { yearMonth: string }) {
   const [rows,    setRows]    = useState<PaymentRow[]>([])
   const [statuses, setStatuses] = useState<Map<string, PaymentNoticeStatus>>(new Map())
@@ -183,6 +221,7 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
   const [error,    setError]    = useState<string | null>(null)
   const [generating, setGenerating] = useState<string | null>(null) // contractorId or 'all'
   const [message,  setMessage]  = useState<{ text: string; ok: boolean } | null>(null)
+  const [unlock,   setUnlock]   = useState<UnlockState | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -241,6 +280,29 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
       await load()
     }
     setGenerating(null)
+  }
+
+  async function handleDeveloperUnlock() {
+    if (!unlock) return
+    if (!unlock.reason.trim()) {
+      setUnlock(prev => prev ? { ...prev, error: 'アンロック理由を入力してください。' } : null)
+      return
+    }
+    setUnlock(prev => prev ? { ...prev, loading: true, error: null } : null)
+    const res = await finalizeInvoiceAndNotice({
+      type:              'payment_notice',
+      yearMonth,
+      contractorId:      unlock.contractorId,
+      isDeveloperUnlock: true,
+      unlockReason:      unlock.reason.trim(),
+    })
+    if (res.error) {
+      setUnlock(prev => prev ? { ...prev, loading: false, error: res.error } : null)
+    } else {
+      setUnlock(null)
+      setMessage({ text: '開発者アンロック成功。支払通知書を上書きしました。', ok: true })
+      await load()
+    }
   }
 
   const totals = rows.reduce(
@@ -350,7 +412,18 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
                           </span>
                         )}
                         {isLocked ? (
-                          <span className="text-xs text-zinc-400">ロック中</span>
+                          <button
+                            onClick={() => setUnlock({
+                              contractorId: r.contractorId,
+                              noticeId:     st!.noticeId,
+                              reason:       '',
+                              loading:      false,
+                              error:        null,
+                            })}
+                            className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700 hover:bg-amber-100 transition whitespace-nowrap"
+                          >
+                            🔓 開発者アンロック
+                          </button>
                         ) : (
                           <button
                             onClick={() => handleGenerate(r.contractorId)}
@@ -386,6 +459,49 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
       <p className="mt-3 text-xs text-zinc-400">
         ※ 源泉徴収税額は支払運賃の 10.21%（2026年税制準拠）。経過措置控除は免税事業者への支払運賃消費税に適用。
       </p>
+
+      {/* 開発者アンロックモーダル */}
+      {unlock && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-xl">
+            <h2 className="text-base font-semibold text-zinc-900 mb-1">🔓 開発者アンロック</h2>
+            <p className="text-xs text-zinc-500 mb-4">
+              承認済み支払通知書を強制上書きします。理由は <code>approval_history</code> に不変ログとして記録されます。
+            </p>
+
+            <label className="block text-xs font-medium text-zinc-700 mb-1">
+              アンロック理由 <span className="text-red-500">*</span>
+            </label>
+            <textarea
+              className="w-full rounded-lg border border-zinc-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-amber-400 resize-none"
+              rows={3}
+              placeholder="例: 請求額の誤入力を修正するため"
+              value={unlock.reason}
+              onChange={e => setUnlock(prev => prev ? { ...prev, reason: e.target.value, error: null } : null)}
+            />
+            {unlock.error && (
+              <p className="mt-1 text-xs text-red-600">{unlock.error}</p>
+            )}
+
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => setUnlock(null)}
+                disabled={unlock.loading}
+                className="rounded-lg border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 disabled:opacity-50 transition"
+              >
+                キャンセル
+              </button>
+              <button
+                onClick={handleDeveloperUnlock}
+                disabled={unlock.loading}
+                className="rounded-lg bg-amber-600 hover:bg-amber-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-50 transition"
+              >
+                {unlock.loading ? '処理中...' : 'アンロックして上書き'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -548,7 +664,7 @@ export default function BillingPage() {
   const pathname     = usePathname()
   const tab          = (searchParams.get('tab') as Tab | null) ?? 'billing'
   const setTab       = (t: Tab) => router.replace(`${pathname}?tab=${t}`)
-  const [yearMonth, setYearMonth] = useState(currentYearMonth)
+  const { yearMonth } = useMonth()
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -557,15 +673,6 @@ export default function BillingPage() {
         {/* ヘッダ */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <h1 className="text-xl font-semibold text-zinc-900">請求・支払管理</h1>
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-zinc-600">対象年月</label>
-            <input
-              type="month"
-              value={yearMonth}
-              onChange={e => setYearMonth(e.target.value)}
-              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
-            />
-          </div>
         </div>
 
         {/* タブ */}

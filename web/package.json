@@ -7,21 +7,23 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "pages:build": "npx @cloudflare/next-on-pages",
+    "pages:build": "opennextjs-cloudflare build",
     "preview": "npm run pages:build && wrangler pages dev",
     "deploy": "npm run pages:build && wrangler pages deploy"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@react-pdf/renderer": "^4.5.1",
-    "@supabase/ssr": "^0.10.3",
-    "@supabase/supabase-js": "^2.107.0",
+    "@supabase/ssr": "^0.12.0",
+    "@supabase/supabase-js": "^3.0.0-next.29",
     "next": "16.2.7",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
   "devDependencies": {
-    "@cloudflare/next-on-pages": "^1.13.16",
+    "@opennextjs/cloudflare": "^1.19.11",
+    "esbuild": "^0.28.1",
+    "wrangler": "^4.86.0",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",

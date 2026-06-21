@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
-import DefensiveAlertPanel from '@/app/admin/_components/DefensiveAlertPanel'
+import { useMonth } from '@/contexts/MonthContext'
 import {
   fetchSalesList,
   fetchClientOptions,
@@ -23,16 +23,13 @@ import {
 import { InvoicePdfModal }       from '@/components/pdf/InvoicePdfModal'
 import { PaymentNoticePdfModal } from '@/components/pdf/PaymentNoticePdfModal'
 import { ScanTab }               from './ScanTab'
+import { EmergencyImportTab }    from './EmergencyImportTab'
+import { ManualInvoiceTab }      from './ManualInvoiceTab'
 import { VoiceButton }           from '@/components/voice/VoiceButton'
 
 // ── ユーティリティ ────────────────────────────────────────
 
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
-
-function currentYearMonth() {
-  const now = new Date()
-  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
-}
 
 const TAX_TYPE_LABEL: Record<string, string> = {
   exclusive: '外税',
@@ -127,6 +124,28 @@ function SalesListTab({ yearMonth }: { yearMonth: string }) {
   const paidTotal     = rows.filter(r => r.status === 'paid').reduce((s, r) => s + r.totalAmount, 0)
   const pendingTotal  = rows.filter(r => r.status === 'issued').reduce((s, r) => s + r.totalAmount, 0)
 
+  function exportCsv() {
+    const BOM = '﻿'
+    const header = ['荷主名', '消費税区分', '締め日', '入金予定日', 'ステータス', '税抜金額', '消費税', '請求金額（税込）']
+    const statusLabel: Record<string, string> = { draft: '未発行', issued: '請求済', paid: '入金済' }
+    const body = rows.map(r => [
+      r.companyName,
+      TAX_TYPE_LABEL[r.taxType] ?? r.taxType,
+      r.closingDay === '月末' || r.closingDay === '末日' || r.closingDay === '99' ? '月末締め' : `${r.closingDay}日締め`,
+      r.dueDate || '',
+      statusLabel[r.status] ?? r.status,
+      r.netAmount,
+      r.taxAmount,
+      r.totalAmount,
+    ])
+    const csv = BOM + [header, ...body].map(row => row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\r\n')
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `売上一覧_${yearMonth}.csv`
+    a.click()
+  }
+
   if (loading) return <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
   if (error)   return <p className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</p>
 
@@ -142,6 +161,16 @@ function SalesListTab({ yearMonth }: { yearMonth: string }) {
       {rows.length === 0 ? (
         <div className="py-16 text-center text-sm text-zinc-400">対象データがありません</div>
       ) : (
+        <div>
+        <div className="flex justify-end mb-3">
+          <button
+            type="button"
+            onClick={exportCsv}
+            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition-colors"
+          >
+            &#128229; CSV出力
+          </button>
+        </div>
         <div className="overflow-x-auto rounded-lg border border-zinc-200">
           <table className="w-full">
             <thead className="bg-zinc-50 border-b border-zinc-200">
@@ -191,6 +220,7 @@ function SalesListTab({ yearMonth }: { yearMonth: string }) {
               </tr>
             </tfoot>
           </table>
+        </div>
         </div>
       )}
     </div>
@@ -1132,17 +1162,57 @@ function SpotGuardrailTab() {
 }
 
 // ── メインページ ──────────────────────────────────────────
+// タブは最大3個（認知負荷軽減ルール）
+// 確定・ロック / スポット昇格 / 手動入力 は「請求書生成」タブ内の追加セクションとして提供
+// AIスキャン / 緊急インポート は /admin/scan へ移動
 
-type Tab = 'list' | 'generate' | 'payment' | 'finalize' | 'spot' | 'scan'
+type Tab = 'list' | 'generate' | 'payment'
 
 const TABS: { key: Tab; label: string }[] = [
-  { key: 'list',     label: '① 売上一覧' },
-  { key: 'generate', label: '② 請求書生成' },
-  { key: 'payment',  label: '③ 入金管理' },
-  { key: 'finalize', label: '④ 確定・ロック' },
-  { key: 'spot',     label: '⑤ スポット昇格' },
-  { key: 'scan',     label: '⑥ AIスキャン入力' },
+  { key: 'list',     label: '売上一覧' },
+  { key: 'generate', label: '請求書生成' },
+  { key: 'payment',  label: '入金管理' },
 ]
+
+// 「請求書生成」タブ内のサブセクション切り替え
+type GenerateSection = 'invoice' | 'finalize' | 'spot' | 'manual'
+
+function InvoiceGenerateTabWithSections({ yearMonth }: { yearMonth: string }) {
+  const [section, setSection] = useState<GenerateSection>('invoice')
+
+  const sectionTabs: { key: GenerateSection; label: string }[] = [
+    { key: 'invoice',  label: '請求書プレビュー' },
+    { key: 'finalize', label: '確定・ロック' },
+    { key: 'spot',     label: 'スポット昇格' },
+    { key: 'manual',   label: '手動入力' },
+  ]
+
+  return (
+    <div>
+      {/* サブナビ */}
+      <div className="flex gap-2 mb-5 flex-wrap">
+        {sectionTabs.map(s => (
+          <button
+            key={s.key}
+            onClick={() => setSection(s.key)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+              section === s.key
+                ? 'bg-zinc-900 text-white'
+                : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {section === 'invoice'  && <InvoiceGenerateTab  yearMonth={yearMonth} />}
+      {section === 'finalize' && <FinalizeTab          yearMonth={yearMonth} />}
+      {section === 'spot'     && <SpotGuardrailTab />}
+      {section === 'manual'   && <ManualInvoiceTab     yearMonth={yearMonth} />}
+    </div>
+  )
+}
 
 export default function SalesPage() {
   const searchParams    = useSearchParams()
@@ -1150,7 +1220,7 @@ export default function SalesPage() {
   const pathname        = usePathname()
   const tab             = (searchParams.get('tab') as Tab | null) ?? 'list'
   const setTab          = (t: Tab) => router.replace(`${pathname}?tab=${t}`)
-  const [yearMonth, setYearMonth] = useState(currentYearMonth)
+  const { yearMonth }   = useMonth()
 
   return (
     <div className="min-h-screen bg-zinc-50">
@@ -1158,24 +1228,19 @@ export default function SalesPage() {
 
         {/* ヘッダー */}
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
-          <h1 className="text-xl font-semibold text-zinc-900">売上管理</h1>
-          <div className="flex items-center gap-2">
-            <label className="text-sm text-zinc-600">対象年月</label>
-            <input
-              type="month"
-              value={yearMonth}
-              onChange={e => setYearMonth(e.target.value)}
-              className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
-            />
-          </div>
+          <h1 className="text-xl font-semibold text-zinc-900">売上・請求管理（IN）</h1>
+          <a
+            href="/admin/scan"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50 transition"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 3.75H6A2.25 2.25 0 0 0 3.75 6v1.5M16.5 3.75H18A2.25 2.25 0 0 1 20.25 6v1.5m0 9V18A2.25 2.25 0 0 1 18 20.25h-1.5m-9 0H6A2.25 2.25 0 0 1 3.75 18v-1.5M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+            </svg>
+            AIスキャン
+          </a>
         </div>
 
-        {/* ディフェンシブアラート */}
-        <div className="mb-6">
-          <DefensiveAlertPanel />
-        </div>
-
-        {/* タブ */}
+        {/* タブ（最大3個） */}
         <div className="flex gap-1 border-b border-zinc-200 mb-6">
           {TABS.map(({ key, label }) => (
             <button
@@ -1192,12 +1257,9 @@ export default function SalesPage() {
           ))}
         </div>
 
-        {tab === 'list'     && <SalesListTab       yearMonth={yearMonth} />}
-        {tab === 'generate' && <InvoiceGenerateTab  yearMonth={yearMonth} />}
-        {tab === 'payment'  && <PaymentStatusTab    yearMonth={yearMonth} />}
-        {tab === 'finalize' && <FinalizeTab         yearMonth={yearMonth} />}
-        {tab === 'spot'     && <SpotGuardrailTab />}
-        {tab === 'scan'     && <ScanTab />}
+        {tab === 'list'     && <SalesListTab                 yearMonth={yearMonth} />}
+        {tab === 'generate' && <InvoiceGenerateTabWithSections yearMonth={yearMonth} />}
+        {tab === 'payment'  && <PaymentStatusTab              yearMonth={yearMonth} />}
       </div>
 
       {/* 音声操作ボタン（親分：画面遷移のみ） */}

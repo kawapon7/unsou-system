@@ -110,7 +110,6 @@ export default function AdminSchedulesPage() {
           {missingCount > 0 && (
             <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-2 text-sm">
               <span className="text-rose-700 font-semibold">未入力 {missingCount} 件</span>
-              <span className="text-rose-600 ml-2 text-xs">（DefensiveAlertPanel と同期）</span>
             </div>
           )}
         </div>

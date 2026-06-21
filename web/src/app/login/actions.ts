@@ -37,6 +37,6 @@ export async function login(formData: FormData) {
   if (role === 'master') {
     redirect('/admin/dashboard')
   } else {
-    redirect('/driver/dashboard')
+    redirect('/driver/schedule')
   }
 }

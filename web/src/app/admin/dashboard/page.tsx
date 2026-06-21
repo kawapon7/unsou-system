@@ -250,7 +250,7 @@ function OutRow({ r, muted }: { r: TimelineOutRow; muted?: boolean }) {
 // ── 月別棒グラフ ──────────────────────────────────────────
 
 function MonthlyBarChart({ rows }: { rows: MonthlyTrendRow[] }) {
-  const max = Math.max(...rows.map(r => r.confirmedIn + r.projectedIn), 1)
+  const max = Math.max(...rows.map(r => Math.max(r.confirmedIn + r.projectedIn, r.confirmedOut)), 1)
   const BAR_H = 140
 
   return (

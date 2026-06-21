@@ -52,6 +52,48 @@ function calcWithholding(amount: number): number {
   return Math.floor(amount * 0.1021)
 }
 
+// ── 端数処理 ──────────────────────────────────────────────
+
+function applyRounding(value: number, rule: string): number {
+  if (rule === 'floor') return Math.floor(value)
+  if (rule === 'ceil')  return Math.ceil(value)
+  return Math.round(value)  // 'round' = 四捨五入（デフォルト）
+}
+
+// ── project_payees ルール型 ──────────────────────────────
+
+type PayeeRule = {
+  project_id:                string
+  contractor_id:             string
+  payment_type:              string
+  unit_price:                number | null
+  tax_method:                string
+  rounding_rule:             string
+  adjustment_enabled:        boolean
+  work_source_contractor_id: string | null
+}
+
+/**
+ * project_payees ルールがある案件の件数単価計算。
+ * 戻り値: { net: 税抜合計, adjustment: 調整金 }
+ */
+function calcPayeeAmount(rule: PayeeRule, workCount: number): { net: number; adjustment: number } {
+  const unitPrice = rule.unit_price ?? 0
+  const net = unitPrice * workCount
+
+  if (!rule.adjustment_enabled || rule.tax_method !== 'inclusive') {
+    return { net, adjustment: 0 }
+  }
+
+  // 業者が税込思考の場合: 単価×1.1 を端数処理した額 × 件数 が業者の期待値
+  const perUnitInclusive = applyRounding(unitPrice * 1.1, rule.rounding_rule)
+  const contractorExpects = perUnitInclusive * workCount
+  const selfCalcInclusive = Math.floor(net * 1.1)
+  const adjustment = contractorExpects - selfCalcInclusive
+
+  return { net, adjustment }
+}
+
 // ── 戻り値型 ──────────────────────────────────────────────
 
 export type BillingRow = {
@@ -100,6 +142,7 @@ type WorkRecordForPayment = {
   id:            string
   work_date:     string
   contractor_id: string
+  project_id:    string | null
   projects: {
     price_rules: { buying_price: number }[]
   } | null
@@ -195,40 +238,60 @@ export async function fetchPaymentByContractor(
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { from, to } = monthRange(yearMonth)
+  const fromStr = from.toISOString().slice(0, 10)
+  const toStr   = to.toISOString().slice(0, 10)
 
-  const { data, error } = await supabase
-    .from('work_records')
-    .select(`
-      id,
-      work_date,
-      contractor_id,
-      projects (
-        price_rules ( buying_price )
-      ),
-      contractors (
+  const [workResult, payeeResult] = await Promise.all([
+    supabase
+      .from('work_records')
+      .select(`
         id,
-        name,
-        tax_category,
-        invoice_registration_type,
-        invoice_number,
-        has_withholding,
-        payment_site
-      )
-    `)
-    .eq('tenant_id', tenantId)
-    .gte('work_date', from.toISOString().slice(0, 10))
-    .lte('work_date', to.toISOString().slice(0, 10))
+        work_date,
+        contractor_id,
+        project_id,
+        projects ( price_rules ( buying_price ) ),
+        contractors (
+          id,
+          name,
+          tax_category,
+          invoice_registration_type,
+          invoice_number,
+          has_withholding,
+          payment_site
+        )
+      `)
+      .eq('tenant_id', tenantId)
+      .gte('work_date', fromStr)
+      .lte('work_date', toStr),
+    supabase
+      .from('project_payees')
+      .select('project_id, contractor_id, payment_type, unit_price, tax_method, rounding_rule, adjustment_enabled, work_source_contractor_id')
+      .eq('tenant_id', tenantId),
+  ])
 
-  if (error) return { data: null, error: error.message }
+  if (workResult.error) return { data: null, error: workResult.error.message }
 
-  const rows = (data ?? []) as unknown as WorkRecordForPayment[]
-  const map = new Map<string, PaymentRow>()
+  // payee rules: key = "contractor_id:project_id"
+  const payeeMap = new Map<string, PayeeRule>()
+  for (const r of (payeeResult.data ?? []) as any[]) {
+    payeeMap.set(`${r.contractor_id}:${r.project_id}`, r as PayeeRule)
+  }
+
+  const rows = (workResult.data ?? []) as unknown as WorkRecordForPayment[]
+  const map  = new Map<string, PaymentRow>()
 
   for (const row of rows) {
     const contractor = row.contractors
     if (!contractor) continue
 
-    const net = row.projects?.price_rules?.[0]?.buying_price ?? 0
+    const rule = payeeMap.get(`${row.contractor_id}:${(row as any).project_id}`)
+    let net: number
+    if (rule && rule.unit_price !== null && rule.payment_type === 'per_unit') {
+      net = rule.unit_price  // 件数単価ルールあり: 1件分の単価
+    } else {
+      net = (row as any).projects?.price_rules?.[0]?.buying_price ?? 0
+    }
+
     const tax         = calcTax(net, contractor.tax_category)
     const withholding = contractor.has_withholding ? calcWithholding(net) : 0
 
@@ -238,7 +301,6 @@ export async function fetchPaymentByContractor(
       existing.buyAmountNet   += net
       existing.taxAmount      += tax
       existing.withholdingTax += withholding
-      existing.netPayment      = existing.buyAmountNet + existing.taxAmount - existing.withholdingTax
     } else {
       map.set(contractor.id, {
         contractorId:       contractor.id,
@@ -367,7 +429,7 @@ export async function fetchPaymentNoticeStatuses(
   const supabase = createServiceClient()
   const { data, error } = await (supabase as any)
     .from('payment_notices')
-    .select('id, contractor_id, approval_status, total_excluding_tax, total_tax, total_deduction')
+    .select('id, contractor_id, approval_status, locked, total_excluding_tax, total_tax, total_deduction, adjustment_amount')
     .eq('notice_month', `${yearMonth}-01`)
 
   if (error) return { data: null, error: error.message }
@@ -377,8 +439,12 @@ export async function fetchPaymentNoticeStatuses(
       contractorId:   r.contractor_id,
       noticeId:       r.id,
       approvalStatus: r.approval_status ?? 'pending',
-      locked:         false,
-      totalAmount:    Number(r.total_excluding_tax ?? 0) + Number(r.total_tax ?? 0) - Number(r.total_deduction ?? 0),
+      locked:         r.approval_status === 'approved' || r.locked === true,
+      totalAmount:
+        Number(r.total_excluding_tax ?? 0) +
+        Number(r.total_tax ?? 0) -
+        Number(r.total_deduction ?? 0) +
+        Number(r.adjustment_amount ?? 0),
     })),
     error: null,
   }
@@ -406,20 +472,95 @@ export async function generatePaymentNotice(
   if (cErr || !c) return { data: null, error: cErr?.message ?? '委託先が見つかりません' }
   const contractor = c as any
 
-  // 稼働記録から労務報酬を集計
+  // project_payees ルール（この委託先の全案件設定）
+  const { data: payeeRulesData, error: prErr } = await supabase
+    .from('project_payees')
+    .select('project_id, payment_type, unit_price, tax_method, rounding_rule, adjustment_enabled, work_source_contractor_id')
+    .eq('contractor_id', contractorId)
+    .eq('tenant_id', tenantId)
+  if (prErr) return { data: null, error: prErr.message }
+
+  const payeeRules = (payeeRulesData ?? []) as PayeeRule[]
+  const payeeRuleMap = new Map(payeeRules.map(r => [r.project_id, r]))
+
+  // 自身の稼働記録（案件別に集計）
   const { data: workData, error: wErr } = await supabase
     .from('work_records')
-    .select('projects(price_rules(buying_price))')
+    .select('project_id, projects(price_rules(buying_price))')
     .eq('contractor_id', contractorId)
     .eq('tenant_id', tenantId)
     .gte('work_date', fromStr)
     .lte('work_date', toStr)
   if (wErr) return { data: null, error: wErr.message }
 
-  let laborTaxExcluded = 0
+  // 案件別集計: { count, buyingPriceSum }
+  const projectAgg = new Map<string, { count: number; buyingPriceSum: number }>()
   for (const w of (workData ?? []) as any[]) {
-    laborTaxExcluded += Number(w.projects?.price_rules?.[0]?.buying_price ?? 0)
+    const pid = w.project_id as string | null
+    if (!pid) continue
+    const buying = Number(w.projects?.price_rules?.[0]?.buying_price ?? 0)
+    const cur = projectAgg.get(pid) ?? { count: 0, buyingPriceSum: 0 }
+    projectAgg.set(pid, { count: cur.count + 1, buyingPriceSum: cur.buyingPriceSum + buying })
   }
+
+  // 再委託ケース: work_source_contractor_id が指定されている案件の稼働件数を別途取得
+  const sourceContractorProjects = new Map<string, Set<string>>()
+  for (const rule of payeeRules) {
+    if (rule.work_source_contractor_id) {
+      const set = sourceContractorProjects.get(rule.work_source_contractor_id) ?? new Set<string>()
+      set.add(rule.project_id)
+      sourceContractorProjects.set(rule.work_source_contractor_id, set)
+    }
+  }
+  // sourceContractorId → (projectId → count)
+  const sourceWorkCounts = new Map<string, Map<string, number>>()
+  for (const [sourceId, projectIds] of sourceContractorProjects) {
+    const { data: srcData } = await supabase
+      .from('work_records')
+      .select('project_id')
+      .eq('contractor_id', sourceId)
+      .eq('tenant_id', tenantId)
+      .gte('work_date', fromStr)
+      .lte('work_date', toStr)
+      .in('project_id', Array.from(projectIds))
+    const counts = new Map<string, number>()
+    for (const w of (srcData ?? []) as any[]) {
+      const pid = w.project_id as string
+      counts.set(pid, (counts.get(pid) ?? 0) + 1)
+    }
+    sourceWorkCounts.set(sourceId, counts)
+  }
+
+  // 案件ごとに支払金額・調整金を算出
+  // payee ルールがある案件: unit_price × work_count (+調整金)
+  // ルールがない案件: buying_price の合算（後方互換）
+  let laborTaxExcluded = 0
+  let totalAdjustment  = 0
+  const coveredProjects = new Set<string>()
+
+  for (const rule of payeeRules) {
+    if (rule.payment_type !== 'per_unit' || rule.unit_price === null) continue
+
+    let workCount: number
+    if (rule.work_source_contractor_id) {
+      workCount = sourceWorkCounts.get(rule.work_source_contractor_id)?.get(rule.project_id) ?? 0
+    } else {
+      workCount = projectAgg.get(rule.project_id)?.count ?? 0
+    }
+
+    const { net, adjustment } = calcPayeeAmount(rule, workCount)
+    laborTaxExcluded += net
+    totalAdjustment  += adjustment
+    coveredProjects.add(rule.project_id)
+  }
+
+  // payee ルール未設定案件: 旧来の buying_price 合算
+  for (const [pid, agg] of projectAgg) {
+    if (!coveredProjects.has(pid)) {
+      laborTaxExcluded += agg.buyingPriceSum
+    }
+  }
+
   const laborTax = calcTax(laborTaxExcluded, contractor.tax_category)
 
   // 承認済み立替金を集計
@@ -448,27 +589,32 @@ export async function generatePaymentNotice(
   const isRegistered = contractor.invoice_registration_type === '適格'
   const isExempt     = contractor.invoice_registration_type === '免税'
 
-  const subtotalRegistered   = isRegistered ? laborTaxExcluded : 0
-  const taxRegistered        = isRegistered ? laborTax          : 0
-  const subtotalUnregistered = (!isRegistered && !isExempt) ? laborTaxExcluded : 0
-  const taxUnregistered      = isRegistered ? 0 : laborTax
+  const subtotalRegistered    = isRegistered ? laborTaxExcluded : 0
+  const taxRegistered         = isRegistered ? laborTax : 0
+  const subtotalUnregistered  = (!isRegistered && !isExempt) ? laborTaxExcluded : 0
+  const taxUnregistered       = isRegistered ? 0 : laborTax
   const deductionUnregistered = deduction
-  const subtotalExempt       = isExempt ? laborTaxExcluded : 0
+  const subtotalExempt        = isExempt ? laborTaxExcluded : 0
 
   const totalExcludingTax = laborTaxExcluded + expenseTaxExcluded
   const totalTax          = laborTax + expenseTax
   const totalDeduction    = deduction
-  const totalAmount       = totalExcludingTax + totalTax - totalDeduction
+  // 調整金を加算して業者の期待値と一致させる
+  const totalAmount = totalExcludingTax + totalTax - totalDeduction + totalAdjustment
 
   const db = supabase as any
 
   // 既存レコードを確認して INSERT or UPDATE
   const { data: existing } = await db
     .from('payment_notices')
-    .select('id')
+    .select('id, approval_status, locked')
     .eq('contractor_id', contractorId)
     .eq('notice_month', targetMonth)
     .maybeSingle()
+
+  if (existing && (existing.approval_status === 'approved' || existing.locked === true)) {
+    return { data: null, error: '支払通知書はロック済みのため再生成できません。' }
+  }
 
   const noticePayload = {
     target_month:           targetMonth,
@@ -482,6 +628,7 @@ export async function generatePaymentNotice(
     total_excluding_tax:    totalExcludingTax,
     total_tax:              totalTax,
     total_deduction:        totalDeduction,
+    adjustment_amount:      totalAdjustment,
     approval_status:        'approved',
   }
 

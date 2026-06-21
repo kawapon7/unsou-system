@@ -457,7 +457,7 @@ function ClientsTab() {
       contact_name: row.contact_name ?? '',
       phone: row.phone ?? '',
       email: row.email ?? '',
-      closing_day: (row as any).closing_day === 31 ? '月末' : String((row as any).closing_day ?? '月末'),
+      closing_day: ((row as any).closing_day == null || (row as any).closing_day >= 28) ? '月末' : String((row as any).closing_day),
       payment_month_offset: String((row as any).payment_month_offset ?? 1),
       payment_day: String((row as any).payment_day ?? '月末'),
       tax_type: row.tax_type,
@@ -482,7 +482,7 @@ function ClientsTab() {
       contact_name: form.contact_name || null,
       phone: form.phone || null,
       email: form.email || null,
-      closing_day: form.closing_day === '月末' ? '月末' : form.closing_day,
+      closing_day: form.closing_day === '月末' ? 99 : Number(form.closing_day),
       payment_month_offset: Number(form.payment_month_offset),
       payment_day: form.payment_day,
       tax_type: form.tax_type,
@@ -546,7 +546,7 @@ function ClientsTab() {
                 <tr key={row.id} className="hover:bg-zinc-50">
                   <td className="px-4 py-3 font-medium text-zinc-900">{row.company_name}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.contact_name ?? '—'}</td>
-                  <td className="px-4 py-3 text-zinc-600">{row.closing_day}</td>
+                  <td className="px-4 py-3 text-zinc-600">{(row as any).closing_day >= 28 ? '月末' : `${(row as any).closing_day}日`}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.payment_site}日</td>
                   <td className="px-4 py-3 text-zinc-600">{taxLabel(row.tax_type)}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.phone ?? '—'}</td>

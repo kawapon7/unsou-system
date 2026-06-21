@@ -29,6 +29,72 @@ export async function fetchContractorOptions(): Promise<ActionResult<ContractorO
   return { data: (data ?? []) as ContractorOption[], error: null }
 }
 
+// ── 荷主プルダウン用（IN スキャン） ──────────────────────
+
+export type ClientOption = { id: string; company_name: string }
+
+export async function fetchClientOptionsForScan(): Promise<ActionResult<ClientOption[]>> {
+  const tenantId = await getCurrentTenantId()
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '認証が必要です' }
+
+  const service = createServiceClient()
+  const { data, error } = await service
+    .from('clients')
+    .select('id, company_name')
+    .eq('tenant_id', tenantId)
+    .order('company_name')
+
+  if (error) return { data: null, error: error.message }
+  return { data: (data ?? []) as ClientOption[], error: null }
+}
+
+// ── AI解析結果をinvoicesへ確定保存（IN スキャン） ─────────
+
+export type ClientScanSaveParams = {
+  clientId:           string
+  issuerName:         string
+  registrationNumber: string
+  invoiceDate:        string   // YYYY-MM-DD
+  subtotal:           number   // 税抜合計
+  taxAmount:          number   // 消費税額
+  jobId?:             string | null
+}
+
+export async function saveClientScanResult(
+  params: ClientScanSaveParams,
+): Promise<ActionResult<{ id: string }>> {
+  const tenantId = await getCurrentTenantId()
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '認証が必要です' }
+
+  const invoiceMonth = `${params.invoiceDate.slice(0, 7)}-01`
+  const service = createServiceClient()
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: record, error: insertErr } = await (service as any)
+    .from('invoices')
+    .insert({
+      client_id:          params.clientId,
+      invoice_month:      invoiceMonth,
+      total_tax_excluded: params.subtotal,
+      consumption_tax:    params.taxAmount,
+      total_amount:       params.subtotal + params.taxAmount,
+      status:             'draft',
+      tenant_id:          tenantId,
+    })
+    .select('id')
+    .single() as { data: Record<string, unknown> | null; error: { message: string } | null }
+
+  if (insertErr || !record) {
+    return { data: null, error: insertErr?.message ?? '保存に失敗しました' }
+  }
+
+  return { data: { id: record['id'] as string }, error: null }
+}
+
 // ── AI解析結果をwork_recordsへ確定保存 ───────────────────
 
 export type ScanSaveParams = {

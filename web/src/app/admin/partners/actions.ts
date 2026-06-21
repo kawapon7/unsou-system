@@ -30,7 +30,7 @@ export async function fetchClients(): Promise<ActionResult<ClientRow[]>> {
 
 export async function createClient_(payload: ClientInsert): Promise<ActionResult<ClientRow>> {
   const tenantId = await getCurrentTenantId()
-  const supabase = await createClient()
+  const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('clients')
     .insert({ ...payload, tenant_id: tenantId })
@@ -42,7 +42,7 @@ export async function createClient_(payload: ClientInsert): Promise<ActionResult
 
 export async function updateClient(id: string, payload: ClientUpdate): Promise<ActionResult<ClientRow>> {
   const tenantId = await getCurrentTenantId()
-  const supabase = await createClient()
+  const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('clients')
     .update(payload)

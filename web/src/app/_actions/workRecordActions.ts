@@ -322,7 +322,6 @@ export async function submitWorkRecord(
       end_time:       params.endTime     ?? null,
       break_minutes:  params.breakMinutes ?? 0,
       piece_count:    pieceCount,
-      quantity:       pieceCount ?? 0,
       note:           params.note        ?? null,
       raw_spot_text:  params.rawSpotText ?? null,
       status,

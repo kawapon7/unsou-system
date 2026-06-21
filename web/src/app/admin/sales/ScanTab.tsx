@@ -228,7 +228,7 @@ export function ScanTab() {
           aria-label="請求書ファイルを選択またはドロップ"
           className={[
             'border-2 border-dashed rounded-2xl p-16 text-center transition-colors select-none outline-none',
-            isDragging ? 'border-blue-500 bg-blue-50' : 'border-zinc-300 bg-white hover:border-zinc-400',
+            isDragging ? 'border-blue-500 bg-blue-50/60' : 'border-zinc-300 bg-zinc-50 hover:border-zinc-400',
             phase === 'uploading' ? 'opacity-60 pointer-events-none' : 'cursor-pointer',
           ].join(' ')}
           onDragOver={onDragOver}
@@ -269,7 +269,7 @@ export function ScanTab() {
 
       {/* ─ Phase: polling ──────────────────────────────── */}
       {phase === 'polling' && (
-        <div className="bg-white border border-zinc-200 rounded-2xl p-16 text-center">
+        <div className="bg-zinc-50 border border-zinc-200 rounded-2xl p-16 text-center">
           <div className="w-12 h-12 rounded-full border-4 border-zinc-200 border-t-zinc-800 animate-spin mx-auto mb-4" />
           <p className="text-zinc-800 font-semibold text-lg mb-1">
             Gemini 2.0 がインボイス情報を解析中...
@@ -280,9 +280,9 @@ export function ScanTab() {
 
       {/* ─ Phase: error ────────────────────────────────── */}
       {phase === 'error' && (
-        <div className="bg-red-50 border border-red-200 rounded-2xl p-12 text-center space-y-5">
+        <div className="bg-rose-50/60 border border-rose-200 rounded-2xl p-12 text-center space-y-5">
           <div className="text-4xl">⚠️</div>
-          <p className="text-red-700 font-medium text-sm max-w-sm mx-auto leading-relaxed">
+          <p className="text-rose-700 font-medium text-sm max-w-sm mx-auto leading-relaxed">
             {errorMsg ?? 'エラーが発生しました'}
           </p>
           <button
@@ -296,7 +296,7 @@ export function ScanTab() {
 
       {/* ─ Phase: review / saving ──────────────────────── */}
       {(phase === 'review' || phase === 'saving') && (
-        <div className="bg-white border border-zinc-200 rounded-2xl overflow-hidden">
+        <div className="bg-zinc-50 border border-zinc-200 rounded-2xl overflow-hidden">
 
           {/* ヘッダー */}
           <div className="px-6 py-4 bg-zinc-50 border-b border-zinc-100 flex items-start justify-between gap-4">
@@ -406,7 +406,7 @@ export function ScanTab() {
 
             {/* エラー（review フェーズ内） */}
             {errorMsg && (
-              <p className="text-red-600 text-xs bg-red-50 rounded-lg px-3 py-2">
+              <p className="text-rose-600 text-xs bg-rose-50/60 rounded-lg px-3 py-2">
                 {errorMsg}
               </p>
             )}
