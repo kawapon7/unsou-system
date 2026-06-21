@@ -11,8 +11,13 @@ node_modules/
 
 # Next.js
 web/.next/
+.next/
 web/out/
 web/build/
+
+# Build outputs (Cloudflare / OpenNext)
+.open-next/
+web/.open-next/
 
 # Supabase local
 supabase/.branches/
