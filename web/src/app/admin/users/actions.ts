@@ -1,5 +1,6 @@
 'use server'
 
+import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
 
@@ -70,9 +71,21 @@ export async function listUsers(): Promise<ActionResult<ManagedUser[]>> {
 
 export async function createAdminUser(
   email: string,
-  password: string
+  password: string,
+  currentPassword: string
 ): Promise<ActionResult> {
   const db = createServiceClient()
+
+  // 現在の管理者パスワードを再検証（通常クライアントで signInWithPassword）
+  const regularDb = await createClient()
+  const { data: { user: currentUser } } = await regularDb.auth.getUser()
+  if (!currentUser?.email) return { data: null, error: '認証情報を取得できません' }
+
+  const { error: verifyErr } = await regularDb.auth.signInWithPassword({
+    email: currentUser.email,
+    password: currentPassword,
+  })
+  if (verifyErr) return { data: null, error: 'パスワードが正しくありません' }
 
   const { data: authData, error: authErr } = await db.auth.admin.createUser({
     email,
@@ -201,17 +214,30 @@ export async function deleteUser(userId: string): Promise<ActionResult> {
   return { data: undefined, error: null }
 }
 
-export async function listContractors(): Promise<ActionResult<{ id: string; name: string }[]>> {
+export async function listContractors(): Promise<ActionResult<{ id: string; name: string; email: string; hasAccount: boolean }[]>> {
   const db = createServiceClient()
   const tenantId = await getCurrentTenantId()
 
   const { data, error } = await db
     .from('contractors')
-    .select('id, name')
+    .select('id, name, email')
     .eq('tenant_id', tenantId)
     .order('name')
   if (error) return { data: null, error: error.message }
-  return { data: data ?? [], error: null }
+
+  // Auth ユーザーのメール一覧を取得してアカウント済みか判定
+  const { data: { users: authUsers } } = await db.auth.admin.listUsers({ perPage: 200 })
+  const accountEmails = new Set(authUsers.map(u => u.email).filter(Boolean))
+
+  return {
+    data: (data ?? []).map((c: { id: string; name: string; email: string }) => ({
+      id: c.id,
+      name: c.name,
+      email: c.email,
+      hasAccount: accountEmails.has(c.email),
+    })),
+    error: null,
+  }
 }
 
 export type ProjectOption = {

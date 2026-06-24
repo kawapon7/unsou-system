@@ -7,6 +7,8 @@ import {
   fetchContractors,
   createClient_,
   updateClient,
+  deleteClient,
+  deleteContractor,
   createContractor,
   updateContractor,
 } from './actions'
@@ -97,6 +99,7 @@ type ContractorForm = {
   account_type: string
   account_number: string
   account_holder: string
+  parent_contractor_id: string
 }
 
 const defaultContractorForm = (): ContractorForm => ({
@@ -117,6 +120,7 @@ const defaultContractorForm = (): ContractorForm => ({
   account_type: '普通',
   account_number: '',
   account_holder: '',
+  parent_contractor_id: '',
 })
 
 // ── 共通コンポーネント ────────────────────────────────────
@@ -160,19 +164,26 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function Modal({
   title,
   onClose,
+  isDirty,
   children,
 }: {
   title: string
   onClose: () => void
+  isDirty?: boolean
   children: React.ReactNode
 }) {
+  function handleClose() {
+    if (isDirty && !window.confirm('変更内容を破棄しますか？')) return
+    onClose()
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
           <h2 className="text-base font-semibold text-zinc-900">{title}</h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
           >
             ✕
@@ -294,9 +305,13 @@ function ClientFormFields({
 function ContractorFormFields({
   form,
   onChange,
+  allContractors = [],
+  editTargetId,
 }: {
   form: ContractorForm
   onChange: (f: ContractorForm) => void
+  allContractors?: ContractorRow[]
+  editTargetId?: string | null
 }) {
   const set = (k: keyof ContractorForm, v: string) =>
     onChange({ ...form, [k]: v })
@@ -321,6 +336,23 @@ function ContractorFormFields({
             <input className={inputCls} type="email" value={form.login_email} onChange={e => set('login_email', e.target.value)} />
           </Field>
         </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 mt-5">
+        <Field label="親委託先（1次業者）">
+          <select
+            value={form.parent_contractor_id}
+            onChange={e => set('parent_contractor_id', e.target.value)}
+            className={inputCls + ' bg-white'}
+          >
+            <option value="">なし（1次委託先）</option>
+            {allContractors
+              .filter(c => c.id !== editTargetId)
+              .map(c => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+          </select>
+        </Field>
       </div>
 
       <SectionTitle>出金ルール（締め日・支払サイト）</SectionTitle>
@@ -368,7 +400,7 @@ function ContractorFormFields({
             {INVOICE_REG_TYPES.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
           </select>
         </Field>
-        <Field label="登録番号（T+13桁）">
+        <Field label="登録番号（T+13桁）" required={form.invoice_registration_type === '適格'}>
           <input
             className={inputCls}
             placeholder="T1234567890123"
@@ -376,6 +408,8 @@ function ContractorFormFields({
             onChange={e => set('invoice_number', e.target.value)}
             pattern="T[0-9]{13}"
             title="T+13桁の数字で入力してください"
+            required={form.invoice_registration_type === '適格'}
+            disabled={form.invoice_registration_type === '免税'}
           />
         </Field>
         <div className="col-span-2">
@@ -432,6 +466,7 @@ function ClientsTab() {
   const [form, setForm] = useState<ClientForm>(defaultClientForm())
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [isDirty, setIsDirty] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -447,19 +482,24 @@ function ClientsTab() {
     setEditTarget(null)
     setForm(defaultClientForm())
     setFormError(null)
+    setIsDirty(false)
     setModalOpen(true)
   }
 
   function openEdit(row: ClientRow) {
     setEditTarget(row)
+    // payment_site（整数）から payment_month_offset と payment_day を逆算
+    const siteVal = row.payment_site ?? 30
+    const pdRaw = siteVal % 30
+    const pmOffset = pdRaw === 0 ? siteVal / 30 - 1 : Math.floor(siteVal / 30)
     setForm({
       company_name: row.company_name,
       contact_name: row.contact_name ?? '',
       phone: row.phone ?? '',
       email: row.email ?? '',
       closing_day: ((row as any).closing_day == null || (row as any).closing_day >= 28) ? '月末' : String((row as any).closing_day),
-      payment_month_offset: String((row as any).payment_month_offset ?? 1),
-      payment_day: String((row as any).payment_day ?? '月末'),
+      payment_month_offset: String(Math.max(0, pmOffset)),
+      payment_day: pdRaw === 0 ? '月末' : String(pdRaw),
       tax_type: row.tax_type,
       invoice_registered: (row as any).invoice_registered ?? (row as any).is_invoice_registered ?? false,
       bank_name: row.bank_name ?? '',
@@ -469,6 +509,7 @@ function ClientsTab() {
       account_holder: row.account_holder ?? '',
     })
     setFormError(null)
+    setIsDirty(false)
     setModalOpen(true)
   }
 
@@ -477,16 +518,18 @@ function ClientsTab() {
     setSaving(true)
     setFormError(null)
 
+    const paymentDayNum = form.payment_day === '月末' ? 30 : Number(form.payment_day)
     const payload: any = {
       company_name: form.company_name,
       contact_name: form.contact_name || null,
       phone: form.phone || null,
       email: form.email || null,
       closing_day: form.closing_day === '月末' ? 99 : Number(form.closing_day),
-      payment_month_offset: Number(form.payment_month_offset),
-      payment_day: form.payment_day,
+      payment_site: Number(form.payment_month_offset) * 30 + paymentDayNum,
       tax_type: form.tax_type,
       invoice_registered: form.invoice_registered,
+      is_invoice_registered: form.invoice_registered,
+      has_invoice: form.invoice_registered,
       bank_name: form.bank_name || null,
       bank_branch: form.bank_branch || null,
       account_type: form.account_type || null,
@@ -551,12 +594,25 @@ function ClientsTab() {
                   <td className="px-4 py-3 text-zinc-600">{taxLabel(row.tax_type)}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.phone ?? '—'}</td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => openEdit(row)}
-                      className="text-xs text-zinc-500 hover:text-zinc-900 underline underline-offset-2"
-                    >
-                      編集
-                    </button>
+                    <div className="flex items-center justify-end gap-3">
+                      <button
+                        onClick={() => openEdit(row)}
+                        className="text-xs text-zinc-500 hover:text-zinc-900 underline underline-offset-2"
+                      >
+                        編集
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm('本当にこの荷主を削除しますか？')) return
+                          const result = await deleteClient(row.id)
+                          if (result.error) setError(result.error)
+                          else await load()
+                        }}
+                        className="text-xs text-red-400 hover:text-red-600 underline underline-offset-2"
+                      >
+                        削除
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -569,9 +625,10 @@ function ClientsTab() {
         <Modal
           title={editTarget ? '荷主を編集' : '荷主を新規登録'}
           onClose={() => setModalOpen(false)}
+          isDirty={isDirty}
         >
           <form onSubmit={handleSubmit}>
-            <ClientFormFields form={form} onChange={setForm} />
+            <ClientFormFields form={form} onChange={f => { setForm(f); setIsDirty(true) }} />
             {formError && (
               <p className="mt-4 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{formError}</p>
             )}
@@ -609,6 +666,7 @@ function ContractorsTab() {
   const [form, setForm] = useState<ContractorForm>(defaultContractorForm())
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
+  const [isDirty, setIsDirty] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -624,21 +682,26 @@ function ContractorsTab() {
     setEditTarget(null)
     setForm(defaultContractorForm())
     setFormError(null)
+    setIsDirty(false)
     setModalOpen(true)
   }
 
   function openEdit(row: ContractorRow) {
     setEditTarget(row)
+    // payment_site（整数）から payment_month_offset と payment_day を逆算
+    const siteVal = row.payment_site ?? 30
+    const pdRaw = siteVal % 30
+    const pmOffset = pdRaw === 0 ? siteVal / 30 - 1 : Math.floor(siteVal / 30)
     setForm({
       name: row.name,
       phone: row.phone ?? '',
       email: row.email ?? '',
       login_email: row.email ?? '',
-      payment_method: (row as any).payment_type ?? '振込',
+      payment_method: row.payment_type === 'bank_transfer' ? '振込' : (row.payment_type ?? '振込'),
       closing_day: String((row as any).closing_day ?? '月末'),
-      payment_month_offset: String((row as any).payment_month_offset ?? 1),
-      payment_day: String((row as any).payment_day ?? '月末'),
-      tax_type: (row as any).tax_category ?? (row as any).tax_type ?? 'exclusive',
+      payment_month_offset: String(Math.max(0, pmOffset)),
+      payment_day: pdRaw === 0 ? '月末' : String(pdRaw),
+      tax_type: row.tax_category ?? 'exclusive',
       invoice_registration_type: row.invoice_registration_type,
       invoice_number: row.invoice_number ?? '',
       same_person_id: row.same_person_id ?? '',
@@ -647,8 +710,10 @@ function ContractorsTab() {
       account_type: row.account_type ?? '普通',
       account_number: row.account_number ?? '',
       account_holder: row.account_holder ?? '',
+      parent_contractor_id: (row as any).parent_contractor_id ?? '',
     })
     setFormError(null)
+    setIsDirty(false)
     setModalOpen(true)
   }
 
@@ -664,14 +729,13 @@ function ContractorsTab() {
     setSaving(true)
     setFormError(null)
 
+    const paymentDayNumC = form.payment_day === '月末' ? 30 : Number(form.payment_day)
     const payload: any = {
       name: form.name,
       phone: form.phone || null,
       email: form.email || form.login_email || 'noreply@local.dev',
       payment_type: form.payment_method === '振込' ? 'bank_transfer' : form.payment_method,
-      closing_day: form.closing_day,
-      payment_month_offset: Number(form.payment_month_offset),
-      payment_day: form.payment_day,
+      payment_site: Number(form.payment_month_offset) * 30 + paymentDayNumC,
       tax_category: form.tax_type,
       invoice_registration_type: form.invoice_registration_type,
       invoice_number: form.invoice_number || null,
@@ -682,6 +746,9 @@ function ContractorsTab() {
       account_number: form.account_number || null,
       account_holder: form.account_holder || null,
       contractor_type: 'individual',
+      has_withholding: false,
+      show_detail_switch: true,
+      parent_contractor_id: form.parent_contractor_id || null,
     }
 
     const result = editTarget
@@ -741,12 +808,25 @@ function ContractorsTab() {
                   <td className="px-4 py-3 text-zinc-600">{invoiceLabel(row.invoice_registration_type)}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.phone ?? '—'}</td>
                   <td className="px-4 py-3 text-right">
-                    <button
-                      onClick={() => openEdit(row)}
-                      className="text-xs text-zinc-500 hover:text-zinc-900 underline underline-offset-2"
-                    >
-                      編集
-                    </button>
+                    <div className="flex items-center justify-end gap-3">
+                      <button
+                        onClick={() => openEdit(row)}
+                        className="text-xs text-zinc-500 hover:text-zinc-900 underline underline-offset-2"
+                      >
+                        編集
+                      </button>
+                      <button
+                        onClick={async () => {
+                          if (!window.confirm('本当にこの委託先を削除しますか？')) return
+                          const result = await deleteContractor(row.id)
+                          if (result.error) setError(result.error)
+                          else await load()
+                        }}
+                        className="text-xs text-red-400 hover:text-red-600 underline underline-offset-2"
+                      >
+                        削除
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -759,9 +839,15 @@ function ContractorsTab() {
         <Modal
           title={editTarget ? '委託先を編集' : '委託先を新規登録'}
           onClose={() => setModalOpen(false)}
+          isDirty={isDirty}
         >
           <form onSubmit={handleSubmit}>
-            <ContractorFormFields form={form} onChange={setForm} />
+            <ContractorFormFields
+              form={form}
+              onChange={f => { setForm(f); setIsDirty(true) }}
+              allContractors={rows}
+              editTargetId={editTarget?.id}
+            />
             {formError && (
               <p className="mt-4 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{formError}</p>
             )}

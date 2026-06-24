@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useTransition, useCallback, useEffect, useRef } from 'react'
+import { useState, useTransition, useCallback, useEffect, useRef, useMemo } from 'react'
+import HolidayJp from '@holiday-jp/holiday_jp'
 import {
   fetchSchedules,
   upsertSchedule,
@@ -54,6 +55,21 @@ function prevYearMonth(ym: string) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
 }
 
+/** 指定月の祝日を Map<'YYYY-MM-DD', 祝日名> で返す */
+function buildHolidayMap(yearMonth: string): Map<string, string> {
+  const [y, m] = yearMonth.split('-').map(Number)
+  const from = new Date(y, m - 1, 1)
+  const to   = new Date(y, m, 0)
+  const holidays = HolidayJp.between(from, to)
+  const map = new Map<string, string>()
+  for (const h of holidays) {
+    const d = h.date
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    map.set(key, h.name)
+  }
+  return map
+}
+
 function buildCalendarDays(yearMonth: string): (string | null)[] {
   const [y, m] = yearMonth.split('-').map(Number)
   const firstDay    = new Date(y, m - 1, 1).getDay()
@@ -76,8 +92,8 @@ const DAY_HEADERS = ['日', '月', '火', '水', '木', '金', '土']
 // ── DayCell ──────────────────────────────────────────────────────
 
 function DayCell({
-  date, entry, projectName, isToday, isSunday, isSaturday, isWorked, isPending,
-  isSelected, multiMode, onTap,
+  date, entry, projectName, isToday, isSunday, isSaturday, isHoliday, holidayName,
+  isWorked, isPending, isSelected, multiMode, onTap,
 }: {
   date: string
   entry: ScheduleEntry | undefined
@@ -85,6 +101,8 @@ function DayCell({
   isToday: boolean
   isSunday: boolean
   isSaturday: boolean
+  isHoliday: boolean
+  holidayName?: string
   isWorked: boolean
   isPending: boolean
   isSelected: boolean
@@ -147,7 +165,7 @@ function DayCell({
 
   // ── セル色・バッジ（isSelected を最優先で評価） ──────────────
   let bg        = 'bg-white'
-  let textColor = isSunday ? 'text-rose-500' : isSaturday ? 'text-blue-500' : 'text-zinc-800'
+  let textColor = (isSunday || isHoliday) ? 'text-rose-500' : isSaturday ? 'text-blue-500' : 'text-zinc-800'
   let badge: React.ReactNode = null
 
   if (isSelected) {
@@ -185,7 +203,7 @@ function DayCell({
       : entry?.status === 'absent'
         ? '💤 休み'
         : null
-  const tipText = [projectName, statusLabel].filter(Boolean).join('　')
+  const tipText = [holidayName, projectName, statusLabel].filter(Boolean).join('　')
 
   // ── 表示位置（週の後半は左寄せ、前半は右寄せで画面外を防ぐ） ─
   // i % 7 が不明なので、左右は中央配置 + transform で対応
@@ -209,6 +227,9 @@ function DayCell({
         `}
       >
         <span>{day}</span>
+        {isHoliday && !badge && (
+          <span className="block text-[7px] leading-none text-rose-400 font-normal truncate w-full text-center px-0.5">祝</span>
+        )}
         {badge}
       </button>
 
@@ -1076,6 +1097,7 @@ export default function ScheduleCalendar({ contractorId }: { contractorId?: stri
 
   const cells = buildCalendarDays(yearMonth)
   const [y, m] = yearMonth.split('-').map(Number)
+  const holidayMap = useMemo(() => buildHolidayMap(yearMonth), [yearMonth])
   const projectName = (id: string) => projects.find(p => p.id === id)?.name ?? '案件'
 
   return (
@@ -1190,6 +1212,8 @@ export default function ScheduleCalendar({ contractorId }: { contractorId?: stri
                   isToday={date === today}
                   isSunday={i % 7 === 0}
                   isSaturday={i % 7 === 6}
+                  isHoliday={holidayMap.has(date)}
+                  holidayName={holidayMap.get(date)}
                   isWorked={workedDates.includes(date)}
                   isPending={isPending || submitting}
                   isSelected={selectedDates.has(date)}

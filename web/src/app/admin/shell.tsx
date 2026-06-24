@@ -76,6 +76,15 @@ const NAV_GROUPS: NavGroup[] = [
         ),
       },
       {
+        href:  '/admin/approval',
+        label: '承認管理',
+        icon:  (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.6} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+          </svg>
+        ),
+      },
+      {
         href:  '/admin/cashflow',
         label: '収支管理ビュアー',
         icon:  (
@@ -167,7 +176,16 @@ const PAGE_DEFS: Record<string, PageDef> = {
     paramKey: 'tab',
     tabs: {
       payment: '委託先向け支払管理',
+    },
+  },
+  '/admin/approval': {
+    label:    '承認管理',
+    paramKey: 'tab',
+    tabs: {
+      payment: '支払通知書承認',
+      work:    '勤務記録承認',
       expense: '立替金承認',
+      history: '承認履歴',
     },
   },
   '/admin/cashflow': {
@@ -178,6 +196,7 @@ const PAGE_DEFS: Record<string, PageDef> = {
       client:   '荷主別粗利',
       trend:    '推移グラフ',
       calendar: '金額カレンダー',
+      approval: '承認進捗',
     },
   },
   '/admin/partners': {
@@ -524,24 +543,24 @@ export default function OyabunShell({
 
         {/* モバイル ヘッダー（星ボタン含む） */}
         <header className="lg:hidden flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-3">
-          <button
-            onClick={() => setDrawerOpen(true)}
-            className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
-            aria-label="メニューを開く"
-          >
-            <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
-            </svg>
-          </button>
-          <Logo />
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setDrawerOpen(true)}
+              className="rounded-md p-1.5 text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900"
+              aria-label="メニューを開く"
+            >
+              <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" strokeWidth={1.8} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 6.75h16.5M3.75 12h16.5m-16.5 5.25h16.5" />
+              </svg>
+            </button>
             <StarButton />
-            <form action={handleLogout}>
-              <button type="submit" className="text-xs text-zinc-500 hover:text-zinc-900 transition">
-                ログアウト
-              </button>
-            </form>
           </div>
+          <Logo />
+          <form action={handleLogout}>
+            <button type="submit" className="text-xs text-zinc-500 hover:text-zinc-900 transition">
+              ログアウト
+            </button>
+          </form>
         </header>
 
         {/* ページコンテンツ */}

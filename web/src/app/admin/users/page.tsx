@@ -16,7 +16,7 @@ import {
   type ProjectOption,
 } from './actions'
 
-type Contractor = { id: string; name: string }
+type Contractor = { id: string; name: string; email: string; hasAccount: boolean }
 type ModalType  = 'admin' | 'driver' | 'edit' | null
 
 // ── ユーザーバッジ ────────────────────────────────────────
@@ -64,7 +64,7 @@ function PasswordFields({
           required={required}
           value={password}
           onChange={e => onPassword(e.target.value)}
-          className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200"
+          className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 placeholder:text-zinc-400"
           placeholder={placeholder ?? '6文字以上'}
         />
       </div>
@@ -75,7 +75,7 @@ function PasswordFields({
           required={required && password.length > 0}
           value={confirm}
           onChange={e => onConfirm(e.target.value)}
-          className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200"
+          className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 placeholder:text-zinc-400"
           placeholder="もう一度入力"
         />
       </div>
@@ -102,6 +102,12 @@ function EditModal({
   const [confirm, setConfirm]           = useState('')
   const [loading, setLoading]           = useState(false)
   const [error, setError]               = useState<string | null>(null)
+  const [isDirty, setIsDirty]           = useState(false)
+
+  function handleClose() {
+    if (isDirty && !window.confirm('変更内容を破棄しますか？')) return
+    onClose()
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -137,11 +143,11 @@ function EditModal({
             <label className="block text-sm font-medium text-zinc-700 mb-1">ロール</label>
             <div className="flex gap-3">
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="role" value="master" checked={role === 'master'} onChange={() => setRole('master')} className="h-4 w-4" />
+                <input type="radio" name="role" value="master" checked={role === 'master'} onChange={() => { setRole('master'); setIsDirty(true) }} className="h-4 w-4" />
                 <span className="text-sm text-zinc-700">管理者</span>
               </label>
               <label className="flex items-center gap-2 cursor-pointer">
-                <input type="radio" name="role" value="driver" checked={role === 'driver'} onChange={() => setRole('driver')} className="h-4 w-4" />
+                <input type="radio" name="role" value="driver" checked={role === 'driver'} onChange={() => { setRole('driver'); setIsDirty(true) }} className="h-4 w-4" />
                 <span className="text-sm text-zinc-700">ドライバー</span>
               </label>
             </div>
@@ -151,8 +157,8 @@ function EditModal({
               <label className="block text-sm font-medium text-zinc-700 mb-1">紐づく委託先</label>
               <select
                 value={contractorId}
-                onChange={e => setContractorId(e.target.value)}
-                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 bg-white"
+                onChange={e => { setContractorId(e.target.value); setIsDirty(true) }}
+                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 bg-white placeholder:text-zinc-400"
               >
                 <option value="">未設定</option>
                 {contractors.map(c => (
@@ -165,12 +171,12 @@ function EditModal({
             <PasswordFields
               password={password}
               confirm={confirm}
-              onPassword={setPassword}
-              onConfirm={setConfirm}
+              onPassword={v => { setPassword(v); setIsDirty(true) }}
+              onConfirm={v => { setConfirm(v); setIsDirty(true) }}
             />
           </div>
           <div className="flex justify-end gap-3 pt-2">
-            <button type="button" onClick={onClose}
+            <button type="button" onClick={handleClose}
               className="rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50 transition">
               キャンセル
             </button>
@@ -409,19 +415,34 @@ function AdminModal({
   onClose: () => void
   onCreated: () => void
 }) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirm, setConfirm] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [step, setStep]           = useState<1 | 2>(1)
+  const [email, setEmail]         = useState('')
+  const [password, setPassword]   = useState('')
+  const [confirm, setConfirm]     = useState('')
+  const [currentPw, setCurrentPw] = useState('')
+  const [loading, setLoading]     = useState(false)
+  const [error, setError]         = useState<string | null>(null)
+  const [isDirty, setIsDirty]     = useState(false)
 
-  async function handleSubmit(e: React.FormEvent) {
+  function handleClose() {
+    if (isDirty && !window.confirm('変更内容を破棄しますか？')) return
+    onClose()
+  }
+
+  function handleNext(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
     if (password !== confirm) { setError('パスワードが一致しません'); return }
     if (password.length < 6) { setError('パスワードは6文字以上にしてください'); return }
+    setStep(2)
+  }
+
+  async function handleConfirm(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    if (!currentPw) { setError('現在のパスワードを入力してください'); return }
     setLoading(true)
-    const result = await createAdminUser(email, password)
+    const result = await createAdminUser(email, password, currentPw)
     setLoading(false)
     if (result.error) { setError(result.error); return }
     onCreated()
@@ -433,46 +454,64 @@ function AdminModal({
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl">
         <div className="border-b border-zinc-100 px-6 py-4">
           <h2 className="text-base font-semibold text-zinc-900">管理者アカウント作成</h2>
+          <p className="mt-0.5 text-xs text-zinc-400">ステップ {step} / 2</p>
         </div>
-        <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-          {error && (
-            <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
-          )}
-          <div>
-            <label className="block text-sm font-medium text-zinc-700 mb-1">メールアドレス</label>
-            <input
-              type="email"
+
+        {step === 1 ? (
+          <form onSubmit={handleNext} className="px-6 py-5 space-y-4">
+            {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 mb-1">メールアドレス</label>
+              <input
+                type="email"
+                required
+                value={email}
+                onChange={e => { setEmail(e.target.value); setIsDirty(true) }}
+                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 placeholder:text-zinc-400"
+                placeholder="admin@example.com"
+              />
+            </div>
+            <PasswordFields
+              password={password}
+              confirm={confirm}
+              onPassword={v => { setPassword(v); setIsDirty(true) }}
+              onConfirm={v => { setConfirm(v); setIsDirty(true) }}
               required
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200"
-              placeholder="admin@example.com"
             />
-          </div>
-          <PasswordFields
-            password={password}
-            confirm={confirm}
-            onPassword={setPassword}
-            onConfirm={setConfirm}
-            required
-          />
-          <div className="flex justify-end gap-3 pt-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50 transition"
-            >
-              キャンセル
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-              className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 transition disabled:opacity-50"
-            >
-              {loading ? '作成中...' : '作成する'}
-            </button>
-          </div>
-        </form>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={handleClose} className="rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50 transition">
+                キャンセル
+              </button>
+              <button type="submit" className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 transition">
+                次へ
+              </button>
+            </div>
+          </form>
+        ) : (
+          <form onSubmit={handleConfirm} className="px-6 py-5 space-y-4">
+            {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
+            <p className="text-sm text-zinc-600">操作を確定するには、<span className="font-medium text-zinc-900">あなた自身のパスワード</span>を入力してください。</p>
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 mb-1">現在のパスワード</label>
+              <input
+                type="password"
+                required
+                autoFocus
+                value={currentPw}
+                onChange={e => setCurrentPw(e.target.value)}
+                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200"
+              />
+            </div>
+            <div className="flex justify-end gap-3 pt-2">
+              <button type="button" onClick={() => { setStep(1); setError(null); setCurrentPw('') }} className="rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50 transition">
+                戻る
+              </button>
+              <button type="submit" disabled={loading} className="rounded-lg bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 transition disabled:opacity-50">
+                {loading ? '作成中...' : '作成する'}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   )
@@ -489,21 +528,30 @@ function DriverModal({
   onClose: () => void
   onCreated: () => void
 }) {
-  const [email, setEmail] = useState('')
+  const available = contractors.filter(c => !c.hasAccount)
   const [password, setPassword] = useState('')
   const [confirm, setConfirm] = useState('')
-  const [contractorId, setContractorId] = useState(contractors[0]?.id ?? '')
+  const [contractorId, setContractorId] = useState(available[0]?.id ?? '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [isDirty, setIsDirty] = useState(false)
+
+  const selectedContractor = available.find(c => c.id === contractorId) ?? null
+
+  function handleClose() {
+    if (isDirty && !window.confirm('変更内容を破棄しますか？')) return
+    onClose()
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError(null)
+    if (!contractorId || !selectedContractor) { setError('委託先を選択してください'); return }
+    if (!selectedContractor.email) { setError('選択した委託先にメールアドレスが登録されていません'); return }
     if (password !== confirm) { setError('パスワードが一致しません'); return }
     if (password.length < 6) { setError('パスワードは6文字以上にしてください'); return }
-    if (!contractorId) { setError('委託先を選択してください'); return }
     setLoading(true)
-    const result = await createDriverUser(email, password, contractorId)
+    const result = await createDriverUser(selectedContractor.email, password, contractorId)
     setLoading(false)
     if (result.error) { setError(result.error); return }
     onCreated()
@@ -520,49 +568,49 @@ function DriverModal({
           {error && (
             <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>
           )}
-          <div>
-            <label className="block text-sm font-medium text-zinc-700 mb-1">委託先（ドライバー）</label>
-            <select
-              required
-              value={contractorId}
-              onChange={e => setContractorId(e.target.value)}
-              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 bg-white"
-            >
-              <option value="">選択してください</option>
-              {contractors.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-zinc-700 mb-1">メールアドレス</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200"
-              placeholder="driver@example.com"
-            />
-          </div>
-          <PasswordFields
-            password={password}
-            confirm={confirm}
-            onPassword={setPassword}
-            onConfirm={setConfirm}
-            required
-          />
+          {available.length === 0 ? (
+            <p className="text-sm text-zinc-500">アカウント未登録の委託先がありません</p>
+          ) : (
+            <>
+              <div>
+                <label className="block text-sm font-medium text-zinc-700 mb-1">委託先（ドライバー）</label>
+                <select
+                  required
+                  value={contractorId}
+                  onChange={e => { setContractorId(e.target.value); setIsDirty(true) }}
+                  className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 bg-white"
+                >
+                  <option value="">選択してください</option>
+                  {available.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}（{c.email}）</option>
+                  ))}
+                </select>
+              </div>
+              {selectedContractor && (
+                <div className="rounded-lg bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
+                  ログイン用メール: <span className="font-medium text-zinc-900">{selectedContractor.email}</span>
+                </div>
+              )}
+              <PasswordFields
+                password={password}
+                confirm={confirm}
+                onPassword={v => { setPassword(v); setIsDirty(true) }}
+                onConfirm={v => { setConfirm(v); setIsDirty(true) }}
+                required
+              />
+            </>
+          )}
           <div className="flex justify-end gap-3 pt-2">
             <button
               type="button"
-              onClick={onClose}
+              onClick={handleClose}
               className="rounded-lg border border-zinc-200 px-4 py-2 text-sm text-zinc-600 hover:bg-zinc-50 transition"
             >
               キャンセル
             </button>
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || available.length === 0}
               className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 transition disabled:opacity-50"
             >
               {loading ? '作成中...' : '作成する'}

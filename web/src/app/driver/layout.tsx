@@ -7,11 +7,6 @@ export default async function KobunLayout({
 }: {
   children: React.ReactNode
 }) {
-  // TODO: UI確認用一時バイパス（本番前に必ず削除すること）
-  if (process.env.NODE_ENV === 'development') {
-    return <KobunShell email="dev-driver@local">{children}</KobunShell>
-  }
-
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
 

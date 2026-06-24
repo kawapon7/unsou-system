@@ -15,7 +15,6 @@ type ActionResult<T = void> =
   | { data: T; error: null }
   | { data: null; error: string }
 
-const DEV_CONTRACTOR_ID = 'cc31ee16-660a-42db-acb4-05f148a3fce8'
 
 // ── 認証ヘルパー ────────────────────────────────────────────
 
@@ -277,15 +276,11 @@ export async function submitWorkRecord(
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
-    contractorId = DEV_CONTRACTOR_ID
-  } else {
-    const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
-    if (authErr || !user) return { data: null, error: '未ログインです' }
-    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
-  }
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '未ログインです' }
+  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
   const db = createServiceClient() as any
   const existing = await findDuplicates(db, contractorId, params.projectId, params.date, tenantId)
@@ -472,15 +467,11 @@ export async function fetchWorkRecords(
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
-    contractorId = DEV_CONTRACTOR_ID
-  } else {
-    const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
-    if (authErr || !user) return { data: null, error: '未ログインです' }
-    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
-  }
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '未ログインです' }
+  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
   const [y, m] = yearMonth.split('-').map(Number)
   const from = `${yearMonth}-01`
@@ -531,15 +522,11 @@ export async function submitOffMasterReport(params: {
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
-    contractorId = DEV_CONTRACTOR_ID
-  } else {
-    const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
-    if (authErr || !user) return { data: null, error: '未ログインです' }
-    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
-  }
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '未ログインです' }
+  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
   // NOTE: project_id を null で INSERT するため、migration で DROP NOT NULL 済みであること
   const db = createServiceClient() as any

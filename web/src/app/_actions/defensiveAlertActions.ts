@@ -36,6 +36,7 @@ export type PendingNoticeRow = {
   targetMonth:    string
   createdAt:      string
   hoursElapsed:   number
+  projectNames:   string[]
 }
 
 export type DefensiveAlerts = {
@@ -164,28 +165,54 @@ async function fetchLongPendingNotices(): Promise<PendingNoticeRow[]> {
       id, contractor_id, notice_month, approval_status, created_at,
       contractors ( id, name, phone, email )
     `)
-    .eq('approval_status', 'unapproved') // 未承認状態のレコードを抽出
+    .eq('approval_status', 'unapproved')
     .lt('created_at', threshold)
     .order('created_at', { ascending: true })
 
   if (!data?.length) return []
 
+  // 各通知書の対象月に稼働したプロジェクト名を schedules から取得
   const now = Date.now()
-  return (data as any[]).map((r: any) => {
-    const hoursElapsed = Math.floor(
-      (now - new Date(r.created_at).getTime()) / (1000 * 60 * 60),
-    )
-    return {
-      noticeId:       r.id,
-      contractorId:   r.contractor_id,
-      contractorName: r.contractors?.name  ?? r.contractor_id,
-      phone:          r.contractors?.phone ?? null,
-      email:          r.contractors?.email ?? null,
-      targetMonth:    r.notice_month ?? '',
-      createdAt:      r.created_at,
-      hoursElapsed,
-    }
-  })
+  const rows = await Promise.all(
+    (data as any[]).map(async (r: any) => {
+      const hoursElapsed = Math.floor(
+        (now - new Date(r.created_at).getTime()) / (1000 * 60 * 60),
+      )
+
+      const noticeMonth: string = r.notice_month ?? ''
+      const monthStart = noticeMonth.slice(0, 7) + '-01'
+      const monthEnd   = noticeMonth.slice(0, 7) + '-31'
+
+      const { data: schedules } = await db
+        .from('schedules')
+        .select('projects ( project_name, name )')
+        .eq('contractor_id', r.contractor_id)
+        .gte('date', monthStart)
+        .lte('date', monthEnd)
+
+      const projectNames: string[] = [
+        ...new Set(
+          ((schedules ?? []) as any[])
+            .map((s: any) => s.projects?.project_name ?? s.projects?.name)
+            .filter(Boolean),
+        ),
+      ]
+
+      return {
+        noticeId:       r.id,
+        contractorId:   r.contractor_id,
+        contractorName: r.contractors?.name  ?? r.contractor_id,
+        phone:          r.contractors?.phone ?? null,
+        email:          r.contractors?.email ?? null,
+        targetMonth:    noticeMonth,
+        createdAt:      r.created_at,
+        hoursElapsed,
+        projectNames,
+      }
+    }),
+  )
+
+  return rows
 }
 
 // ================================================================

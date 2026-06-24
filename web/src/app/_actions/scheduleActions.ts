@@ -9,8 +9,6 @@ type ActionResult<T = void> =
   | { data: T; error: null }
   | { data: null; error: string }
 
-const DEV_CONTRACTOR_ID = 'cc31ee16-660a-42db-acb4-05f148a3fce8'
-
 // ── 認証ヘルパー ────────────────────────────────────────────
 
 async function resolveContractorId(userId: string, email?: string): Promise<string | null> {
@@ -266,15 +264,11 @@ export async function fetchSchedules(
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
-    contractorId = DEV_CONTRACTOR_ID
-  } else {
-    const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
-    if (authErr || !user) return { data: null, error: '未ログインです' }
-    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
-  }
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '未ログインです' }
+  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
   const [y, m] = yearMonth.split('-').map(Number)
   const from = `${yearMonth}-01`
@@ -321,15 +315,11 @@ export async function upsertSchedule(params: {
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
-    contractorId = DEV_CONTRACTOR_ID
-  } else {
-    const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
-    if (authErr || !user) return { data: null, error: '未ログインです' }
-    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
-  }
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '未ログインです' }
+  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
   const service = createServiceClient()
   const db = service as any
@@ -369,15 +359,11 @@ export async function bulkUpsertSchedules(params: {
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
-    contractorId = DEV_CONTRACTOR_ID
-  } else {
-    const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
-    if (authErr || !user) return { data: null, error: '未ログインです' }
-    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
-  }
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '未ログインです' }
+  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
   const now = new Date().toISOString()
   const rows = params.dates.map(date => ({
@@ -434,15 +420,11 @@ export async function copyPrevMonthSchedules(params: {
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
-    contractorId = DEV_CONTRACTOR_ID
-  } else {
-    const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
-    if (authErr || !user) return { data: null, error: '未ログインです' }
-    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
-  }
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '未ログインです' }
+  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
   const db = createServiceClient() as any
 
@@ -528,15 +510,11 @@ export async function fetchDriverProjectOptions(): Promise<ActionResult<{ id: st
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
-    contractorId = DEV_CONTRACTOR_ID
-  } else {
-    const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
-    if (authErr || !user) return { data: null, error: '未ログインです' }
-    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
-  }
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '未ログインです' }
+  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
   const db = createServiceClient() as any
 
@@ -580,15 +558,11 @@ export async function fetchMyWorkedDates(
   const tenantId = await getCurrentTenantId()
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
-    contractorId = DEV_CONTRACTOR_ID
-  } else {
-    const supabase = await createClient()
-    const { data: { user }, error: authErr } = await supabase.auth.getUser()
-    if (authErr || !user) return { data: null, error: '未ログインです' }
-    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
-  }
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  if (authErr || !user) return { data: null, error: '未ログインです' }
+  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
   const [y, m] = yearMonth.split('-').map(Number)
   const from = `${yearMonth}-01`

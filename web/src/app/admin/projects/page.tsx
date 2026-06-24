@@ -113,19 +113,26 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function Modal({
   title,
   onClose,
+  isDirty,
   children,
 }: {
   title: string
   onClose: () => void
+  isDirty?: boolean
   children: React.ReactNode
 }) {
+  function handleClose() {
+    if (isDirty && !window.confirm('変更内容を破棄しますか？')) return
+    onClose()
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
           <h2 className="text-base font-semibold text-zinc-900">{title}</h2>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
           >
             ✕
@@ -624,6 +631,7 @@ export default function ProjectsPage() {
   const [form, setForm]               = useState<ProjectForm>(defaultForm())
   const [saving, setSaving]           = useState(false)
   const [formError, setFormError]     = useState<string | null>(null)
+  const [isDirty, setIsDirty]         = useState(false)
   const [payeeProject, setPayeeProject] = useState<ProjectWithRelations | null>(null)
   const searchParams    = useSearchParams()
   const router          = useRouter()
@@ -654,6 +662,7 @@ export default function ProjectsPage() {
     setEditTarget(null)
     setForm(defaultForm())
     setFormError(null)
+    setIsDirty(false)
     setModalOpen(true)
   }
 
@@ -671,6 +680,7 @@ export default function ProjectsPage() {
       driver_visible: (row as any).driver_visible ?? true,
     })
     setFormError(null)
+    setIsDirty(false)
     setModalOpen(true)
   }
 
@@ -679,29 +689,39 @@ export default function ProjectsPage() {
     setSaving(true)
     setFormError(null)
 
-    const payload: ProjectInsert = {
-      project_code:   form.project_code,
-      project_name:   form.project_name,
-      client_id:      form.client_id,
-      contractor_id:  form.contractor_id || null,
-      sale_amount:    Number(form.sale_amount),
-      buy_amount:     form.buy_amount !== '' ? Number(form.buy_amount) : null,
-      status:         form.cancelled ? 'cancelled' : 'accepted',
-      unit_type:      form.unit_type,
-      driver_visible: form.driver_visible,
-    } as any
+    try {
+      if (!form.project_code.trim()) { setFormError('案件コードを入力してください'); setSaving(false); return }
+      if (!form.project_name.trim()) { setFormError('案件名を入力してください'); setSaving(false); return }
+      if (!form.client_id) { setFormError('荷主を選択してください'); setSaving(false); return }
 
-    const result = editTarget
-      ? await updateProject(editTarget.id, payload)
-      : await createProject(payload)
+      const payload: ProjectInsert = {
+        project_code:   form.project_code,
+        project_name:   form.project_name,
+        client_id:      form.client_id,
+        contractor_id:  form.contractor_id || null,
+        sale_amount:    Number(form.sale_amount),
+        buy_amount:     form.buy_amount !== '' ? Number(form.buy_amount) : null,
+        status:         form.cancelled ? 'cancelled' : 'accepted',
+        unit_type:      form.unit_type,
+        driver_visible: form.driver_visible,
+      } as any
 
-    if (result.error) {
-      setFormError(result.error)
-    } else {
-      setModalOpen(false)
-      await load()
+      const result = editTarget
+        ? await updateProject(editTarget.id, payload)
+        : await createProject(payload)
+
+      if (result.error) {
+        setFormError(result.error)
+      } else {
+        setIsDirty(false)
+        setModalOpen(false)
+        await load()
+      }
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : '保存中にエラーが発生しました')
+    } finally {
+      setSaving(false)
     }
-    setSaving(false)
   }
 
   // 自動推論ステータスを付与した行
@@ -830,11 +850,12 @@ export default function ProjectsPage() {
           <Modal
             title={editTarget ? '案件を編集' : '案件を新規登録'}
             onClose={() => setModalOpen(false)}
+            isDirty={isDirty}
           >
-            <form onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit} noValidate>
               <ProjectFormFields
                 form={form}
-                onChange={setForm}
+                onChange={f => { setForm(f); setIsDirty(true) }}
                 clients={clients}
                 contractors={contractors}
               />

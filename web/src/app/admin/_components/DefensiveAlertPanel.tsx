@@ -320,7 +320,86 @@ function InvoiceWarningSection({ rows }: { rows: InvoiceWarningRow[] }) {
   )
 }
 
-// ── ⑤ 突発案件アラート ──────────────────────────────────
+// ── ⑤ 長期未承認通知書 ───────────────────────────────────
+
+function PendingNoticeCard({ r }: { r: PendingNoticeRow }) {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <div className="rounded-lg border border-zinc-200 overflow-hidden text-sm">
+      {/* サマリー行（クリックで展開） */}
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between px-3 py-2 bg-zinc-50 hover:bg-zinc-100 transition-colors text-left"
+      >
+        <span className="flex items-center gap-2 flex-wrap">
+          <span className="font-medium text-zinc-900">{r.contractorName}</span>
+          <span className="text-zinc-400">|</span>
+          <span className="text-zinc-600">{r.targetMonth}</span>
+          <span className="text-zinc-400">|</span>
+          <span className="font-semibold text-amber-700">{r.hoursElapsed}時間経過</span>
+        </span>
+        <span className="text-xs text-zinc-400 ml-2 shrink-0">{open ? '▲' : '▼'}</span>
+      </button>
+
+      {/* 展開詳細 */}
+      {open && (
+        <div className="border-t border-zinc-200 bg-white px-3 py-3 space-y-2">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            <dt className="text-zinc-400">ドライバー</dt>
+            <dd className="font-medium text-zinc-900">{r.contractorName}</dd>
+            <dt className="text-zinc-400">対象月</dt>
+            <dd className="text-zinc-700">{r.targetMonth.slice(0, 7).replace('-', '年')}月</dd>
+            <dt className="text-zinc-400">案件</dt>
+            <dd className="text-zinc-700">
+              {r.projectNames.length > 0 ? r.projectNames.join('・') : '－'}
+            </dd>
+            {r.email && (
+              <>
+                <dt className="text-zinc-400">メール</dt>
+                <dd className="text-zinc-600 break-all">{r.email}</dd>
+              </>
+            )}
+          </dl>
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <a
+              href={`/admin/billing?tab=payment&month=${r.targetMonth.slice(0, 7)}`}
+              className="inline-flex rounded-md bg-amber-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-amber-700"
+            >
+              確認する →
+            </a>
+            {r.phone && (
+              <>
+                <a href={`tel:${r.phone}`} className="inline-flex rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
+                  📞 電話
+                </a>
+                <a href={`sms:${r.phone}`} className="inline-flex rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50">
+                  💬 SMS
+                </a>
+              </>
+            )}
+            {!r.phone && (
+              <span className="text-xs text-zinc-400">電話番号未登録（{r.contractorName}）</span>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PendingNoticeSection({ rows }: { rows: PendingNoticeRow[] }) {
+  return (
+    <AlertSection icon="⚠️" title="長期未承認（48時間超・支払通知書）" count={rows.length} color="amber">
+      <div className="space-y-2">
+        {rows.map(r => <PendingNoticeCard key={r.noticeId} r={r} />)}
+      </div>
+    </AlertSection>
+  )
+}
+
+// ── ⑥ 突発案件アラート ──────────────────────────────────
 
 function OffMasterSection({
   rows,
@@ -508,6 +587,8 @@ export default function DefensiveAlertPanel() {
       />
 
       <InvoiceWarningSection rows={alerts.invoiceWarnings} />
+
+      <PendingNoticeSection rows={alerts.pendingNotices} />
     </div>
   )
 }

@@ -11,10 +11,14 @@ import {
   type DailyDetail,
   type DailyCashflowCalendarResult,
 } from '@/app/_actions/cashflowActions'
+import { getApprovalSummary, type ApprovalSummary } from '@/app/_actions/approvalActions'
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, Cell,
+} from 'recharts'
 
 // ── ユーティリティ ────────────────────────────────────────
 
-type CashflowTab = 'pnl' | 'client' | 'trend' | 'calendar'
+type CashflowTab = 'pnl' | 'client' | 'trend' | 'calendar' | 'approval'
 
 // 万単位で丸めてコンパクト表示（カレンダーセル用）
 function fmtAmt(n: number): string {
@@ -546,6 +550,122 @@ function CalendarTab({ yearMonth }: { yearMonth: string }) {
   )
 }
 
+// ── 承認進捗タブ ──────────────────────────────────────────
+
+function ApprovalOverviewTab({ yearMonth }: { yearMonth: string }) {
+  const [summary, setSummary] = useState<ApprovalSummary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState<string | null>(null)
+
+  useEffect(() => {
+    setLoading(true)
+    getApprovalSummary(yearMonth).then(res => {
+      if (res.error) setError(res.error)
+      else setSummary(res.data)
+      setLoading(false)
+    })
+  }, [yearMonth])
+
+  if (loading) return <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
+  if (error)   return <p className="text-sm text-red-600 bg-red-50 rounded-lg px-4 py-3">{error}</p>
+  if (!summary) return null
+
+  const pnTotal = summary.paymentNotices.pending + summary.paymentNotices.approved + summary.paymentNotices.rejected
+  const exTotal = summary.expenses.pending + summary.expenses.approved + summary.expenses.rejected
+  const wrTotal = summary.workRecords.pendingReview + summary.workRecords.approved
+
+  const chartData = [
+    {
+      name: '支払通知書',
+      承認待ち: summary.paymentNotices.pending,
+      承認済:   summary.paymentNotices.approved,
+      却下:     summary.paymentNotices.rejected,
+    },
+    {
+      name: '立替金',
+      承認待ち: summary.expenses.pending,
+      承認済:   summary.expenses.approved,
+      却下:     summary.expenses.rejected,
+    },
+    {
+      name: '勤務記録',
+      承認待ち: summary.workRecords.pendingReview,
+      承認済:   summary.workRecords.approved,
+      却下:     0,
+    },
+  ]
+
+  return (
+    <div className="space-y-6">
+      {/* Recharts 積み上げ棒グラフ */}
+      <div className="rounded-xl bg-white border border-zinc-200 px-5 py-5">
+        <h2 className="text-sm font-semibold text-zinc-700 mb-4">承認進捗（{yearMonth.replace('-', '年')}月分）</h2>
+        <ResponsiveContainer width="100%" height={240}>
+          <BarChart data={chartData} margin={{ top: 4, right: 16, left: 0, bottom: 4 }}>
+            <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+            <YAxis allowDecimals={false} tick={{ fontSize: 11 }} width={28} />
+            <Tooltip formatter={(v) => [`${v ?? 0} 件`]} />
+            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Bar dataKey="承認待ち" stackId="a" fill="#fbbf24" radius={[0,0,0,0]} />
+            <Bar dataKey="承認済"   stackId="a" fill="#34d399" radius={[0,0,0,0]} />
+            <Bar dataKey="却下"     stackId="a" fill="#f87171" radius={[4,4,0,0]} />
+          </BarChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* 数値サマリー */}
+      <div className="grid grid-cols-3 gap-4">
+        {[
+          { title: '支払通知書', pending: summary.paymentNotices.pending, approved: summary.paymentNotices.approved, rejected: summary.paymentNotices.rejected, total: pnTotal },
+          { title: '立替金',     pending: summary.expenses.pending,       approved: summary.expenses.approved,       rejected: summary.expenses.rejected,       total: exTotal },
+          { title: '勤務記録',   pending: summary.workRecords.pendingReview, approved: summary.workRecords.approved, rejected: 0,                               total: wrTotal },
+        ].map(s => (
+          <div key={s.title} className="rounded-xl bg-white border border-zinc-200 px-4 py-4 space-y-2">
+            <p className="text-xs font-semibold text-zinc-600">{s.title}</p>
+            <div className="flex items-end gap-1">
+              <span className="text-2xl font-bold text-zinc-900 tabular-nums">{s.total}</span>
+              <span className="text-xs text-zinc-400 mb-0.5">件</span>
+            </div>
+            <div className="space-y-1 text-xs">
+              <div className="flex justify-between">
+                <span className="text-amber-600">承認待ち</span>
+                <span className="font-semibold tabular-nums">{s.pending}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-emerald-600">承認済</span>
+                <span className="font-semibold tabular-nums">{s.approved}</span>
+              </div>
+              {s.rejected > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-rose-500">却下</span>
+                  <span className="font-semibold tabular-nums">{s.rejected}</span>
+                </div>
+              )}
+            </div>
+            {/* 進捗バー */}
+            {s.total > 0 && (
+              <div className="h-1.5 rounded-full bg-zinc-100 overflow-hidden flex">
+                <div style={{ width: `${(s.approved / s.total) * 100}%` }} className="bg-emerald-400" />
+                <div style={{ width: `${(s.rejected / s.total) * 100}%` }} className="bg-rose-400" />
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* 承認管理へのリンク */}
+      <div className="flex justify-end">
+        <a
+          href="/admin/approval"
+          className="inline-flex items-center gap-1 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-50 transition"
+        >
+          承認管理画面で操作する →
+        </a>
+      </div>
+    </div>
+  )
+}
+
 // ── メインページ ──────────────────────────────────────────
 
 const TABS: { key: CashflowTab; label: string }[] = [
@@ -553,6 +673,7 @@ const TABS: { key: CashflowTab; label: string }[] = [
   { key: 'client',   label: '荷主別粗利' },
   { key: 'trend',    label: '推移グラフ' },
   { key: 'calendar', label: '金額カレンダー' },
+  { key: 'approval', label: '承認進捗' },
 ]
 
 export default function CashflowPage() {
@@ -591,10 +712,11 @@ export default function CashflowPage() {
           ))}
         </div>
 
-        {tab === 'pnl'      && <PnlTab         yearMonth={yearMonth} />}
-        {tab === 'client'   && <ClientProfitTab yearMonth={yearMonth} />}
+        {tab === 'pnl'      && <PnlTab              yearMonth={yearMonth} />}
+        {tab === 'client'   && <ClientProfitTab    yearMonth={yearMonth} />}
         {tab === 'trend'    && <TrendTab />}
-        {tab === 'calendar' && <CalendarTab     yearMonth={yearMonth} />}
+        {tab === 'calendar' && <CalendarTab         yearMonth={yearMonth} />}
+        {tab === 'approval' && <ApprovalOverviewTab yearMonth={yearMonth} />}
       </div>
     </div>
   )

@@ -78,7 +78,7 @@ export async function createProject(payload: ProjectInsert): Promise<ActionResul
 
 export async function updateProject(id: string, payload: ProjectUpdate): Promise<ActionResult<ProjectRow>> {
   const tenantId = await getCurrentTenantId()
-  const supabase = await createClient()
+  const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('projects')
     .update(payload)

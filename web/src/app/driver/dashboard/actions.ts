@@ -32,50 +32,8 @@ export type AssignedProject = ProjectRow & {
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
-// dev bypass 用テスト委託先ID（鈴木次郎・免税）
-const DEV_CONTRACTOR_ID = 'cc31ee16-660a-42db-acb4-05f148a3fce8'
-
-const DEV_CONTRACTOR_MOCK: ContractorRow = {
-  id:                          DEV_CONTRACTOR_ID,
-  name:                        '開発用ドライバー',
-  email:                       'dev-driver@local',
-  contractor_type:             'individual',
-  created_at:                  new Date(0).toISOString(),
-  has_withholding:             false,
-  invoice_registration_type:   'unregistered',
-  invoice_status:              null,
-  invoice_number:              null,
-  payment_site:                30,
-  payment_type:                'monthly',
-  show_detail_switch:          false,
-  tax_category:                'exclusive',
-  tenant_id:                   'local-dev',
-  user_id:                     null,
-  phone:                       null,
-  account_holder:              null,
-  account_number:              null,
-  account_type:                null,
-  bank_branch:                 null,
-  bank_name:                   null,
-  branch_name:                 null,
-  same_person_id:              null,
-}
-
 export async function fetchMyContractor(): Promise<ActionResult<ContractorRow>> {
   try {
-    if (process.env.NODE_ENV === 'development') {
-      try {
-        const service = createServiceClient()
-        const { data, error } = await service
-          .from('contractors').select('*').eq('id', DEV_CONTRACTOR_ID).single()
-        if (!error && data) return { data, error: null }
-        console.warn('[fetchMyContractor] dev contractor not in DB — fallback mock を使用')
-      } catch (e) {
-        console.warn('[fetchMyContractor] Supabase 接続不可 — fallback mock を使用:', e)
-      }
-      return { data: DEV_CONTRACTOR_MOCK, error: null }
-    }
-
     const supabase = await createClient()
 
     const { data: { user }, error: authErr } = await supabase.auth.getUser()
