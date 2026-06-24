@@ -143,6 +143,7 @@ type WorkRecordForPayment = {
   work_date:     string
   contractor_id: string
   project_id:    string | null
+  piece_count:   number | null
   projects: {
     price_rules: { buying_price: number }[]
   } | null
@@ -249,6 +250,7 @@ export async function fetchPaymentByContractor(
         work_date,
         contractor_id,
         project_id,
+        piece_count,
         projects ( price_rules ( buying_price ) ),
         contractors (
           id,
@@ -286,7 +288,10 @@ export async function fetchPaymentByContractor(
 
     const rule = payeeMap.get(`${row.contractor_id}:${(row as any).project_id}`)
     let net: number
-    if (rule && rule.unit_price !== null && rule.payment_type === 'per_unit') {
+    if (rule && rule.unit_price !== null && rule.payment_type === 'per_piece') {
+      // 個数単価制: unit_price × piece_count
+      net = rule.unit_price * (row.piece_count ?? 1)
+    } else if (rule && rule.unit_price !== null && rule.payment_type === 'per_unit') {
       net = rule.unit_price  // 件数単価ルールあり: 1件分の単価
     } else {
       net = (row as any).projects?.price_rules?.[0]?.buying_price ?? 0
@@ -486,21 +491,22 @@ export async function generatePaymentNotice(
   // 自身の稼働記録（案件別に集計）
   const { data: workData, error: wErr } = await supabase
     .from('work_records')
-    .select('project_id, projects(price_rules(buying_price))')
+    .select('project_id, piece_count, projects(price_rules(buying_price))')
     .eq('contractor_id', contractorId)
     .eq('tenant_id', tenantId)
     .gte('work_date', fromStr)
     .lte('work_date', toStr)
   if (wErr) return { data: null, error: wErr.message }
 
-  // 案件別集計: { count, buyingPriceSum }
-  const projectAgg = new Map<string, { count: number; buyingPriceSum: number }>()
+  // 案件別集計: { count, pieceCount, buyingPriceSum }
+  const projectAgg = new Map<string, { count: number; pieceCount: number; buyingPriceSum: number }>()
   for (const w of (workData ?? []) as any[]) {
     const pid = w.project_id as string | null
     if (!pid) continue
     const buying = Number(w.projects?.price_rules?.[0]?.buying_price ?? 0)
-    const cur = projectAgg.get(pid) ?? { count: 0, buyingPriceSum: 0 }
-    projectAgg.set(pid, { count: cur.count + 1, buyingPriceSum: cur.buyingPriceSum + buying })
+    const pieces = Number(w.piece_count ?? 1)
+    const cur = projectAgg.get(pid) ?? { count: 0, pieceCount: 0, buyingPriceSum: 0 }
+    projectAgg.set(pid, { count: cur.count + 1, pieceCount: cur.pieceCount + pieces, buyingPriceSum: cur.buyingPriceSum + buying })
   }
 
   // 再委託ケース: work_source_contractor_id が指定されている案件の稼働件数を別途取得
@@ -512,40 +518,54 @@ export async function generatePaymentNotice(
       sourceContractorProjects.set(rule.work_source_contractor_id, set)
     }
   }
-  // sourceContractorId → (projectId → count)
-  const sourceWorkCounts = new Map<string, Map<string, number>>()
+  // sourceContractorId → (projectId → { count, pieceCount })
+  const sourceWorkCounts = new Map<string, Map<string, { count: number; pieceCount: number }>>()
   for (const [sourceId, projectIds] of sourceContractorProjects) {
     const { data: srcData } = await supabase
       .from('work_records')
-      .select('project_id')
+      .select('project_id, piece_count')
       .eq('contractor_id', sourceId)
       .eq('tenant_id', tenantId)
       .gte('work_date', fromStr)
       .lte('work_date', toStr)
       .in('project_id', Array.from(projectIds))
-    const counts = new Map<string, number>()
+    const counts = new Map<string, { count: number; pieceCount: number }>()
     for (const w of (srcData ?? []) as any[]) {
-      const pid = w.project_id as string
-      counts.set(pid, (counts.get(pid) ?? 0) + 1)
+      const pid    = w.project_id as string
+      const pieces = Number(w.piece_count ?? 1)
+      const cur    = counts.get(pid) ?? { count: 0, pieceCount: 0 }
+      counts.set(pid, { count: cur.count + 1, pieceCount: cur.pieceCount + pieces })
     }
     sourceWorkCounts.set(sourceId, counts)
   }
 
   // 案件ごとに支払金額・調整金を算出
-  // payee ルールがある案件: unit_price × work_count (+調整金)
-  // ルールがない案件: buying_price の合算（後方互換）
+  // per_unit: unit_price × work_record件数
+  // per_piece: unit_price × piece_count合計
+  // ルールなし: buying_price の合算（後方互換）
   let laborTaxExcluded = 0
   let totalAdjustment  = 0
   const coveredProjects = new Set<string>()
 
   for (const rule of payeeRules) {
-    if (rule.payment_type !== 'per_unit' || rule.unit_price === null) continue
+    if (rule.unit_price === null) continue
+    if (rule.payment_type !== 'per_unit' && rule.payment_type !== 'per_piece') continue
 
     let workCount: number
-    if (rule.work_source_contractor_id) {
-      workCount = sourceWorkCounts.get(rule.work_source_contractor_id)?.get(rule.project_id) ?? 0
+    if (rule.payment_type === 'per_piece') {
+      // 個数単価制: piece_count の合計を乗数とする
+      if (rule.work_source_contractor_id) {
+        workCount = sourceWorkCounts.get(rule.work_source_contractor_id)?.get(rule.project_id)?.pieceCount ?? 0
+      } else {
+        workCount = projectAgg.get(rule.project_id)?.pieceCount ?? 0
+      }
     } else {
-      workCount = projectAgg.get(rule.project_id)?.count ?? 0
+      // per_unit: work_record件数を乗数とする
+      if (rule.work_source_contractor_id) {
+        workCount = sourceWorkCounts.get(rule.work_source_contractor_id)?.get(rule.project_id)?.count ?? 0
+      } else {
+        workCount = projectAgg.get(rule.project_id)?.count ?? 0
+      }
     }
 
     const { net, adjustment } = calcPayeeAmount(rule, workCount)

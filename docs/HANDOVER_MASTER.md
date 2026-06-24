@@ -52,7 +52,7 @@
 
 * **作成日：** 2026年6月12日
 * **最終更新：** 2026年6月24日
-* **ステータス：** フェーズ2進行中・admin/driver ルーティング移行完了・5大アラート Actions 基盤実装完了・管理画面UX改善（v2.4）完了
+* **ステータス：** フェーズ2進行中・admin/driver ルーティング移行完了・5大アラート Actions 基盤実装完了・管理画面UX改善（v2.4）完了・支払計算エンジン個数制（per_piece）対応完了（v2.5）
 * **変更履歴：**
   * **v_1_0〜v_1_5：** 省略（初期設計からGASプロトタイプ完成、開発体制更新まで）
   * **v_1_6（2026年6月3日）：** 多段階委託スイッチ・端数四捨五入統一・承認フロー3段構え・スポット案件UI・源泉凍結を反映
@@ -67,6 +67,7 @@
   * **v_2_3（2026年6月21日）：** 管理画面サイドバーを3カテゴリ（日常業務・月次締め業務・マスタ設定）に再構成。「配車カレンダー」→「案件カレンダー」改名。`/admin/scan`（AIスキャン IN/OUT 分離）・`/admin/cashflow`（収支管理ビュアー）新設。`/admin/sales` を3タブに集約。`saveClientScanResult` Server Action 実装（invoices テーブルへのドラフト保存）。Cloudflare Pages デプロイ基盤（`open-next.config.ts`・`middleware.ts`・`@opennextjs/cloudflare`）整備。
   * **v_2_3_1（2026年6月21日）：** Gitコミット前セキュリティチェック規約を最重要事項（§2-6S）として明文化。自動生成成果物（`.open-next/cloudflare/next-env.mjs`）からのAPIキー漏洩防止策を永続化。発生経緯（全シークレット漏洩 → git-filter-repo による履歴書き換え → 全キーローテーション）を記録。
   * **v_2_4（2026年6月24日）：** 管理画面UX・セキュリティ・バグ修正を複数実施。①委託先マスタ削除機能追加（`projects`・`payment_notices` 参照チェック＋日本語エラー `translateDbError`）。②管理者追加を2ステップ化（現在パスワード再確認 `signInWithPassword` サーバー検証）。③委託先フォームに組織階層フィールド（`parent_contractor_id`）追加（出金ルール上部に配置、自己除外）。④インボイス登録番号フィールドを適格=必須・免税=グレーアウトに条件分岐。⑤全モーダル（荷主・委託先・案件・ドライバー・管理者編集）に未保存変更確認ダイアログ（`isDirty` ＋ `window.confirm`）実装。⑥ドライバーモーダルを委託先選択 → メール自動引き継ぎの統合フローに変更（未登録委託先のみ表示）。⑦案件キャンセルチェック時に保存ボタンが無応答になるバグを3点修正（`updateProject` を `createServiceClient` に変更・try-catch/finally 追加・`noValidate` ＋ 手動バリデーション追加）。
+  * **v_2_5（2026年6月24日）：** 支払計算エンジンに「個数制（per_piece）」を追加、統合テスト10/10 PASS確認。①DBマイグレーション（`20260624000001_add_per_piece_payment_type.sql`）：`project_payees.payment_type` の CHECK 制約を `('per_unit', 'fixed_monthly', 'per_piece')` に拡張。②`web/src/app/admin/billing/actions.ts` 修正：`fetchPaymentByContractor`・`generatePaymentNotice` 両関数に `piece_count` 取得・`per_piece` 分岐を追加（`unit_price × SUM(piece_count)` で算出）。再委託元別集計 Map でも `pieceCount` を追跡。③テストスクリプト群を新規作成（`web/scripts/` 配下）：`test-daily-allowance-flow.mjs`（日当制 ¥18,000×3件=¥54,000 検証）・`setup-ui-test-data.mjs`（UI確認用永続データ投入 TEST-01、2026-06-24〜26）・`test-core-features-automation.mjs`（4シナリオ統合テスト：個数制計算・立替金承認反映・防衛アラート検知・クリーンアップ、全10アサーション PASS）。④テスト用案件マスタ TEST-01〜TEST-10 を生成（日当制・1回制・個数制・月額固定の各 `payment_type` を網羅、`price_rules`・`project_payees` 含む）。⑤`per_piece` 計算の注意点：`payment_type='per_piece'` の場合、乗数は `work_records` の行数ではなく `SUM(piece_count)` であること。経過措置控除は税額に対して適用（`deductionRate × laborTax`、端数切り捨て）。
 
 ### 2-1. プロジェクト概要
 
