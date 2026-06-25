@@ -1294,6 +1294,14 @@ web/
 - 実行コマンド: `SUPABASE_URL=https://hbpnhbsmsuhjyrohpluu.supabase.co SUPABASE_SERVICE_ROLE_KEY=$(grep SUPABASE_SERVICE_ROLE_KEY .env.local | cut -d= -f2) node scripts/verify-approval-flow.mjs`
 - **未実施**: UI操作テスト（`npm run dev` → `/admin/billing` で承認→ロック→developer_unlock を目視確認）
 
+#### 2026-06-25（Cursor セッション追記）
+
+**実績登録の未来日付ガード追加**
+- 方針：完了報告（work_records）は当日まで。翌日以降は管理者含め登録不可
+- 理由：未来日付の先行登録後にドタキャン・悪天候等で中止した場合、データと現実が乖離するため
+- 修正：`submitWorkRecord` / `createWorkRecord` の冒頭に `work_date > todayJST` を拒否するバリデーションを追加
+- `submitOffMasterReport`（突発案件）にも同ガードを追加（完了報告は作業完了後の原則を全経路で統一）
+
 #### 2026-06-21（Claude Code セッション）
 
 **ドライバー案件フィルター設計再構築**

@@ -136,6 +136,11 @@ function resolveWorkRecordStatus(quantity: number | null | undefined): string {
 export async function createWorkRecord(
   payload: CreateWorkRecordPayload,
 ): Promise<ActionResult<{ id: string }>> {
+  const todayJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+  if (payload.date > todayJST) {
+    return { data: null, error: '完了報告は当日までしか登録できません' }
+  }
+
   const tenantId = await getCurrentTenantId()
   const db = createServiceClient() as any
   const status = resolveWorkRecordStatus(payload.quantity)
@@ -281,6 +286,11 @@ export async function submitWorkRecord(
   if (authErr || !user) return { data: null, error: '未ログインです' }
   contractorId = await resolveContractorId(user.id, user.email ?? undefined)
   if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+
+  const todayJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+  if (params.date > todayJST) {
+    return { data: null, error: '完了報告は当日までしか登録できません' }
+  }
 
   const db = createServiceClient() as any
   const existing = await findDuplicates(db, contractorId, params.projectId, params.date, tenantId)
@@ -527,6 +537,11 @@ export async function submitOffMasterReport(params: {
   if (authErr || !user) return { data: null, error: '未ログインです' }
   contractorId = await resolveContractorId(user.id, user.email ?? undefined)
   if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+
+  const todayJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+  if (params.date > todayJST) {
+    return { data: null, error: '完了報告は当日までしか登録できません' }
+  }
 
   // NOTE: project_id を null で INSERT するため、migration で DROP NOT NULL 済みであること
   const db = createServiceClient() as any

@@ -212,7 +212,11 @@ export async function fetchAdminMonthlySchedules(
     .gte('work_date', from)
     .lte('work_date', to)
 
-  if (wErr) return { data: null, error: wErr.message }
+  // work_records 取得失敗は non-fatal: workedSet を空にして schedules を返す
+  // この場合 isMissingInput・displayStatus='worked' の精度は落ちるがカレンダー自体は表示される
+  if (wErr) {
+    console.error('[fetchAdminMonthlySchedules] work_records fetch failed:', wErr.message)
+  }
 
   const workedSet = new Set(
     (workRecords ?? []).map((w: any) => {
