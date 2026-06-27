@@ -2,6 +2,7 @@
 
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -43,6 +44,8 @@ export type DailyCashflowCalendarResult = {
 export async function fetchDailyCashflowCalendar(
   month: string,
 ): Promise<ActionResult<DailyCashflowCalendarResult>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const db       = createServiceClient() as any
   const today    = todayJST()

@@ -27,11 +27,15 @@ export async function proxy(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser()
 
-  const isProtected = pathname.startsWith('/admin') || pathname.startsWith('/driver')
-  const isLoginPage = pathname === '/login'
+  const isAdminPath  = pathname.startsWith('/admin')
+  const isDriverPath = pathname.startsWith('/driver')
+  const isProtected  = isAdminPath || isDriverPath
+  const isLoginPage  = pathname === '/login'
 
-  // TODO: UI確認用一時バイパス（本番前に必ず削除すること）
-  if (process.env.NODE_ENV === 'development' && isProtected && !user) {
+  // ⚠️ 認証バイパス: 明示的に ALLOW_DEV_AUTH_BYPASS=true を設定した場合のみ有効。
+  // 本番環境ではこの環境変数を絶対に設定しないこと（NODE_ENV 依存をやめ、誤発火を防止）。
+  const authBypass = process.env.ALLOW_DEV_AUTH_BYPASS === 'true'
+  if (authBypass && isProtected && !user) {
     return supabaseResponse
   }
 
@@ -41,7 +45,10 @@ export async function proxy(request: NextRequest) {
     return NextResponse.redirect(url)
   }
 
-  if (isLoginPage && user) {
+  // ── ロール解決（master/owner = 親分、それ以外 = 子分） ──
+  // バイパス時（user 無し）はロール判定をスキップ。
+  let role: string | null = null
+  if (user) {
     const { data: userData } = await supabase
       .from('users')
       .select('role')
@@ -49,12 +56,24 @@ export async function proxy(request: NextRequest) {
       .single()
 
     const TEMP_OWNER_EMAILS = ['admin@hibiki.com']
-    const role = TEMP_OWNER_EMAILS.includes(user.email ?? '')
+    role = TEMP_OWNER_EMAILS.includes(user.email ?? '')
       ? 'master'
-      : (userData?.role ?? user.user_metadata?.role)
+      : (userData?.role ?? user.user_metadata?.role ?? 'contractor')
+  }
 
+  const isOwner = role === 'master' || role === 'owner'
+
+  // 子分が管理画面(/admin)へ到達するのをブロック（権限昇格防止）
+  if (isAdminPath && user && !isOwner) {
     const url = request.nextUrl.clone()
-    url.pathname = role === 'master' ? '/admin/dashboard' : '/driver/schedule'
+    url.pathname = '/driver/schedule'
+    return NextResponse.redirect(url)
+  }
+
+  // ログイン済みでログインページに来たらロール別ダッシュボードへ
+  if (isLoginPage && user) {
+    const url = request.nextUrl.clone()
+    url.pathname = isOwner ? '/admin/dashboard' : '/driver/schedule'
     return NextResponse.redirect(url)
   }
 

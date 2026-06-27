@@ -2,6 +2,7 @@
 
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 import { revalidatePath } from 'next/cache'
 
 type ActionResult<T = void> =
@@ -55,6 +56,8 @@ export type ApprovalSummary = {
 // approval_status が pending または unapproved の支払通知書一覧
 // ================================================================
 export async function fetchPendingPaymentNotices(): Promise<ActionResult<PendingPaymentNoticeRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   try {
     const db  = createServiceClient() as any
     const now = Date.now()
@@ -96,6 +99,8 @@ export async function fetchPendingPaymentNotices(): Promise<ActionResult<Pending
 // 支払通知書の承認・却下 + 監査ログ記録
 // ================================================================
 export async function approvePaymentNotice(noticeId: string): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient() as any
   const { error } = await db
     .from('payment_notices')
@@ -117,6 +122,8 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
 }
 
 export async function rejectPaymentNotice(noticeId: string): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient() as any
   const { error } = await db
     .from('payment_notices')
@@ -142,6 +149,8 @@ export async function rejectPaymentNotice(noticeId: string): Promise<ActionResul
 // status = 'pending_review' の勤務記録一覧
 // ================================================================
 export async function fetchPendingWorkRecords(): Promise<ActionResult<PendingWorkRecordRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   try {
     const tenantId = await getCurrentTenantId()
     const db       = createServiceClient() as any
@@ -182,6 +191,8 @@ export async function fetchPendingWorkRecords(): Promise<ActionResult<PendingWor
 // approval_history 最新100件（JOIN で委託先名・対象月を付加）
 // ================================================================
 export async function fetchApprovalHistory(): Promise<ActionResult<ApprovalHistoryRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   try {
     const db = createServiceClient() as any
 
@@ -222,6 +233,8 @@ export async function fetchApprovalHistory(): Promise<ActionResult<ApprovalHisto
 // cashflow 承認進捗タブ用の集計（yearMonth 指定）
 // ================================================================
 export async function getApprovalSummary(yearMonth: string): Promise<ActionResult<ApprovalSummary>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   try {
     const tenantId  = await getCurrentTenantId()
     const db        = createServiceClient() as any

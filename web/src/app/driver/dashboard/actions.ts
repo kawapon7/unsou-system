@@ -74,7 +74,12 @@ export async function fetchMyContractor(): Promise<ActionResult<ContractorRow>> 
   }
 }
 
-export async function fetchMyProjects(contractorId: string): Promise<ActionResult<AssignedProject[]>> {
+export async function fetchMyProjects(_clientContractorId?: string): Promise<ActionResult<AssignedProject[]>> {
+  // ⚠️ IDOR防止: クライアント渡しのIDは信頼せず、ログインセッションから本人の委託先IDを解決する。
+  const me = await fetchMyContractor()
+  if (me.error || !me.data) return { data: null, error: me.error ?? '委託先が見つかりません' }
+  const contractorId = me.data.id
+
   const supabase = await createClient()
 
   // ドライバーに個別割り当てがあればそのIDのみ取得、なければ全件
@@ -138,9 +143,14 @@ export async function updateProjectStatus(
 // ── 立替金 ────────────────────────────────────────────────
 
 export async function fetchMyExpenses(
-  contractorId: string,
+  _clientContractorId: string,
   yearMonth: string,
 ): Promise<ActionResult<ExpenseRow[]>> {
+  // ⚠️ IDOR防止: 本人の委託先IDをセッションから解決して使用する。
+  const me = await fetchMyContractor()
+  if (me.error || !me.data) return { data: null, error: me.error ?? '委託先が見つかりません' }
+  const contractorId = me.data.id
+
   const supabase = createServiceClient()
   const [y, m] = yearMonth.split('-').map(Number)
   const from = `${yearMonth}-01`
@@ -173,13 +183,18 @@ export async function fetchMyExpenses(
 export async function submitExpense(
   params: SubmitExpenseParams,
 ): Promise<ActionResult<{ id: string }>> {
+  // ⚠️ IDOR防止: 立替金は必ず本人の委託先IDに紐付ける（クライアント値は使わない）。
+  const me = await fetchMyContractor()
+  if (me.error || !me.data) return { data: null, error: me.error ?? '委託先が見つかりません' }
+  const contractorId = me.data.id
+
   const supabase = createServiceClient()
   const amountTaxExcluded = Math.round(params.amountActual / 1.1)
 
   const { data, error } = await supabase
     .from('expense_records')
     .insert({
-      contractor_id:       params.contractorId,
+      contractor_id:       contractorId,
       expense_date:        params.expenseDate,
       expense_type:        params.expenseType,
       amount_actual:       params.amountActual,

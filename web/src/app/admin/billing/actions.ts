@@ -3,6 +3,7 @@
 import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 type ClientRow     = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -159,6 +160,8 @@ type WorkRecordForPayment = {
 export async function fetchBillingByClient(
   yearMonth: string,
 ): Promise<ActionResult<BillingRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { from, to } = monthRange(yearMonth)
@@ -236,6 +239,8 @@ export async function fetchBillingByClient(
 export async function fetchPaymentByContractor(
   yearMonth: string,
 ): Promise<ActionResult<PaymentRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { from, to } = monthRange(yearMonth)
@@ -348,6 +353,8 @@ export type ExpenseApprovalRow = {
 export async function fetchExpensesForApproval(
   yearMonth: string,
 ): Promise<ActionResult<ExpenseApprovalRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const [y, m] = yearMonth.split('-').map(Number)
@@ -382,6 +389,8 @@ export async function fetchExpensesForApproval(
 export async function approveExpense(
   expenseId: string,
 ): Promise<ActionResult<{ id: string }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('expense_records')
@@ -396,6 +405,8 @@ export async function approveExpense(
 export async function rejectExpense(
   expenseId: string,
 ): Promise<ActionResult<{ id: string }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('expense_records')
@@ -431,6 +442,8 @@ export type PaymentNoticeStatus = {
 export async function fetchPaymentNoticeStatuses(
   yearMonth: string,
 ): Promise<ActionResult<PaymentNoticeStatus[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   const { data, error } = await (supabase as any)
     .from('payment_notices')
@@ -460,6 +473,8 @@ export async function generatePaymentNotice(
   contractorId: string,
   yearMonth: string,
 ): Promise<ActionResult<{ id: string; totalAmount: number }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { from, to } = monthRange(yearMonth)
@@ -627,18 +642,27 @@ export async function generatePaymentNotice(
   // 既存レコードを確認して INSERT or UPDATE
   const { data: existing } = await db
     .from('payment_notices')
-    .select('id, approval_status, locked')
+    .select('id, status, approval_status, locked')
     .eq('contractor_id', contractorId)
     .eq('notice_month', targetMonth)
     .maybeSingle()
 
-  if (existing && (existing.approval_status === 'approved' || existing.locked === true)) {
+  // 子分が承認（status='locked'）/ approved / locked のいずれかなら再生成不可
+  if (existing && (
+    existing.approval_status === 'approved' ||
+    existing.locked === true ||
+    existing.status === 'locked'
+  )) {
     return { data: null, error: '支払通知書はロック済みのため再生成できません。' }
   }
 
+  // ⚠️ 生成時点では「未承認(pending)」で起票する。承認は子分（driver）が
+  //    driver-actions.approvePaymentNotice で行い、その時に status='locked' /
+  //    approval_status='approved' へ確定する。ここで approved 固定にすると
+  //    承認フロー（合意証跡）が成立しないため厳禁。
   const noticePayload = {
     target_month:           targetMonth,
-    status:                 'approved',
+    status:                 'issued',
     subtotal_registered:    subtotalRegistered,
     tax_registered:         taxRegistered,
     subtotal_unregistered:  subtotalUnregistered,
@@ -649,7 +673,7 @@ export async function generatePaymentNotice(
     total_tax:              totalTax,
     total_deduction:        totalDeduction,
     adjustment_amount:      totalAdjustment,
-    approval_status:        'approved',
+    approval_status:        'pending',
   }
 
   let noticeId: string
@@ -679,6 +703,8 @@ export async function generatePaymentNotice(
 export async function generateAllPaymentNotices(
   yearMonth: string,
 ): Promise<ActionResult<{ generated: number; errors: string[] }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { from, to } = monthRange(yearMonth)

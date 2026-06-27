@@ -4,6 +4,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 type ProjectRow    = Database['public']['Tables']['projects']['Row']
 type ProjectInsert = Database['public']['Tables']['projects']['Insert']
@@ -23,6 +24,8 @@ type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 // ── Projects ───────────────────────────────────────────────
 
 export async function fetchProjects(): Promise<ActionResult<ProjectWithRelations[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
 
@@ -65,6 +68,8 @@ export async function fetchProjects(): Promise<ActionResult<ProjectWithRelations
 }
 
 export async function createProject(payload: ProjectInsert): Promise<ActionResult<ProjectRow>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -77,6 +82,8 @@ export async function createProject(payload: ProjectInsert): Promise<ActionResul
 }
 
 export async function updateProject(id: string, payload: ProjectUpdate): Promise<ActionResult<ProjectRow>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -93,6 +100,8 @@ export async function updateProject(id: string, payload: ProjectUpdate): Promise
 // ── Master lookups ─────────────────────────────────────────
 
 export async function fetchClientOptions(): Promise<ActionResult<Pick<ClientRow, 'id' | 'company_name'>[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = await createClient()
   const { data, error } = await supabase
@@ -105,6 +114,8 @@ export async function fetchClientOptions(): Promise<ActionResult<Pick<ClientRow,
 }
 
 export async function fetchContractorOptions(): Promise<ActionResult<Pick<ContractorRow, 'id' | 'name'>[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -143,6 +154,8 @@ export type PayeeUpsertOpts = {
 }
 
 export async function fetchProjectPayees(projectId: string): Promise<ActionResult<ProjectPayee[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
 
   const { data, error } = await supabase
@@ -195,6 +208,8 @@ export async function upsertProjectPayee(
   opts:         PayeeUpsertOpts,
   existingId?:  string,
 ): Promise<ActionResult<void>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
 
   const payload = {
@@ -226,6 +241,8 @@ export async function upsertProjectPayee(
 }
 
 export async function deleteProjectPayee(payeeId: string): Promise<ActionResult<void>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   const { error } = await (supabase as any)
     .from('project_payees')
