@@ -121,6 +121,7 @@ export type PaymentRow = {
   projectCount:       number
   buyAmountNet:       number
   taxAmount:          number
+  deductionTax:       number   // インボイス経過措置による控除額（免税・未登録のみ）
   withholdingTax:     number
   netPayment:         number
 }
@@ -164,7 +165,12 @@ export async function fetchBillingByClient(
   if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
-  const { from, to } = monthRange(yearMonth)
+
+  // 締め日は荷主ごとに異なるため、取得窓は「前月1日〜当月末日」に広げ、
+  // 行ごとに各荷主の closingRange で絞り込む（前月締め分の取りこぼし防止）。
+  const [yy, mm]  = yearMonth.split('-').map(Number)
+  const fetchFrom = new Date(yy, mm - 2, 1)
+  const fetchTo   = new Date(yy, mm, 0)
 
   const { data, error } = await supabase
     .from('work_records')
@@ -185,13 +191,16 @@ export async function fetchBillingByClient(
       )
     `)
     .eq('tenant_id', tenantId)
-    .gte('work_date', from.toISOString().slice(0, 10))
-    .lte('work_date', to.toISOString().slice(0, 10))
+    .gte('work_date', fetchFrom.toISOString().slice(0, 10))
+    .lte('work_date', fetchTo.toISOString().slice(0, 10))
 
   if (error) return { data: null, error: error.message }
 
   const rows = (data ?? []) as unknown as WorkRecordForBilling[]
-  const map = new Map<string, BillingRow>()
+
+  // 税抜き売上(net)と件数のみ集計し、税は「合計後に1回」算出する。
+  type BillingAgg = Omit<BillingRow, 'taxAmount' | 'totalGross'>
+  const map = new Map<string, BillingAgg>()
 
   for (const row of rows) {
     const client = row.projects?.clients
@@ -202,14 +211,11 @@ export async function fetchBillingByClient(
     if (workDate < cFrom || workDate > cTo) continue
 
     const net = row.projects?.price_rules?.[0]?.selling_price ?? 0
-    const tax = calcTax(net, client.tax_type)
 
     const existing = map.get(client.id)
     if (existing) {
       existing.projectCount  += 1
       existing.saleAmountNet += net
-      existing.taxAmount     += tax
-      existing.totalGross     = existing.saleAmountNet + existing.taxAmount
     } else {
       map.set(client.id, {
         clientId:          client.id,
@@ -220,16 +226,14 @@ export async function fetchBillingByClient(
         paymentSite:       client.payment_site,
         projectCount:      1,
         saleAmountNet:     net,
-        taxAmount:         tax,
-        totalGross:        net + tax,
       })
     }
   }
 
-  const result = Array.from(map.values()).map(r => ({
-    ...r,
-    totalGross: r.saleAmountNet + r.taxAmount,
-  }))
+  const result: BillingRow[] = Array.from(map.values()).map(r => {
+    const taxAmount = calcTax(r.saleAmountNet, r.taxType)
+    return { ...r, taxAmount, totalGross: r.saleAmountNet + taxAmount }
+  })
 
   return { data: result, error: null }
 }
@@ -285,7 +289,21 @@ export async function fetchPaymentByContractor(
   }
 
   const rows = (workResult.data ?? []) as unknown as WorkRecordForPayment[]
-  const map  = new Map<string, PaymentRow>()
+
+  // ── ① 委託先ごとに税抜き支払額(net)と件数のみを集計 ──
+  // 税・控除・源泉は「合計後に1回」算出する（行ごと丸めによる1円ズレ防止／generatePaymentNotice と整合）。
+  type PayeeAgg = {
+    contractorId:       string
+    name:               string
+    taxType:            string
+    invoiceType:        string
+    invoiceNumber:      string | null
+    withholdingTaxFlag: boolean
+    paymentSite:        number
+    projectCount:       number
+    buyAmountNet:       number
+  }
+  const map = new Map<string, PayeeAgg>()
 
   for (const row of rows) {
     const contractor = row.contractors
@@ -302,15 +320,10 @@ export async function fetchPaymentByContractor(
       net = (row as any).projects?.price_rules?.[0]?.buying_price ?? 0
     }
 
-    const tax         = calcTax(net, contractor.tax_category)
-    const withholding = contractor.has_withholding ? calcWithholding(net) : 0
-
     const existing = map.get(contractor.id)
     if (existing) {
-      existing.projectCount   += 1
-      existing.buyAmountNet   += net
-      existing.taxAmount      += tax
-      existing.withholdingTax += withholding
+      existing.projectCount += 1
+      existing.buyAmountNet += net
     } else {
       map.set(contractor.id, {
         contractorId:       contractor.id,
@@ -322,17 +335,24 @@ export async function fetchPaymentByContractor(
         paymentSite:        contractor.payment_site,
         projectCount:       1,
         buyAmountNet:       net,
-        taxAmount:          tax,
-        withholdingTax:     withholding,
-        netPayment:         net + tax - withholding,
       })
     }
   }
 
-  const result = Array.from(map.values()).map(r => ({
-    ...r,
-    netPayment: r.buyAmountNet + r.taxAmount - r.withholdingTax,
-  }))
+  // ── ② 合計に対して税・経過措置控除・源泉を1回ずつ算出 ──
+  // ※調整金（税込思考業者の端数補正）は generatePaymentNotice 側でのみ適用。一覧では未反映（要確認）。
+  const result: PaymentRow[] = Array.from(map.values()).map(a => {
+    const taxAmount      = calcTax(a.buyAmountNet, a.taxType)
+    const deductionTax   = Math.floor(taxAmount * calcDeductionRate(a.invoiceType, yearMonth))
+    const withholdingTax = a.withholdingTaxFlag ? calcWithholding(a.buyAmountNet) : 0
+    return {
+      ...a,
+      taxAmount,
+      deductionTax,
+      withholdingTax,
+      netPayment: a.buyAmountNet + taxAmount - deductionTax - withholdingTax,
+    }
+  })
 
   return { data: result, error: null }
 }
