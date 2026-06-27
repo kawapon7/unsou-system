@@ -1255,8 +1255,11 @@ web/
 | ✅ 完了 2026-06-20 | 本番Resendキー設定・動作確認 | `RESEND_API_KEY` を `web/.env.local` に設定。`kawapon7@gmail.com` へのテスト送信で受信確認済み |
 | ✅ 完了 2026-06-20 | 承認フロー UI 実機テスト | 全4項目 PASS。開発者アンロックUI（モーダル）を `/admin/billing` ② タブに追加。billing-actions.ts のバグ4件修正（カラム名・TZ・dev認証・未存在カラム） |
 | ✅ 完了 2026-06-21 | ドライバー案件フィルターのフィールドテスト | 別セッションで解決済み |
+| 🔴 高 | RLS/不変トリガー 本番適用（step③） | `20260627000000_rls_tighten_5tables.sql` ＋ `20260627000001_notification_logs_immutability_triggers.sql` の2本を本番DBへ適用。手順: `docs/指示書_RLS_step2_step3.md` §5（バックアップ→ステージング→本番→スモーク）。人間作業 |
+| 🟡 中 | テナント分離 F0 実装 | `docs/superpowers/plans/2026-06-27-tenant-isolation-phase0.md`。B社導入前まで。出発点=Task0でステージング実査→A社正準UUID確定→計画内 `<TENANT_A_UUID>` 置換→Cursor実装。挙動不変 |
 | 🟡 中 | 本番環境構築 | Cloudflare Pages にデプロイ。環境変数（下記）を設定する |
-| 🟡 中 | 本番 tenant_id 設定 | 本番ユーザーの `user_metadata.tenant_id` を設定する手順が未整備 |
+| 🟡 中 | 本番 tenant_id 設定 | ⚠️方針変更: `user_metadata` ではなく **`app_metadata.tenant_id`** に設定（本人改変不能のため）。F0 の Task7 スクリプト `scripts/backfill-app-metadata-tenant.mjs` で一括設定する設計 |
+| 🟡 中 | main統合 | `fix/p0-security-hardening` を main へ merge/push/PR（未実施・外向き操作） |
 | 🟢 低 | フィールドテスト後 UX 改善 | フィードバック待ち。新機能追加はここまで待つ |
 
 ### 5-3. 現在の実装状況（フェーズ2 進行中）
@@ -1285,6 +1288,22 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-06-27（Claude Code + Cursor セッション）
+
+すべて branch `fix/p0-security-hardening`（main未マージ）。実装はCursor(Sonnet4.6)、指示書作成・レビューはClaude Code。
+
+**セキュリティ/バグ修正（実装・検証済）**
+- `32da878` RLS強化: 対象5テーブル(contractors/expense_records/schedules/notification_logs/driver_project_assignments)を deny-by-default 化（pg_policies走査で全ポリシー動的DROP）。**※マイグレーション作成のみ・本番未適用**
+- `ff78764` `notification_logs` 不変性トリガー追加（UPDATE/DELETE全ロール禁止）。RLS deny依存だとservice_roleで素通りする穴を塞ぐ。**※本番未適用**
+- `4d3bc75` `payment_notices.locked_at` を driver承認時にセット（未記録バグ）／ `parseVoiceIntent` に `requireAuth` 追加（認証ゼロでGemini API消費可だった穴を塞ぐ）。tsc PASS
+- 指示書: `docs/指示書_RLS_step2_step3.md` / `docs/指示書_notification_logs不変トリガー.md` / `docs/指示書_小バグ2件_locked_atと音声認証.md`
+
+**マルチテナント分離 設計確定（実装はB社導入前）**
+- 方式決定: **共有DB + Postgres RLSで強制**（DB物理分割は不採用）。service_roleは開発者サーバー内のみ・各社管理者は持たない。テナント=導入企業(A社/B社/C社)。
+- 設計書 `b7d85e3` `docs/superpowers/specs/2026-06-27-tenant-isolation-rls-design.md`（5フェーズF0-F4・各独立投入可・失敗時fail-closed）。
+- F0実装計画 `8cd59fe` `docs/superpowers/plans/2026-06-27-tenant-isolation-phase0.md`（tenant_idをUUID NOT NULL統一+companies FK・A社へbackfill・app_metadata移行）。**未実装・未適用（計画のみ）**。
+- 判明した要修正: `user_metadata.tenant_id`は本人改変可→`app_metadata`へ。`tenant_id`型不統一(TEXT 'local-dev' vs dpaはuuid)・請求支払系に欠落。`company_id`(旧概念)残存→F3で撤去。
 
 #### 2026-06-20（Claude Code セッション）
 
