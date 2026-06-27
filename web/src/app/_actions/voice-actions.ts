@@ -7,6 +7,7 @@ import {
 } from '@google/generative-ai'
 import { createClient }        from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { requireAuth }         from '@/utils/auth'
 
 // ── 公開型 ────────────────────────────────────────────────
 
@@ -104,6 +105,12 @@ const SYSTEM_PROMPT = `あなたは日本の運送業向け音声アシスタン
 export async function parseVoiceIntent(
   transcript: string,
 ): Promise<VoiceIntentResult> {
+  // 認証必須（未ログインからの Gemini API 消費を防止）
+  const auth = await requireAuth()
+  if (!auth.ok) {
+    return { intent: 'unknown', replyMessage: '音声機能の利用にはログインが必要です。' }
+  }
+
   const apiKey = process.env.GEMINI_API_KEY
   if (!apiKey) {
     return {

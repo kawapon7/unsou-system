@@ -153,7 +153,12 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
   // （表示・管理画面は approval_status を参照するため両列を揃える）
   const { error: updateErr } = await db
     .from('payment_notices')
-    .update({ status: 'locked', approval_status: 'approved', locked: true })
+    .update({
+      status:          'locked',
+      approval_status: 'approved',
+      locked:          true,
+      locked_at:       new Date().toISOString(),  // 承認確定時刻を記録（監査用）
+    })
     .eq('id', noticeId)
     .eq('contractor_id', contractorId)
 
