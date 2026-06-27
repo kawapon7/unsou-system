@@ -122,6 +122,7 @@ export type PaymentRow = {
   buyAmountNet:       number
   taxAmount:          number
   deductionTax:       number   // インボイス経過措置による控除額（免税・未登録のみ）
+  adjustment:         number   // 税込思考業者の端数補正（inclusive＋調整有効の payee のみ）
   withholdingTax:     number
   netPayment:         number
 }
@@ -304,12 +305,15 @@ export async function fetchPaymentByContractor(
     buyAmountNet:       number
   }
   const map = new Map<string, PayeeAgg>()
+  // 調整金算出用: contractorId → (projectId → { count, pieceCount })
+  const workAgg = new Map<string, Map<string, { count: number; pieceCount: number }>>()
 
   for (const row of rows) {
     const contractor = row.contractors
     if (!contractor) continue
 
-    const rule = payeeMap.get(`${row.contractor_id}:${(row as any).project_id}`)
+    const projectId = (row as any).project_id as string | null
+    const rule = payeeMap.get(`${row.contractor_id}:${projectId}`)
     let net: number
     if (rule && rule.unit_price !== null && rule.payment_type === 'per_piece') {
       // 個数単価制: unit_price × piece_count
@@ -318,6 +322,14 @@ export async function fetchPaymentByContractor(
       net = rule.unit_price  // 件数単価ルールあり: 1件分の単価
     } else {
       net = (row as any).projects?.price_rules?.[0]?.buying_price ?? 0
+    }
+
+    // 案件別の件数・個数を集計（調整金計算に使用）
+    if (projectId) {
+      const byProject = workAgg.get(contractor.id) ?? new Map<string, { count: number; pieceCount: number }>()
+      const cur = byProject.get(projectId) ?? { count: 0, pieceCount: 0 }
+      byProject.set(projectId, { count: cur.count + 1, pieceCount: cur.pieceCount + (row.piece_count ?? 1) })
+      workAgg.set(contractor.id, byProject)
     }
 
     const existing = map.get(contractor.id)
@@ -339,18 +351,41 @@ export async function fetchPaymentByContractor(
     }
   }
 
-  // ── ② 合計に対して税・経過措置控除・源泉を1回ずつ算出 ──
-  // ※調整金（税込思考業者の端数補正）は generatePaymentNotice 側でのみ適用。一覧では未反映（要確認）。
+  // payee ルールを委託先ごとにまとめる（調整金算出用）
+  const rulesByContractor = new Map<string, PayeeRule[]>()
+  for (const rule of payeeMap.values()) {
+    const list = rulesByContractor.get(rule.contractor_id) ?? []
+    list.push(rule)
+    rulesByContractor.set(rule.contractor_id, list)
+  }
+
+  // ── ② 合計に対して税・経過措置控除・源泉・調整金を1回ずつ算出 ──
   const result: PaymentRow[] = Array.from(map.values()).map(a => {
     const taxAmount      = calcTax(a.buyAmountNet, a.taxType)
     const deductionTax   = Math.floor(taxAmount * calcDeductionRate(a.invoiceType, yearMonth))
     const withholdingTax = a.withholdingTaxFlag ? calcWithholding(a.buyAmountNet) : 0
+
+    // 調整金: inclusive＋調整有効の payee ルールについて端数補正を加算。
+    // ※再委託（work_source_contractor_id 指定）は一覧では未対応（確定通知書側で算出）。
+    let adjustment = 0
+    const projAgg = workAgg.get(a.contractorId)
+    for (const rule of rulesByContractor.get(a.contractorId) ?? []) {
+      if (rule.unit_price === null) continue
+      if (rule.payment_type !== 'per_unit' && rule.payment_type !== 'per_piece') continue
+      if (rule.work_source_contractor_id) continue
+      const agg = projAgg?.get(rule.project_id)
+      if (!agg) continue
+      const workCount = rule.payment_type === 'per_piece' ? agg.pieceCount : agg.count
+      adjustment += calcPayeeAmount(rule, workCount).adjustment
+    }
+
     return {
       ...a,
       taxAmount,
       deductionTax,
+      adjustment,
       withholdingTax,
-      netPayment: a.buyAmountNet + taxAmount - deductionTax - withholdingTax,
+      netPayment: a.buyAmountNet + taxAmount - deductionTax + adjustment - withholdingTax,
     }
   })
 
