@@ -80,7 +80,8 @@ export async function fetchMyProjects(_clientContractorId?: string): Promise<Act
   if (me.error || !me.data) return { data: null, error: me.error ?? '委託先が見つかりません' }
   const contractorId = me.data.id
 
-  const supabase = await createClient()
+  // データ読取りは service_role 経由に統一（RLS非依存）。所有権は contractor_id で明示担保。
+  const supabase = createServiceClient()
 
   // ドライバーに個別割り当てがあればそのIDのみ取得、なければ全件
   const { data: assignments } = await supabase
