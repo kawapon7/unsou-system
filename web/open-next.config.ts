@@ -16,9 +16,8 @@ const config: OpenNextConfig = {
 
   middleware: {
     external: true,
-    runtime: "node",
     override: {
-      wrapper: "cloudflare-node",
+      wrapper: "cloudflare-edge",
       converter: "edge",
       proxyExternalRequest: "fetch",
     },
