@@ -65,6 +65,7 @@
   * **v_2_3_1（2026年6月21日）：** Gitコミット前セキュリティチェック規約を最重要事項（§2-6S）として明文化。自動生成成果物（`.open-next/cloudflare/next-env.mjs`）からのAPIキー漏洩防止策を永続化。発生経緯（全シークレット漏洩 → git-filter-repo による履歴書き換え → 全キーローテーション）を記録。
   * **v_2_4（2026年6月24日）：** 管理画面UX・セキュリティ・バグ修正を複数実施。①委託先マスタ削除機能追加（`projects`・`payment_notices` 参照チェック＋日本語エラー `translateDbError`）。②管理者追加を2ステップ化（現在パスワード再確認 `signInWithPassword` サーバー検証）。③委託先フォームに組織階層フィールド（`parent_contractor_id`）追加（出金ルール上部に配置、自己除外）。④インボイス登録番号フィールドを適格=必須・免税=グレーアウトに条件分岐。⑤全モーダル（荷主・委託先・案件・ドライバー・管理者編集）に未保存変更確認ダイアログ（`isDirty` ＋ `window.confirm`）実装。⑥ドライバーモーダルを委託先選択 → メール自動引き継ぎの統合フローに変更（未登録委託先のみ表示）。⑦案件キャンセルチェック時に保存ボタンが無応答になるバグを3点修正（`updateProject` を `createServiceClient` に変更・try-catch/finally 追加・`noValidate` ＋ 手動バリデーション追加）。
   * **v_2_5（2026年6月24日）：** 支払計算エンジンに「個数制（per_piece）」を追加、統合テスト10/10 PASS確認。①DBマイグレーション（`20260624000001_add_per_piece_payment_type.sql`）：`project_payees.payment_type` の CHECK 制約を `('per_unit', 'fixed_monthly', 'per_piece')` に拡張。②`web/src/app/admin/billing/actions.ts` 修正：`fetchPaymentByContractor`・`generatePaymentNotice` 両関数に `piece_count` 取得・`per_piece` 分岐を追加（`unit_price × SUM(piece_count)` で算出）。再委託元別集計 Map でも `pieceCount` を追跡。③テストスクリプト群を新規作成（`web/scripts/` 配下）：`test-daily-allowance-flow.mjs`（日当制 ¥18,000×3件=¥54,000 検証）・`setup-ui-test-data.mjs`（UI確認用永続データ投入 TEST-01、2026-06-24〜26）・`test-core-features-automation.mjs`（4シナリオ統合テスト：個数制計算・立替金承認反映・防衛アラート検知・クリーンアップ、全10アサーション PASS）。④テスト用案件マスタ TEST-01〜TEST-10 を生成（日当制・1回制・個数制・月額固定の各 `payment_type` を網羅、`price_rules`・`project_payees` 含む）。⑤`per_piece` 計算の注意点：`payment_type='per_piece'` の場合、乗数は `work_records` の行数ではなく `SUM(piece_count)` であること。経過措置控除は税額に対して適用（`deductionRate × laborTax`、端数切り捨て）。
+  * **v_3_1（2026年7月1日）：** 本番デプロイを **Cloudflare Pages → Workers に移行**（Pagesは全ルート404のため）。`@opennextjs/cloudflare` がWorkers専用である点・`useSearchParams()` のSuspense必須・`admin/layout.tsx` の `force-dynamic` 化を §2-2-2b に追記。**認証バイパス事故**（`.env.local` の `ALLOW_DEV_AUTH_BYPASS=true` がビルドに焼き込まれ本番でバイパス有効化）と恒久対策を §2-6S に記録。新本番URL `https://unsou-system.kawapon7.workers.dev`。
 
 ### 2-1. プロジェクト概要
 
@@ -106,7 +107,7 @@
 #### 2-2-1. 技術スタック
 * フロントエンド：React / Next.js（WebアプリUI）
 * バックエンド・DB：Supabase（認証・データベース）
-* ホスティング：Cloudflare Pages（商用利用無料・帯域無制限）
+* ホスティング：**Cloudflare Workers**（OpenNext `@opennextjs/cloudflare`。※Pagesから2026-07-01に移行。後述2-2-3参照）
 * PDF出力：React-PDF等（請求書・明細生成：その都度生成方式）
 * グラフ：Recharts等（ダッシュボード可視化）
 * 開発環境：Cursor + Claude（AIコーディング）
@@ -116,6 +117,18 @@
 * Webアプリ（ブラウザで動作、インストール不要）
 * 親分：PCブラウザ中心（ダッシュボードのみスマホ対応）
 * 子分：スマホブラウザ完結
+
+#### 2-2-2b. デプロイ構成（Cloudflare Workers｜2026-07-01〜）
+
+> **重要：Pages から Workers に移行済み。** `@opennextjs/cloudflare` v1.20.1 は **Workers 専用アダプタ**で、Pages 形式（`_worker.js` ディレクトリ）を出力しない。Pages で運用していたため全ルート404になっていた。
+
+* **本番URL**：`https://unsou-system.kawapon7.workers.dev`（旧 `*.pages.dev` は404のまま）
+* **デプロイ**：`web/` で `npm run deploy`（＝`ALLOW_DEV_AUTH_BYPASS=false opennextjs-cloudflare build && opennextjs-cloudflare deploy`）。要 `CLOUDFLARE_API_TOKEN`（Workers Scripts:Edit）＋`CLOUDFLARE_ACCOUNT_ID`。
+* **ローカルプレビュー**：`npm run preview`（＝`opennextjs-cloudflare build && wrangler dev`）
+* **設定**：`web/wrangler.toml` に `main=.open-next/worker.js` と `[assets] directory=.open-next/assets, binding=ASSETS`。
+* **シークレット**：`wrangler secret put <NAME>` で Worker に投入（NEXT_PUBLIC_SUPABASE_URL/ANON_KEY/SUPABASE_SERVICE_ROLE_KEY/ENCRYPTION_KEY/GEMINI_API_KEY/RESEND_API_KEY）。Pagesダッシュボードの変数は引き継がれない。
+* **自動デプロイ**：旧Pages連携は無効。main push 時の自動化は Workers Builds の再設定が必要（未対応）。
+* **ビルド前提**：`useSearchParams()` 使用ページは `<Suspense>` 境界必須（無いと `next build` が失敗し worker 未生成→404）。admin配下は `admin/layout.tsx` で一括Suspenseラップ＋`force-dynamic`（認証ガードのバイパス防止）で対応済み。
 
 #### 2-2-3. データ保存
 * Supabase（クラウドDB）に保存
@@ -167,7 +180,7 @@
 
 ##### 2-2-7-3. 環境変数の管理
 * `ENCRYPTION_KEY`（32バイト） は `.env.local` にのみ保持し、Gitリポジトリへのコミットを禁止する（`.gitignore` で管理）。
-* 本番環境（Cloudflare Pages）ではダッシュボードの環境変数設定から注入する。
+* 本番環境（Cloudflare Workers）では `wrangler secret put <NAME>` で Worker のシークレットとして注入する（Pagesダッシュボードの変数は移行後は使われない）。
 
 ### 2-3. 管理画面（admin）の設計（v2.3更新）
 
@@ -524,6 +537,13 @@ git diff --cached | grep -E "SERVICE_ROLE_KEY|GEMINI_API_KEY|RESEND_API_KEY|ENCR
 #### ステップ3：純粋なソースコード差分のみのステージング
 
 一括追加（`git add .` や `git add -A`）を盲目的に実行せず、変更されたソースコードの純粋な差分だけを厳選してコミット対象とすること。自動生成ファイルは絶対に巻き込んではならない。
+
+#### ⚠️ 追加事故（2026-07-01）：`.env.local` のフラグがビルドに焼き込まれ本番で認証バイパス
+
+`.env.local` の `ALLOW_DEV_AUTH_BYPASS=true` が **ローカルビルド経由で Worker にバンドルされ、本番で認証バイパスが有効化**していた（未ログインで `/admin` に親分権限アクセス可能だった）。「ダッシュボードに設定しなければ安全」という思い込みが盲点で、**ローカルビルドが `.env.local` を取り込む**経路を見落としていた。
+* **教訓**：`.env.local` はシークレットだけでなく**挙動を変えるフラグも本番ビルドに混入する**。デプロイ用ビルドは必ず安全側の値を強制すること。
+* **恒久対策**：`package.json` の `deploy` で `ALLOW_DEV_AUTH_BYPASS=false` を前置（Next は既存 process.env を上書きしないため確実に効く）＋ `.env.local` も既定 `false`。
+* **検証**：デプロイ後は必ず未ログインで `/admin/dashboard` にアクセスし `/login` へ307リダイレクトされることを確認する。
 
 ```bash
 # NG: git add .       ← ビルド成果物を巻き込む危険あり
@@ -1252,11 +1272,14 @@ web/
 | ✅ 完了 2026-06-20 | 本番Resendキー設定・動作確認 | `RESEND_API_KEY` を `web/.env.local` に設定。`kawapon7@gmail.com` へのテスト送信で受信確認済み |
 | ✅ 完了 2026-06-20 | 承認フロー UI 実機テスト | 全4項目 PASS。開発者アンロックUI（モーダル）を `/admin/billing` ② タブに追加。billing-actions.ts のバグ4件修正（カラム名・TZ・dev認証・未存在カラム） |
 | ✅ 完了 2026-06-21 | ドライバー案件フィルターのフィールドテスト | 別セッションで解決済み |
-| 🔴 高 | RLS/不変トリガー 本番適用（step③） | `20260627000000_rls_tighten_5tables.sql` ＋ `20260627000001_notification_logs_immutability_triggers.sql` の2本を本番DBへ適用。手順: `docs/指示書_RLS_step2_step3.md` §5（バックアップ→ステージング→本番→スモーク）。人間作業 |
+| ✅ 完了 2026-06-30 | RLS/不変トリガー 本番適用（step③） | 2本とも本番DB適用済み |
+| ✅ 完了 2026-07-01 | 本番環境構築 | **Cloudflare Workers** にデプロイ（Pagesは404のため移行）。`https://unsou-system.kawapon7.workers.dev`。シークレット6つ投入済み。詳細は §2-2-2b |
+| ✅ 完了 2026-07-01 | main統合 | `fix/p0-security-hardening` を main へマージ済み（`eb749a5`）。Workers移行修正は `bf648f4` |
 | 🟡 中 | テナント分離 F0 実装 | `docs/superpowers/plans/2026-06-27-tenant-isolation-phase0.md`。B社導入前まで。出発点=Task0でステージング実査→A社正準UUID確定→計画内 `<TENANT_A_UUID>` 置換→Cursor実装。挙動不変 |
-| 🟡 中 | 本番環境構築 | Cloudflare Pages にデプロイ。環境変数（下記）を設定する |
+| 🔴 高 | 本番ユーザー作成・実ログイン確認 | Supabase Auth でA社ユーザー作成→`app_metadata.tenant_id` 設定→本番URLで実ログイン確認（ユーザー皆無で未検証） |
+| 🔴 高 | APIキー/トークンのローテーション | 2026-07-01セッションでチャットに各種キー露出。Cloudflare token/Supabase/Gemini/Resend を再発行 |
+| 🟡 中 | 自動デプロイ再設定 | main push 時の自動デプロイは旧Pages連携のため**現在無効**。Workers Builds で再設定 |
 | 🟡 中 | 本番 tenant_id 設定 | ⚠️方針変更: `user_metadata` ではなく **`app_metadata.tenant_id`** に設定（本人改変不能のため）。F0 の Task7 スクリプト `scripts/backfill-app-metadata-tenant.mjs` で一括設定する設計 |
-| 🟡 中 | main統合 | `fix/p0-security-hardening` を main へ merge/push/PR（未実施・外向き操作） |
 | 🟢 低 | フィールドテスト後 UX 改善 | フィードバック待ち。新機能追加はここまで待つ |
 
 ### 5-3. 現在の実装状況（フェーズ2 進行中）
@@ -1281,7 +1304,7 @@ web/
 | admin 配車カレンダー（月/週/日） | ✅ 完了 | データ反映確認済み |
 | **ユーザー管理画面** | ✅ 完了 | admin/driver アカウント作成・編集・削除。`/admin/users` |
 | **ドライバー別案件フィルター** | ✅ 完了 | 管理者が✅でドライバーごとに表示案件を設定。DB適用済み |
-| 本番デプロイ（Cloudflare Pages） | 🔲 未実施 | |
+| 本番デプロイ（Cloudflare Workers） | ✅ 完了 2026-07-01 | `https://unsou-system.kawapon7.workers.dev`。Pagesから移行（§2-2-2b） |
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
