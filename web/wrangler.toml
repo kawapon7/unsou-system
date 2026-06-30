@@ -1,11 +1,14 @@
 name = "unsou-system"
+main = ".open-next/worker.js"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
-# @opennextjs/cloudflare のビルド出力先
-pages_build_output_dir = ".open-next/cloudflare"
+# @opennextjs/cloudflare は Cloudflare Workers 向けに出力する。
+# Pages 形式(_worker.js ディレクトリ)ではなく worker.js + assets を使う。
+[assets]
+directory = ".open-next/assets"
+binding = "ASSETS"
 
-[vars]
-# ダッシュボードの Environment Variables で設定する機密情報はここに書かない
-# NEXT_PUBLIC_* 変数のみ必要な場合はここに追記してもよいが、
-# 通常は Cloudflare Pages ダッシュボードで設定すること
+# 機密情報(SERVICE_ROLE_KEY/ENCRYPTION_KEY 等)はここに書かず、
+# `wrangler secret put <NAME>` で Worker のシークレットとして設定すること。
+# NEXT_PUBLIC_* はミドルウェア/サーバで runtime 参照されるため Worker 側にも必要。
