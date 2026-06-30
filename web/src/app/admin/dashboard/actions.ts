@@ -2,6 +2,7 @@
 
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -96,6 +97,8 @@ export async function fetchCashflowSummary(
   period: PeriodType,
   refDate: string,           // 月次='YYYY-MM', 週次/日次='YYYY-MM-DD'
 ): Promise<ActionResult<CashflowSummary>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
 
   let invoiceFilter: { from: string; to: string }
@@ -170,6 +173,8 @@ export async function fetchTimelineIn(
   period: PeriodType,
   refDate: string,
 ): Promise<ActionResult<TimelineInRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
 
   let query = supabase
@@ -207,6 +212,8 @@ export async function fetchTimelineOut(
   period: PeriodType,
   refDate: string,
 ): Promise<ActionResult<TimelineOutRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
 
   let query = supabase
@@ -245,6 +252,8 @@ export async function fetchTimelineOut(
 export async function fetchAlerts(
   yearMonth: string,
 ): Promise<ActionResult<AlertData>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
 
   const { count } = await supabase
@@ -262,6 +271,8 @@ export async function fetchAlerts(
 // ── 月別トレンド（過去12ヶ月） ───────────────────────────
 
 export async function fetchMonthlyTrend(): Promise<ActionResult<MonthlyTrendRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   const months = pastMonths(12)
 
@@ -365,6 +376,8 @@ async function querySchedulesForMonth(
 export async function fetchScheduleSummary(
   yearMonth: string,
 ): Promise<ActionResult<ScheduleSummary>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const db       = createServiceClient() as any
   const today    = todayJST()
@@ -397,6 +410,8 @@ export async function fetchScheduleSummary(
 export async function fetchProjectBreakdown(
   yearMonth: string,
 ): Promise<ActionResult<ProjectBreakdownRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const db       = createServiceClient() as any
   const today    = todayJST()
@@ -460,6 +475,8 @@ export async function fetchProjectBreakdown(
 }
 
 export async function fetchScheduleTrend(): Promise<ActionResult<ScheduleTrendRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const db       = createServiceClient() as any
   const today    = todayJST()

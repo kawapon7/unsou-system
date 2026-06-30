@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 import {
   parseGoogleFormCsv,
   parseGoogleSheetRows,
@@ -136,6 +137,9 @@ function resolveWorkRecordStatus(quantity: number | null | undefined): string {
 export async function createWorkRecord(
   payload: CreateWorkRecordPayload,
 ): Promise<ActionResult<{ id: string }>> {
+  // 管理者専用（他人の委託先IDを指定して登録できるため owner 必須）
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const todayJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
   if (payload.date > todayJST) {
     return { data: null, error: '完了報告は当日までしか登録できません' }

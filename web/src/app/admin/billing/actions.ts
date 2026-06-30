@@ -3,6 +3,7 @@
 import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 type ClientRow     = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -120,6 +121,8 @@ export type PaymentRow = {
   projectCount:       number
   buyAmountNet:       number
   taxAmount:          number
+  deductionTax:       number   // インボイス経過措置による控除額（免税・未登録のみ）
+  adjustment:         number   // 税込思考業者の端数補正（inclusive＋調整有効の payee のみ）
   withholdingTax:     number
   netPayment:         number
 }
@@ -159,9 +162,16 @@ type WorkRecordForPayment = {
 export async function fetchBillingByClient(
   yearMonth: string,
 ): Promise<ActionResult<BillingRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
-  const { from, to } = monthRange(yearMonth)
+
+  // 締め日は荷主ごとに異なるため、取得窓は「前月1日〜当月末日」に広げ、
+  // 行ごとに各荷主の closingRange で絞り込む（前月締め分の取りこぼし防止）。
+  const [yy, mm]  = yearMonth.split('-').map(Number)
+  const fetchFrom = new Date(yy, mm - 2, 1)
+  const fetchTo   = new Date(yy, mm, 0)
 
   const { data, error } = await supabase
     .from('work_records')
@@ -182,13 +192,16 @@ export async function fetchBillingByClient(
       )
     `)
     .eq('tenant_id', tenantId)
-    .gte('work_date', from.toISOString().slice(0, 10))
-    .lte('work_date', to.toISOString().slice(0, 10))
+    .gte('work_date', fetchFrom.toISOString().slice(0, 10))
+    .lte('work_date', fetchTo.toISOString().slice(0, 10))
 
   if (error) return { data: null, error: error.message }
 
   const rows = (data ?? []) as unknown as WorkRecordForBilling[]
-  const map = new Map<string, BillingRow>()
+
+  // 税抜き売上(net)と件数のみ集計し、税は「合計後に1回」算出する。
+  type BillingAgg = Omit<BillingRow, 'taxAmount' | 'totalGross'>
+  const map = new Map<string, BillingAgg>()
 
   for (const row of rows) {
     const client = row.projects?.clients
@@ -199,14 +212,11 @@ export async function fetchBillingByClient(
     if (workDate < cFrom || workDate > cTo) continue
 
     const net = row.projects?.price_rules?.[0]?.selling_price ?? 0
-    const tax = calcTax(net, client.tax_type)
 
     const existing = map.get(client.id)
     if (existing) {
       existing.projectCount  += 1
       existing.saleAmountNet += net
-      existing.taxAmount     += tax
-      existing.totalGross     = existing.saleAmountNet + existing.taxAmount
     } else {
       map.set(client.id, {
         clientId:          client.id,
@@ -217,16 +227,14 @@ export async function fetchBillingByClient(
         paymentSite:       client.payment_site,
         projectCount:      1,
         saleAmountNet:     net,
-        taxAmount:         tax,
-        totalGross:        net + tax,
       })
     }
   }
 
-  const result = Array.from(map.values()).map(r => ({
-    ...r,
-    totalGross: r.saleAmountNet + r.taxAmount,
-  }))
+  const result: BillingRow[] = Array.from(map.values()).map(r => {
+    const taxAmount = calcTax(r.saleAmountNet, r.taxType)
+    return { ...r, taxAmount, totalGross: r.saleAmountNet + taxAmount }
+  })
 
   return { data: result, error: null }
 }
@@ -236,6 +244,8 @@ export async function fetchBillingByClient(
 export async function fetchPaymentByContractor(
   yearMonth: string,
 ): Promise<ActionResult<PaymentRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { from, to } = monthRange(yearMonth)
@@ -280,13 +290,30 @@ export async function fetchPaymentByContractor(
   }
 
   const rows = (workResult.data ?? []) as unknown as WorkRecordForPayment[]
-  const map  = new Map<string, PaymentRow>()
+
+  // ── ① 委託先ごとに税抜き支払額(net)と件数のみを集計 ──
+  // 税・控除・源泉は「合計後に1回」算出する（行ごと丸めによる1円ズレ防止／generatePaymentNotice と整合）。
+  type PayeeAgg = {
+    contractorId:       string
+    name:               string
+    taxType:            string
+    invoiceType:        string
+    invoiceNumber:      string | null
+    withholdingTaxFlag: boolean
+    paymentSite:        number
+    projectCount:       number
+    buyAmountNet:       number
+  }
+  const map = new Map<string, PayeeAgg>()
+  // 調整金算出用: contractorId → (projectId → { count, pieceCount })
+  const workAgg = new Map<string, Map<string, { count: number; pieceCount: number }>>()
 
   for (const row of rows) {
     const contractor = row.contractors
     if (!contractor) continue
 
-    const rule = payeeMap.get(`${row.contractor_id}:${(row as any).project_id}`)
+    const projectId = (row as any).project_id as string | null
+    const rule = payeeMap.get(`${row.contractor_id}:${projectId}`)
     let net: number
     if (rule && rule.unit_price !== null && rule.payment_type === 'per_piece') {
       // 個数単価制: unit_price × piece_count
@@ -297,15 +324,18 @@ export async function fetchPaymentByContractor(
       net = (row as any).projects?.price_rules?.[0]?.buying_price ?? 0
     }
 
-    const tax         = calcTax(net, contractor.tax_category)
-    const withholding = contractor.has_withholding ? calcWithholding(net) : 0
+    // 案件別の件数・個数を集計（調整金計算に使用）
+    if (projectId) {
+      const byProject = workAgg.get(contractor.id) ?? new Map<string, { count: number; pieceCount: number }>()
+      const cur = byProject.get(projectId) ?? { count: 0, pieceCount: 0 }
+      byProject.set(projectId, { count: cur.count + 1, pieceCount: cur.pieceCount + (row.piece_count ?? 1) })
+      workAgg.set(contractor.id, byProject)
+    }
 
     const existing = map.get(contractor.id)
     if (existing) {
-      existing.projectCount   += 1
-      existing.buyAmountNet   += net
-      existing.taxAmount      += tax
-      existing.withholdingTax += withholding
+      existing.projectCount += 1
+      existing.buyAmountNet += net
     } else {
       map.set(contractor.id, {
         contractorId:       contractor.id,
@@ -317,17 +347,47 @@ export async function fetchPaymentByContractor(
         paymentSite:        contractor.payment_site,
         projectCount:       1,
         buyAmountNet:       net,
-        taxAmount:          tax,
-        withholdingTax:     withholding,
-        netPayment:         net + tax - withholding,
       })
     }
   }
 
-  const result = Array.from(map.values()).map(r => ({
-    ...r,
-    netPayment: r.buyAmountNet + r.taxAmount - r.withholdingTax,
-  }))
+  // payee ルールを委託先ごとにまとめる（調整金算出用）
+  const rulesByContractor = new Map<string, PayeeRule[]>()
+  for (const rule of payeeMap.values()) {
+    const list = rulesByContractor.get(rule.contractor_id) ?? []
+    list.push(rule)
+    rulesByContractor.set(rule.contractor_id, list)
+  }
+
+  // ── ② 合計に対して税・経過措置控除・源泉・調整金を1回ずつ算出 ──
+  const result: PaymentRow[] = Array.from(map.values()).map(a => {
+    const taxAmount      = calcTax(a.buyAmountNet, a.taxType)
+    const deductionTax   = Math.floor(taxAmount * calcDeductionRate(a.invoiceType, yearMonth))
+    const withholdingTax = a.withholdingTaxFlag ? calcWithholding(a.buyAmountNet) : 0
+
+    // 調整金: inclusive＋調整有効の payee ルールについて端数補正を加算。
+    // ※再委託（work_source_contractor_id 指定）は一覧では未対応（確定通知書側で算出）。
+    let adjustment = 0
+    const projAgg = workAgg.get(a.contractorId)
+    for (const rule of rulesByContractor.get(a.contractorId) ?? []) {
+      if (rule.unit_price === null) continue
+      if (rule.payment_type !== 'per_unit' && rule.payment_type !== 'per_piece') continue
+      if (rule.work_source_contractor_id) continue
+      const agg = projAgg?.get(rule.project_id)
+      if (!agg) continue
+      const workCount = rule.payment_type === 'per_piece' ? agg.pieceCount : agg.count
+      adjustment += calcPayeeAmount(rule, workCount).adjustment
+    }
+
+    return {
+      ...a,
+      taxAmount,
+      deductionTax,
+      adjustment,
+      withholdingTax,
+      netPayment: a.buyAmountNet + taxAmount - deductionTax + adjustment - withholdingTax,
+    }
+  })
 
   return { data: result, error: null }
 }
@@ -348,6 +408,8 @@ export type ExpenseApprovalRow = {
 export async function fetchExpensesForApproval(
   yearMonth: string,
 ): Promise<ActionResult<ExpenseApprovalRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const [y, m] = yearMonth.split('-').map(Number)
@@ -382,6 +444,8 @@ export async function fetchExpensesForApproval(
 export async function approveExpense(
   expenseId: string,
 ): Promise<ActionResult<{ id: string }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('expense_records')
@@ -396,6 +460,8 @@ export async function approveExpense(
 export async function rejectExpense(
   expenseId: string,
 ): Promise<ActionResult<{ id: string }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('expense_records')
@@ -431,6 +497,8 @@ export type PaymentNoticeStatus = {
 export async function fetchPaymentNoticeStatuses(
   yearMonth: string,
 ): Promise<ActionResult<PaymentNoticeStatus[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   const { data, error } = await (supabase as any)
     .from('payment_notices')
@@ -460,6 +528,8 @@ export async function generatePaymentNotice(
   contractorId: string,
   yearMonth: string,
 ): Promise<ActionResult<{ id: string; totalAmount: number }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { from, to } = monthRange(yearMonth)
@@ -627,18 +697,27 @@ export async function generatePaymentNotice(
   // 既存レコードを確認して INSERT or UPDATE
   const { data: existing } = await db
     .from('payment_notices')
-    .select('id, approval_status, locked')
+    .select('id, status, approval_status, locked')
     .eq('contractor_id', contractorId)
     .eq('notice_month', targetMonth)
     .maybeSingle()
 
-  if (existing && (existing.approval_status === 'approved' || existing.locked === true)) {
+  // 子分が承認（status='locked'）/ approved / locked のいずれかなら再生成不可
+  if (existing && (
+    existing.approval_status === 'approved' ||
+    existing.locked === true ||
+    existing.status === 'locked'
+  )) {
     return { data: null, error: '支払通知書はロック済みのため再生成できません。' }
   }
 
+  // ⚠️ 生成時点では「未承認(pending)」で起票する。承認は子分（driver）が
+  //    driver-actions.approvePaymentNotice で行い、その時に status='locked' /
+  //    approval_status='approved' へ確定する。ここで approved 固定にすると
+  //    承認フロー（合意証跡）が成立しないため厳禁。
   const noticePayload = {
     target_month:           targetMonth,
-    status:                 'approved',
+    status:                 'issued',
     subtotal_registered:    subtotalRegistered,
     tax_registered:         taxRegistered,
     subtotal_unregistered:  subtotalUnregistered,
@@ -649,7 +728,7 @@ export async function generatePaymentNotice(
     total_tax:              totalTax,
     total_deduction:        totalDeduction,
     adjustment_amount:      totalAdjustment,
-    approval_status:        'approved',
+    approval_status:        'pending',
   }
 
   let noticeId: string
@@ -679,6 +758,8 @@ export async function generatePaymentNotice(
 export async function generateAllPaymentNotices(
   yearMonth: string,
 ): Promise<ActionResult<{ generated: number; errors: string[] }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { from, to } = monthRange(yearMonth)

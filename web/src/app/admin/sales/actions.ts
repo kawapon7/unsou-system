@@ -4,6 +4,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 import { calcInvoiceTax } from '@/lib/invoice'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 
@@ -132,6 +133,8 @@ type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 export async function fetchSalesList(
   yearMonth: string,
 ): Promise<ActionResult<SalesListRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
 
@@ -260,6 +263,8 @@ export async function computeInvoicePreview(
   clientId: string,
   yearMonth: string,
 ): Promise<ActionResult<InvoicePreview>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
 
@@ -378,6 +383,8 @@ export async function upsertInvoice(
   clientId: string,
   yearMonth: string,
 ): Promise<ActionResult<{ id: string }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
 
   const previewRes = await computeInvoicePreview(clientId, yearMonth)
@@ -434,6 +441,8 @@ export async function updateInvoiceStatus(
   invoiceId: string,
   status: 'issued' | 'paid',
 ): Promise<ActionResult<{ id: string }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('invoices')
@@ -450,6 +459,8 @@ export async function updateInvoiceStatus(
 export async function fetchClientOptions(): Promise<
   ActionResult<Pick<ClientRow, 'id' | 'company_name'>[]>
 > {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -483,6 +494,8 @@ export type PaymentNoticeSummaryRow = {
 export async function fetchPaymentNoticeSummary(
   yearMonth: string,
 ): Promise<ActionResult<PaymentNoticeSummaryRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
 
@@ -655,6 +668,8 @@ export async function computeManualInvoicePreview(params: {
   isRegistered: boolean
   targetDate:   string
 }): Promise<ActionResult<ManualInvoicePreview>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const { getTransitionalDeductionRate } = await import('@/utils/billing/taxCalculator')
   const date = new Date(params.targetDate)
 
@@ -697,6 +712,8 @@ export async function commitManualInvoice(params: {
   mode:          'in' | 'out'
   finalAmount:   number
 }): Promise<ActionResult<{ id: string }>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const db = createServiceClient() as any
 
@@ -754,6 +771,8 @@ export async function commitManualInvoice(params: {
 export async function fetchContractorOptions(): Promise<
   ActionResult<{ id: string; name: string; isRegistered: boolean }[]>
 > {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const db = createServiceClient() as any
   const { data, error } = await db

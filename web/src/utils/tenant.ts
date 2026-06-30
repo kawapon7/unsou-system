@@ -4,15 +4,18 @@ export const DEV_TENANT_ID = 'local-dev'
 
 /**
  * 現在のログインユーザーの tenant_id を返す。
- * 優先順: user_metadata.tenant_id → 'local-dev' フォールバック
- * 開発環境(NODE_ENV=development)は常に 'local-dev' を返す。
+ * - 開発(NODE_ENV=development) または 認証バイパス時のみ 'local-dev' を返す。
+ * - 本番では user_metadata.tenant_id を必須とし、未解決なら例外を投げる
+ *   （静かにフォールバックすると全社データ混在の重大事故になるため）。
  */
 export async function getCurrentTenantId(): Promise<string> {
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.NODE_ENV === 'development' || process.env.ALLOW_DEV_AUTH_BYPASS === 'true') {
     return DEV_TENANT_ID
   }
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   const tenantId = user?.user_metadata?.tenant_id
-  return typeof tenantId === 'string' && tenantId ? tenantId : DEV_TENANT_ID
+  if (typeof tenantId === 'string' && tenantId) return tenantId
+  // ⚠️ フォールバック禁止: 本番ではテナント未解決を明示エラーにして fail-closed。
+  throw new Error('テナントが解決できません（user_metadata.tenant_id が未設定です）。')
 }

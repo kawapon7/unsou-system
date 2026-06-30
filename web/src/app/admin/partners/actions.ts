@@ -4,6 +4,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 type ClientInsert = Database['public']['Tables']['clients']['Insert']
@@ -24,6 +25,8 @@ function translateDbError(msg: string): string {
 // ── Clients ────────────────────────────────────────────────
 
 export async function fetchClients(): Promise<ActionResult<ClientRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -36,6 +39,8 @@ export async function fetchClients(): Promise<ActionResult<ClientRow[]>> {
 }
 
 export async function createClient_(payload: ClientInsert): Promise<ActionResult<ClientRow>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -48,6 +53,8 @@ export async function createClient_(payload: ClientInsert): Promise<ActionResult
 }
 
 export async function deleteClient(clientId: string): Promise<ActionResult<null>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { count } = await supabase
@@ -68,6 +75,8 @@ export async function deleteClient(clientId: string): Promise<ActionResult<null>
 }
 
 export async function updateClient(id: string, payload: ClientUpdate): Promise<ActionResult<ClientRow>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -84,6 +93,8 @@ export async function updateClient(id: string, payload: ClientUpdate): Promise<A
 // ── Contractors ────────────────────────────────────────────
 
 export async function fetchContractors(): Promise<ActionResult<ContractorRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -96,6 +107,8 @@ export async function fetchContractors(): Promise<ActionResult<ContractorRow[]>>
 }
 
 export async function createContractor(payload: ContractorInsert): Promise<ActionResult<ContractorRow>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -108,6 +121,8 @@ export async function createContractor(payload: ContractorInsert): Promise<Actio
 }
 
 export async function deleteContractor(contractorId: string): Promise<ActionResult<null>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
 
@@ -130,6 +145,8 @@ export async function deleteContractor(contractorId: string): Promise<ActionResu
 }
 
 export async function updateContractor(id: string, payload: ContractorUpdate): Promise<ActionResult<ContractorRow>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase

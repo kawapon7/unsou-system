@@ -2,6 +2,7 @@
 
 import { createClient }        from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { requireOwner }        from '@/utils/auth'
 import { getCurrentTenantId }  from '@/utils/tenant'
 
 type ActionResult<T = void> =
@@ -17,6 +18,8 @@ export async function fetchContractorOptions(): Promise<ActionResult<ContractorO
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return { data: null, error: '認証が必要です' }
+  const __owner = await requireOwner()
+  if (!__owner.ok) return { data: null, error: __owner.error }
 
   const service = createServiceClient()
   const { data, error } = await service
@@ -38,6 +41,8 @@ export async function fetchClientOptionsForScan(): Promise<ActionResult<ClientOp
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return { data: null, error: '認証が必要です' }
+  const __owner = await requireOwner()
+  if (!__owner.ok) return { data: null, error: __owner.error }
 
   const service = createServiceClient()
   const { data, error } = await service
@@ -69,6 +74,8 @@ export async function saveClientScanResult(
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return { data: null, error: '認証が必要です' }
+  const __owner = await requireOwner()
+  if (!__owner.ok) return { data: null, error: __owner.error }
 
   const invoiceMonth = `${params.invoiceDate.slice(0, 7)}-01`
   const service = createServiceClient()
@@ -114,6 +121,8 @@ export async function saveScanResult(
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
   if (authErr || !user) return { data: null, error: '認証が必要です' }
+  const __owner = await requireOwner()
+  if (!__owner.ok) return { data: null, error: __owner.error }
 
   const service = createServiceClient()
 

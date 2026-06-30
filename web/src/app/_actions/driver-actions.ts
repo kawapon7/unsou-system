@@ -56,7 +56,7 @@ export type MyPaymentNotice = {
 export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNotice[]>> {
   let contractorId: string | null
 
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.ALLOW_DEV_AUTH_BYPASS === 'true') {
     contractorId = DEV_CONTRACTOR_ID
   } else {
     const supabase = await createClient()
@@ -119,7 +119,7 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
   let contractorId: string | null
   let userId: string
 
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.ALLOW_DEV_AUTH_BYPASS === 'true') {
     contractorId = DEV_CONTRACTOR_ID
     userId = '00000000-0000-0000-0000-000000000000'  // dev dummy user ID
   } else {
@@ -149,10 +149,16 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
     return { data: null, error: 'すでに承認済みです' }
   }
 
-  // status を 'locked' に更新（driver 承認確定）
+  // driver 承認確定: status='locked' に加え approval_status / locked も同期。
+  // （表示・管理画面は approval_status を参照するため両列を揃える）
   const { error: updateErr } = await db
     .from('payment_notices')
-    .update({ status: 'locked' })
+    .update({
+      status:          'locked',
+      approval_status: 'approved',
+      locked:          true,
+      locked_at:       new Date().toISOString(),  // 承認確定時刻を記録（監査用）
+    })
     .eq('id', noticeId)
     .eq('contractor_id', contractorId)
 

@@ -4,6 +4,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { calculateInvoiceTax, type TaxItem } from '@/utils/billing/taxCalculator'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -343,11 +344,15 @@ export type FinalizeTarget =
 export async function finalizeInvoiceAndNotice(
   target: FinalizeTarget,
 ): Promise<ActionResult> {
-  // 認証チェック（dev環境はバイパス: proxy.ts が未ログイン状態で /admin/* を許可するため）
+  // 認証チェック（dev専用バイパスは ALLOW_DEV_AUTH_BYPASS=true のときのみ。本番では設定しない）
   const supabase = await createClient()
   const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  const isDev = process.env.NODE_ENV === 'development'
+  const isDev = process.env.ALLOW_DEV_AUTH_BYPASS === 'true'
   if ((authErr || !user) && !isDev) return { data: null, error: '認証が必要です' }
+  if (!isDev) {
+    const __owner = await requireOwner()
+    if (!__owner.ok) return { data: null, error: __owner.error }
+  }
   // dev環境のフォールバック: admin@hibiki.com のUUID（approval_history.action_by はUUID型）
   const DEV_ADMIN_UUID = '33259c12-e46b-4ebd-a87c-cf50682729c4'
   const userId = user?.id ?? DEV_ADMIN_UUID

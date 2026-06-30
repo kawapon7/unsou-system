@@ -5,6 +5,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { getMissingInputs, type MissingInputRow } from './scheduleActions'
 import { getDuplicateInputs, type DuplicateGroup } from './workRecordActions'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 // ── 型定義 ──────────────────────────────────────────────────
 
@@ -58,6 +59,8 @@ type ActionResult<T = void> =
 //    amount_actual > 30000 → expense_records.status = 'pending_review'
 // ================================================================
 export async function getThresholdAlerts(): Promise<ActionResult<ThresholdAlertRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   try {
     return { data: await fetchAndLockThresholdViolations(), error: null }
   } catch (e) {
@@ -147,6 +150,8 @@ async function fetchInvoiceWarnings(): Promise<InvoiceWarningRow[]> {
 // ⑤ 長期間未承認: 送信後48時間以上 approval_status='unapproved' の支払通知書（未承認検知）
 // ================================================================
 export async function getPendingNotices(): Promise<ActionResult<PendingNoticeRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   try {
     return { data: await fetchLongPendingNotices(), error: null }
   } catch (e) {
@@ -220,6 +225,8 @@ async function fetchLongPendingNotices(): Promise<PendingNoticeRow[]> {
 // 5種のアラートを並列取得して返す統合エントリーポイント
 // ================================================================
 export async function getDefensiveAlerts(): Promise<ActionResult<DefensiveAlerts>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   try {
     const [
       missingRes,
@@ -268,6 +275,8 @@ export async function getDefensiveAlerts(): Promise<ActionResult<DefensiveAlerts
 export async function resolveDuplicateRecord(
   recordId: string,
 ): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const db = createServiceClient() as any
 
@@ -292,6 +301,8 @@ export async function reviewThresholdRecord(
   table: 'work_records',
   id: string,
 ): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient() as any
 
   const { error } = await db
@@ -315,6 +326,8 @@ export async function deleteAlertRecord(
   table: 'work_records',
   id: string,
 ): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const db = createServiceClient() as any
 
