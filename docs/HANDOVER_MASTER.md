@@ -1251,7 +1251,7 @@ web/
 > **AIへ：** このセクションを最初に確認してください。詳細仕様は上記セクション参照。
 > コードを触る前に「今すぐやること」を確認してください。
 
-最終更新: 2026-06-20（承認フロー UI テスト完了セッション）
+最終更新: 2026-07-02（superpowers復旧・P0-P2セキュリティ監査セッション）
 
 ### 5-1. これは何のプロジェクトか
 
@@ -1275,11 +1275,18 @@ web/
 | ✅ 完了 2026-06-30 | RLS/不変トリガー 本番適用（step③） | 2本とも本番DB適用済み |
 | ✅ 完了 2026-07-01 | 本番環境構築 | **Cloudflare Workers** にデプロイ（Pagesは404のため移行）。`https://unsou-system.kawapon7.workers.dev`。シークレット6つ投入済み。詳細は §2-2-2b |
 | ✅ 完了 2026-07-01 | main統合 | `fix/p0-security-hardening` を main へマージ済み（`eb749a5`）。Workers移行修正は `bf648f4` |
+| ✅ 完了 2026-07-02 | superpowers / context-mode プラグイン復旧 | CLAUDE.mdのスキル宣言可視化ルール修正＋`~/.claude/settings.json` の `enabledPlugins` を両方 `true` に修正。詳細は5-4参照 |
+| ✅ 完了 2026-07-02 | security-reviewスキルによるP0-P2セキュリティ監査・修正 | 認可ガード欠落・クロステナントIDOR等7件修正（`a7d937d`）。詳細は5-4参照 |
+| ✅ 完了 2026-07-02 | admin@hibiki.com パスワード不明問題の解消 | Supabase Admin API（service_role）で直接パスワード更新。詳細は5-4参照 |
 | 🟡 中 | テナント分離 F0 実装 | `docs/superpowers/plans/2026-06-27-tenant-isolation-phase0.md`。B社導入前まで。出発点=Task0でステージング実査→A社正準UUID確定→計画内 `<TENANT_A_UUID>` 置換→Cursor実装。挙動不変 |
 | 🔴 高 | 本番ユーザー作成・実ログイン確認 | Supabase Auth でA社ユーザー作成→`app_metadata.tenant_id` 設定→本番URLで実ログイン確認（ユーザー皆無で未検証） |
 | 🔴 高 | APIキー/トークンのローテーション | 2026-07-01セッションでチャットに各種キー露出。Cloudflare token/Supabase/Gemini/Resend を再発行 |
-| 🟡 中 | 自動デプロイ再設定 | main push 時の自動デプロイは旧Pages連携のため**現在無効**。Workers Builds で再設定 |
+| 🟡 中 | 自動デプロイ再設定 | main push 時の自動デプロイは旧Pages連携のため**現在無効**。`web/` で `npm run deploy` を手動実行する運用のため、push後の反映漏れリスクあり。Workers Builds で再設定 |
 | 🟡 中 | 本番 tenant_id 設定 | ⚠️方針変更: `user_metadata` ではなく **`app_metadata.tenant_id`** に設定（本人改変不能のため）。F0 の Task7 スクリプト `scripts/backfill-app-metadata-tenant.mjs` で一括設定する設計 |
+| 🟡 中 | 旧URL `unsou-system.pages.dev` の扱い決定 | 7/1のWorkers移行以降404が正常な状態。放置／リダイレクト／Pagesプロジェクト削除のいずれにするか未決定 |
+| 🟢 低 | `.cursorrules` / `agent.md` のコミット | 意図的に作成した未追跡ファイル。別コミットで追加予定 |
+| 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認の後に開始 |
+| 🟢 低 | B社マルチテナントオンボーディング | テナント分離F0実装完了後 |
 | 🟢 低 | フィールドテスト後 UX 改善 | フィードバック待ち。新機能追加はここまで待つ |
 
 ### 5-3. 現在の実装状況（フェーズ2 進行中）
@@ -1308,6 +1315,36 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-07-02（Claude Code セッション）
+
+**1. superpowers / context-mode プラグインの復旧**
+- CLAUDE.mdの「思考プロセス出力禁止」ルールがsuperpowersのスキル宣言（`Using [skill] to [purpose]`）を隠していたことが判明。CLAUDE.mdを修正し、宣言・TODOの可視化を必須化。
+- `~/.claude/settings.json` の `enabledPlugins` で `context-mode` と `superpowers` が両方 `false` になっていたことが判明（過去にcontext-modeを一時無効化した際の影響と推測）。両方 `true` に修正。
+
+**2. security-reviewスキルによるセキュリティ監査でP0〜P2の脆弱性7件を発見・修正（`a7d937d`）**
+- P0: `admin/users/actions.ts` 全9関数に認可ガード（`requireOwner`）が完全欠落 → 追加
+- P0: `emailActions.ts` の `NODE_ENV=development` バイパスが `ALLOW_DEV_AUTH_BYPASS` に未統一 → 統一
+- P0: `scheduleActions.ts` の `getMissingInputs` / `updateScheduleStatus` / `fetchAdminMonthlySchedules` に認可ガード欠落 → `requireOwner` 追加
+- P1: `billing/actions.ts` の `approveExpense` / `rejectExpense` に `tenant_id` フィルタなし（クロステナントIDOR）→ 追加
+- P1: `projects/actions.ts` の `project_payees` 関連3関数に `tenant_id` フィルタなし → 追加
+- P1: `utils/tenant.ts` に `NODE_ENV=development` 条件が残存（P0修正時の消し忘れ）→ 削除
+- P2: `utils/auth.ts` + `emailActions.ts` の `TEMP_OWNER_EMAILS` ハードコード → `HIBIKI_OWNER_EMAILS` 環境変数化（`.env.local` および Cloudflare Workers環境変数の両方に設定済み）
+
+**3. 本番URLの誤認識を解消**
+- `unsou-system.pages.dev`（旧Pages URL）は7/1のWorkers移行以降404が正常な状態と再確認。混同しやすいため要注意。
+- 正しい本番URL: `https://unsou-system.kawapon7.workers.dev`
+
+**4. admin@hibiki.com のパスワード不明問題を解消**
+- パスワードリセットメールがSupabaseのレート制限で送信不可（実在しないダミーメールのため）。
+- Supabase Admin API（service_role key使用、`supabase.auth.admin.updateUserById`）で直接パスワードを更新して解決。新パスワードはパスワードマネージャーで管理。
+
+**次に取り組む課題（詳細は5-2参照）**
+- 旧URL `unsou-system.pages.dev` の扱いを決定（放置/リダイレクト/Pagesプロジェクト削除）
+- `.cursorrules` / `agent.md` が未コミットのまま残存（意図的に作成、別コミット予定）
+- デプロイ運用の見直し：GitHub Actions等のCI/CD自動デプロイが無く、`web/` で `npm run deploy` を手動実行する運用。push後の反映漏れリスクあり
+- HIBIKI フィールドテスト（A社）
+- B社のマルチテナントオンボーディング
 
 #### 2026-06-27（Claude Code + Cursor セッション）
 
