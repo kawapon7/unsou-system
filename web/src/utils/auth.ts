@@ -7,7 +7,9 @@ import { createServiceClient } from '@/utils/supabase/service'
  * ここでアプリ層の権限チェックを必ず通すこと。
  */
 
-const TEMP_OWNER_EMAILS = ['admin@hibiki.com']
+// ⚠️ HIBIKI_OWNER_EMAILS 未設定時は特権メールなし（fail-closed）。.env.local に設定すること。
+const TEMP_OWNER_EMAILS = (process.env.HIBIKI_OWNER_EMAILS ?? '')
+  .split(',').map(e => e.trim()).filter(Boolean)
 
 export type AuthContext = {
   userId:       string

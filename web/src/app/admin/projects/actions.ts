@@ -156,12 +156,14 @@ export type PayeeUpsertOpts = {
 export async function fetchProjectPayees(projectId: string): Promise<ActionResult<ProjectPayee[]>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
 
   const { data, error } = await supabase
     .from('project_payees')
     .select('id, contractor_id, payment_type, unit_price, tax_method, rounding_rule, adjustment_enabled, work_source_contractor_id, payee_tier')
     .eq('project_id', projectId)
+    .eq('tenant_id', tenantId)
     .order('created_at', { ascending: true }) as any
 
   if (error) return { data: null, error: error.message }
@@ -210,11 +212,13 @@ export async function upsertProjectPayee(
 ): Promise<ActionResult<void>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
 
   const payload = {
     project_id:                projectId,
     contractor_id:             contractorId,
+    tenant_id:                 tenantId,
     payment_type:              opts.payment_type,
     unit_price:                opts.unit_price,
     tax_method:                opts.tax_method,
@@ -229,6 +233,7 @@ export async function upsertProjectPayee(
       .from('project_payees')
       .update(payload)
       .eq('id', existingId)
+      .eq('tenant_id', tenantId)
     if (error) return { data: null, error: error.message }
   } else {
     const { error } = await (supabase as any)
@@ -243,11 +248,13 @@ export async function upsertProjectPayee(
 export async function deleteProjectPayee(payeeId: string): Promise<ActionResult<void>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { error } = await (supabase as any)
     .from('project_payees')
     .delete()
     .eq('id', payeeId)
+    .eq('tenant_id', tenantId)
   if (error) return { data: null, error: error.message }
   return { data: undefined, error: null }
 }

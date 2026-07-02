@@ -3,6 +3,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 export type UserRole = 'master' | 'driver'
 
@@ -20,6 +21,8 @@ type ActionResult<T = void> =
   | { data: null; error: string }
 
 export async function listUsers(): Promise<ActionResult<ManagedUser[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient()
 
   const { data: { users: authUsers }, error: authErr } = await db.auth.admin.listUsers({ perPage: 200 })
@@ -74,6 +77,8 @@ export async function createAdminUser(
   password: string,
   currentPassword: string
 ): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient()
 
   // 現在の管理者パスワードを再検証（通常クライアントで signInWithPassword）
@@ -112,6 +117,8 @@ export async function createDriverUser(
   password: string,
   contractorId: string
 ): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient()
   const tenantId = await getCurrentTenantId()
 
@@ -166,6 +173,8 @@ export async function updateUser(
     contractorId?: string | null
   }
 ): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient()
   const tenantId = await getCurrentTenantId()
 
@@ -204,6 +213,8 @@ export async function updateUser(
 }
 
 export async function deleteUser(userId: string): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient()
 
   await db.from('users').delete().eq('id', userId)
@@ -215,6 +226,8 @@ export async function deleteUser(userId: string): Promise<ActionResult> {
 }
 
 export async function listContractors(): Promise<ActionResult<{ id: string; name: string; email: string; hasAccount: boolean }[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient()
   const tenantId = await getCurrentTenantId()
 
@@ -249,6 +262,8 @@ export type ProjectOption = {
 }
 
 export async function listProjects(): Promise<ActionResult<ProjectOption[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient()
   const tenantId = await getCurrentTenantId()
 
@@ -273,6 +288,8 @@ export async function listProjects(): Promise<ActionResult<ProjectOption[]>> {
 }
 
 export async function fetchDriverAssignments(contractorId: string): Promise<ActionResult<string[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient()
 
   const { data, error } = await db
@@ -287,6 +304,8 @@ export async function updateDriverAssignments(
   contractorId: string,
   projectIds: string[]
 ): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient()
   const tenantId = await getCurrentTenantId()
 

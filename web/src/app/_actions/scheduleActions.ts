@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { requireOwner } from '@/utils/auth'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -65,6 +66,8 @@ export type UpdatableScheduleStatus = 'scheduled' | 'absent'
 // work_records が存在しない予定を返す（未入力アラート）
 // ================================================================
 export async function getMissingInputs(): Promise<ActionResult<MissingInputRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
   const firstOfMonth = `${today.slice(0, 7)}-01`
@@ -134,6 +137,8 @@ export async function updateScheduleStatus(
   scheduleId: string,
   status: UpdatableScheduleStatus,
 ): Promise<ActionResult> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const service = createServiceClient()
   const db = service as any
@@ -175,6 +180,8 @@ export type AdminScheduleEntry = {
 export async function fetchAdminMonthlySchedules(
   yearMonth: string,
 ): Promise<ActionResult<AdminScheduleEntry[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
   const [y, m] = yearMonth.split('-').map(Number)

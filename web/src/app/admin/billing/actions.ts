@@ -446,11 +446,13 @@ export async function approveExpense(
 ): Promise<ActionResult<{ id: string }>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('expense_records')
     .update({ approval_status: 'approved' })
     .eq('id', expenseId)
+    .eq('tenant_id', tenantId)
     .select('id')
     .single()
   if (error) return { data: null, error: error.message }
@@ -462,11 +464,13 @@ export async function rejectExpense(
 ): Promise<ActionResult<{ id: string }>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('expense_records')
     .update({ approval_status: 'rejected' })
     .eq('id', expenseId)
+    .eq('tenant_id', tenantId)
     .select('id')
     .single()
   if (error) return { data: null, error: error.message }

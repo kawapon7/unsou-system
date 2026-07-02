@@ -9,7 +9,9 @@ type ActionResult<T = void> =
   | { data: T; error: null }
   | { data: null; error: string }
 
-const TEMP_OWNER_EMAILS = ['admin@hibiki.com']
+// ⚠️ HIBIKI_OWNER_EMAILS 未設定時は特権メールなし（fail-closed）。.env.local に設定すること。
+const TEMP_OWNER_EMAILS = (process.env.HIBIKI_OWNER_EMAILS ?? '')
+  .split(',').map(e => e.trim()).filter(Boolean)
 
 const ALERT_SUBJECTS: Record<string, string> = {
   missing_input:   '【HIBIKI】稼働実績の入力をお願いします',
@@ -20,7 +22,7 @@ const ALERT_SUBJECTS: Record<string, string> = {
 }
 
 async function requireMasterAccess(): Promise<ActionResult<{ userId: string }>> {
-  if (process.env.NODE_ENV === 'development') {
+  if (process.env.ALLOW_DEV_AUTH_BYPASS === 'true') {
     return { data: { userId: 'dev-master' }, error: null }
   }
 
