@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
+import { todayYearMonthJST } from '@/utils/date'
 import {
   fetchScheduleSummary,
   fetchProjectBreakdown,
@@ -15,10 +16,6 @@ import {
 
 const yen = (n: number) =>
   `¥${Math.round(n).toLocaleString('ja-JP')}`
-
-function currentYearMonth() {
-  return new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' }).slice(0, 7)
-}
 
 function prevYM(ym: string) {
   const [y, m] = ym.split('-').map(Number)
@@ -322,7 +319,7 @@ export default function DashboardPage() {
   const tab          = (searchParams.get('tab') as Tab | null) ?? 'summary'
   const setTab       = (t: Tab) => router.replace(`${pathname}?tab=${t}`)
 
-  const [yearMonth, setYearMonth] = useState(currentYearMonth())
+  const [yearMonth, setYearMonth] = useState(todayYearMonthJST())
   const [summary,   setSummary]   = useState<ScheduleSummary | null>(null)
   const [projects,  setProjects]  = useState<ProjectBreakdownRow[]>([])
   const [trend,     setTrend]     = useState<ScheduleTrendRow[]>([])
@@ -373,7 +370,7 @@ export default function DashboardPage() {
             >›</button>
             <button
               type="button"
-              onClick={() => setYearMonth(currentYearMonth())}
+              onClick={() => setYearMonth(todayYearMonthJST())}
               className="rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-50"
             >今月</button>
           </div>

@@ -1,11 +1,7 @@
 'use client'
 
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
-
-function todayYearMonth(): string {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-}
+import { todayYearMonthJST } from '@/utils/date'
 
 function addMonths(ym: string, delta: number): string {
   const [y, m] = ym.split('-').map(Number)
@@ -29,7 +25,7 @@ type MonthContextValue = {
 const MonthContext = createContext<MonthContextValue | null>(null)
 
 export function MonthProvider({ children }: { children: ReactNode }) {
-  const [yearMonth, setYearMonth] = useState(todayYearMonth)
+  const [yearMonth, setYearMonth] = useState(todayYearMonthJST)
 
   const prevMonth = useCallback(() => setYearMonth(ym => addMonths(ym, -1)), [])
   const nextMonth = useCallback(() => setYearMonth(ym => addMonths(ym,  1)), [])
