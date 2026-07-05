@@ -3,6 +3,7 @@
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+import { buildScheduleTrendMap } from './scheduleAggregation'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -496,17 +497,7 @@ export async function fetchScheduleTrend(): Promise<ActionResult<ScheduleTrendRo
 
   if (error) return { data: null, error: error.message }
 
-  const trendMap = new Map<string, { confirmed: number; projected: number }>()
-  for (const m of months) trendMap.set(m, { confirmed: 0, projected: 0 })
-
-  for (const s of (data ?? [])) {
-    const ym   = (s.date as string).slice(0, 7)
-    const entry = trendMap.get(ym)
-    if (!entry) continue
-    const sale = (s.projects as any)?.sale_amount ?? 0
-    if (s.date <= today) entry.confirmed += sale
-    else                 entry.projected += sale
-  }
+  const trendMap = buildScheduleTrendMap(data ?? [], today, months)
 
   return {
     data: months.map(m => ({
