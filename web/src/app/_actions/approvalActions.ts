@@ -59,6 +59,7 @@ export async function fetchPendingPaymentNotices(): Promise<ActionResult<Pending
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   try {
+    const tenantId = await getCurrentTenantId()
     const db  = createServiceClient() as any
     const now = Date.now()
 
@@ -66,8 +67,9 @@ export async function fetchPendingPaymentNotices(): Promise<ActionResult<Pending
       .from('payment_notices')
       .select(`
         id, contractor_id, notice_month, approval_status, total_amount, created_at,
-        contractors ( id, name, phone, email )
+        contractors!inner ( id, name, phone, email, tenant_id )
       `)
+      .eq('contractors.tenant_id', tenantId)
       .in('approval_status', ['pending', 'unapproved'])
       .order('created_at', { ascending: true })
 
@@ -102,6 +104,16 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient() as any
+
+  const tenantId = await getCurrentTenantId()
+  const { data: notice } = await db
+    .from('payment_notices')
+    .select('id, contractors!inner ( tenant_id )')
+    .eq('id', noticeId)
+    .eq('contractors.tenant_id', tenantId)
+    .maybeSingle()
+  if (!notice) return { data: null, error: '対象の支払通知書が見つかりません' }
+
   const { error } = await db
     .from('payment_notices')
     .update({ approval_status: 'approved' })
@@ -125,6 +137,16 @@ export async function rejectPaymentNotice(noticeId: string): Promise<ActionResul
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient() as any
+
+  const tenantId = await getCurrentTenantId()
+  const { data: notice } = await db
+    .from('payment_notices')
+    .select('id, contractors!inner ( tenant_id )')
+    .eq('id', noticeId)
+    .eq('contractors.tenant_id', tenantId)
+    .maybeSingle()
+  if (!notice) return { data: null, error: '対象の支払通知書が見つかりません' }
+
   const { error } = await db
     .from('payment_notices')
     .update({ approval_status: 'rejected' })
@@ -245,7 +267,8 @@ export async function getApprovalSummary(yearMonth: string): Promise<ActionResul
     const [pnRes, wrRes, exRes] = await Promise.all([
       // 支払通知書 (notice_month で月絞り込み)
       db.from('payment_notices')
-        .select('approval_status')
+        .select('approval_status, contractors!inner ( tenant_id )')
+        .eq('contractors.tenant_id', tenantId)
         .gte('notice_month', monthStart)
         .lte('notice_month', monthEnd),
 

@@ -1,7 +1,8 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { requireOwner, requireAuth } from '@/utils/auth'
+import { getCurrentTenantId } from '@/utils/tenant'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -32,16 +33,16 @@ export async function fetchInvoicePdfData(
   clientId:  string,
   yearMonth: string,
 ): Promise<ActionResult<InvoicePdfData>> {
-  const supabase = await createClient()
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) return { data: null, error: '認証が必要です' }
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
 
   const service = createServiceClient()
   const [y, m]  = yearMonth.split('-').map(Number)
   const monthEndDate = new Date(y, m, 0).toISOString().slice(0, 10)
 
   const [clientRes, invoiceRes, projectsRes] = await Promise.all([
-    service.from('clients').select('company_name, contact_name, tax_type').eq('id', clientId).single(),
+    service.from('clients').select('company_name, contact_name, tax_type, tenant_id').eq('id', clientId).single(),
     // billing-actions.ts は YYYY-MM-01 形式で保存するため DATE 型に合わせる
     service.from('invoices')
       .select('id, total_tax_excluded, consumption_tax, total_amount, due_date')
@@ -51,7 +52,9 @@ export async function fetchInvoicePdfData(
     service.from('projects').select('id, project_name').eq('client_id', clientId),
   ])
 
-  if (clientRes.error || !clientRes.data) return { data: null, error: '荷主が見つかりません' }
+  if (clientRes.error || !clientRes.data || clientRes.data.tenant_id !== tenantId) {
+    return { data: null, error: '荷主が見つかりません' }
+  }
 
   const client   = clientRes.data
   const invoice  = invoiceRes.data
@@ -140,11 +143,22 @@ export async function fetchPaymentNoticePdfData(
   contractorId: string,
   yearMonth:    string,
 ): Promise<ActionResult<PaymentNoticePdfData>> {
-  const supabase = await createClient()
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) return { data: null, error: '認証が必要です' }
+  const auth = await requireAuth()
+  if (!auth.ok) return { data: null, error: auth.error }
 
   const service = createServiceClient()
+
+  if (auth.ctx.isOwner) {
+    const tenantId = await getCurrentTenantId()
+    const { data: contractorCheck } = await service
+      .from('contractors').select('tenant_id').eq('id', contractorId).maybeSingle()
+    if (!contractorCheck || (contractorCheck as any).tenant_id !== tenantId) {
+      return { data: null, error: '委託先が見つかりません' }
+    }
+  } else if (auth.ctx.contractorId !== contractorId) {
+    return { data: null, error: '委託先が見つかりません' }
+  }
+
   const [y, m] = yearMonth.split('-').map(Number)
   const from   = `${yearMonth}-01`
   const to     = new Date(y, m, 0).toISOString().slice(0, 10)
