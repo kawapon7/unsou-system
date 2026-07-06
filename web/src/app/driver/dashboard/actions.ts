@@ -32,7 +32,7 @@ export type AssignedProject = ProjectRow & {
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
-export async function fetchMyContractor(): Promise<ActionResult<ContractorRow>> {
+export async function fetchMyContractor(): Promise<ActionResult<Pick<ContractorRow, 'id'>>> {
   try {
     const supabase = await createClient()
 
@@ -51,7 +51,7 @@ export async function fetchMyContractor(): Promise<ActionResult<ContractorRow>> 
       const service = createServiceClient()
       const { data: contractor, error: cErr } = await service
         .from('contractors')
-        .select('*')
+        .select('id')
         .eq('email', user.email ?? '')
         .single()
       if (cErr || !contractor) return { data: null, error: '委託先レコードが見つかりません' }
@@ -61,7 +61,7 @@ export async function fetchMyContractor(): Promise<ActionResult<ContractorRow>> 
     const service = createServiceClient()
     const { data: contractor, error: cErr } = await service
       .from('contractors')
-      .select('*')
+      .select('id')
       .eq('id', userRow.contractor_id)
       .single()
 

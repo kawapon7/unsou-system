@@ -152,7 +152,7 @@ function currentYearMonth() {
 }
 
 export default function DriverBillingPage() {
-  const [contractor, setContractor] = useState<ContractorRow | null>(null)
+  const [contractor, setContractor] = useState<Pick<ContractorRow, 'id'> | null>(null)
   const [loading,    setLoading]    = useState(true)
   const [error,      setError]      = useState<string | null>(null)
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)

@@ -4,7 +4,7 @@ import React from 'react'
 import { renderToBuffer } from '@react-pdf/renderer'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
-import { decryptText } from '@/utils/crypto'
+import { decryptBankFieldValue } from '@/utils/crypto'
 import { calcInvoiceTax } from '@/lib/invoice'
 import { getTransitionalDeductionRate } from '@/utils/billing/taxCalculator'
 import { getCurrentTenantId } from '@/utils/tenant'
@@ -101,16 +101,6 @@ function isInvoiceRegistered(type: string | null | undefined): boolean {
 
 function isTaxableCategory(category: string | null | undefined): boolean {
   return category !== 'exempt' && category !== '免税' && category !== 'non_taxable'
-}
-
-function decryptBankField(value: string | null | undefined): string {
-  if (!value) return ''
-  if (!value.includes(':')) return value
-  try {
-    return decryptText(value)
-  } catch {
-    return '（復号エラー）'
-  }
 }
 
 function resolveSalesNet(row: any): number {
@@ -316,11 +306,11 @@ export async function buildPaymentNoticePdfData(
       deductionRate,
       deduction,
       totalAmount,
-      bankName:      decryptBankField(contractor.bank_name),
-      bankBranch:    decryptBankField(contractor.bank_branch ?? contractor.branch_name),
-      accountType:   decryptBankField(contractor.account_type),
-      accountNumber: decryptBankField(contractor.account_number),
-      accountHolder: decryptBankField(contractor.account_holder),
+      bankName:      decryptBankFieldValue(contractor.bank_name),
+      bankBranch:    decryptBankFieldValue(contractor.bank_branch ?? contractor.branch_name),
+      accountType:   decryptBankFieldValue(contractor.account_type),
+      accountNumber: decryptBankFieldValue(contractor.account_number),
+      accountHolder: decryptBankFieldValue(contractor.account_holder),
     },
     error: null,
   }
