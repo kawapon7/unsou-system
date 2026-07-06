@@ -5,6 +5,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+import { encryptBankFields, decryptBankFields } from '@/utils/crypto'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 type ClientInsert = Database['public']['Tables']['clients']['Insert']
@@ -35,7 +36,7 @@ export async function fetchClients(): Promise<ActionResult<ClientRow[]>> {
     .eq('tenant_id', tenantId)
     .order('created_at', { ascending: false })
   if (error) return { data: null, error: error.message }
-  return { data, error: null }
+  return { data: (data ?? []).map(decryptBankFields), error: null }
 }
 
 export async function createClient_(payload: ClientInsert): Promise<ActionResult<ClientRow>> {
@@ -45,11 +46,11 @@ export async function createClient_(payload: ClientInsert): Promise<ActionResult
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('clients')
-    .insert({ ...payload, tenant_id: tenantId })
+    .insert({ ...encryptBankFields(payload), tenant_id: tenantId })
     .select()
     .single()
   if (error) return { data: null, error: error.message }
-  return { data, error: null }
+  return { data: decryptBankFields(data), error: null }
 }
 
 export async function deleteClient(clientId: string): Promise<ActionResult<null>> {
@@ -81,13 +82,13 @@ export async function updateClient(id: string, payload: ClientUpdate): Promise<A
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('clients')
-    .update(payload)
+    .update(encryptBankFields(payload))
     .eq('id', id)
     .eq('tenant_id', tenantId)
     .select()
     .single()
   if (error) return { data: null, error: error.message }
-  return { data, error: null }
+  return { data: decryptBankFields(data), error: null }
 }
 
 // ── Contractors ────────────────────────────────────────────
@@ -103,7 +104,7 @@ export async function fetchContractors(): Promise<ActionResult<ContractorRow[]>>
     .eq('tenant_id', tenantId)
     .order('created_at', { ascending: false })
   if (error) return { data: null, error: error.message }
-  return { data, error: null }
+  return { data: (data ?? []).map(decryptBankFields), error: null }
 }
 
 export async function createContractor(payload: ContractorInsert): Promise<ActionResult<ContractorRow>> {
@@ -113,11 +114,11 @@ export async function createContractor(payload: ContractorInsert): Promise<Actio
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('contractors')
-    .insert({ ...payload, tenant_id: tenantId })
+    .insert({ ...encryptBankFields(payload), tenant_id: tenantId })
     .select()
     .single()
   if (error) return { data: null, error: error.message }
-  return { data, error: null }
+  return { data: decryptBankFields(data), error: null }
 }
 
 export async function deleteContractor(contractorId: string): Promise<ActionResult<null>> {
@@ -151,11 +152,11 @@ export async function updateContractor(id: string, payload: ContractorUpdate): P
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('contractors')
-    .update(payload)
+    .update(encryptBankFields(payload))
     .eq('id', id)
     .eq('tenant_id', tenantId)
     .select()
     .single()
   if (error) return { data: null, error: error.message }
-  return { data, error: null }
+  return { data: decryptBankFields(data), error: null }
 }
