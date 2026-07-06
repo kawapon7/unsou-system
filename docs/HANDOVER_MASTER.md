@@ -1278,14 +1278,13 @@ web/
 | ✅ 完了 2026-07-02 | superpowers / context-mode プラグイン復旧 | CLAUDE.mdのスキル宣言可視化ルール修正＋`~/.claude/settings.json` の `enabledPlugins` を両方 `true` に修正。詳細は5-4参照 |
 | ✅ 完了 2026-07-02 | security-reviewスキルによるP0-P2セキュリティ監査・修正 | 認可ガード欠落・クロステナントIDOR等7件修正（`a7d937d`）。詳細は5-4参照 |
 | ✅ 完了 2026-07-02 | admin@hibiki.com パスワード不明問題の解消 | Supabase Admin API（service_role）で直接パスワード更新。詳細は5-4参照 |
-| 🟡 中 | テナント分離 F0 実装 | `docs/superpowers/plans/2026-06-27-tenant-isolation-phase0.md`。B社導入前まで。出発点=Task0でステージング実査→A社正準UUID確定→計画内 `<TENANT_A_UUID>` 置換→Cursor実装。挙動不変 |
-| 🔴 高 | 本番ユーザー作成・実ログイン確認 | Supabase Auth でA社ユーザー作成→`app_metadata.tenant_id` 設定→本番URLで実ログイン確認（ユーザー皆無で未検証） |
+| ✅ 完了 2026-07-06 | 本番ユーザー作成・実ログイン確認 | master(`kawapon7+hibiki@gmail.com`)・driver(`kawapon7+driver@gmail.com`)とも実ログイン確認済み。この過程で権限誤判定の重大バグを発見・修正（詳細は5-4参照） |
+| 🟡 中 | テナント分離 F0 実装 | `docs/superpowers/plans/2026-06-27-tenant-isolation-phase0.md`。B社導入前まで。出発点=Task0でステージング実査→A社正準UUID確定→計画内 `<TENANT_A_UUID>` 置換→Cursor実装。挙動不変。⚠️現状の本番ユーザーは`user_metadata.tenant_id='local-dev'`（既存データと一致）で運用中。F0実装時はこのアカウントもUUID移行対象に含めること |
 | 🔴 高 | APIキー/トークンのローテーション | 2026-07-01セッションでチャットに各種キー露出。Cloudflare token/Supabase/Gemini/Resend を再発行 |
 | 🟡 中 | 自動デプロイ再設定 | main push 時の自動デプロイは旧Pages連携のため**現在無効**。`web/` で `npm run deploy` を手動実行する運用のため、push後の反映漏れリスクあり。Workers Builds で再設定 |
-| 🟡 中 | 本番 tenant_id 設定 | ⚠️方針変更: `user_metadata` ではなく **`app_metadata.tenant_id`** に設定（本人改変不能のため）。F0 の Task7 スクリプト `scripts/backfill-app-metadata-tenant.mjs` で一括設定する設計 |
 | 🟡 中 | 旧URL `unsou-system.pages.dev` の扱い決定 | 7/1のWorkers移行以降404が正常な状態。放置／リダイレクト／Pagesプロジェクト削除のいずれにするか未決定 |
 | 🟢 低 | `.cursorrules` / `agent.md` のコミット | 意図的に作成した未追跡ファイル。別コミットで追加予定 |
-| 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認の後に開始 |
+| 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認は完了。次はResend経由の通知メール実送受信確認 |
 | 🟢 低 | B社マルチテナントオンボーディング | テナント分離F0実装完了後 |
 | 🟢 低 | フィールドテスト後 UX 改善 | フィードバック待ち。新機能追加はここまで待つ |
 
@@ -1315,6 +1314,20 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-07-06（Claude Code セッション）
+
+**本番ユーザー作成・実ログイン確認 → 完了。ただし権限誤判定の重大バグを発見・修正**
+
+- master用に `kawapon7+hibiki@gmail.com`（Gmail +エイリアス）、driver用に `kawapon7+driver@gmail.com` を本番Supabase Authに作成し、既存テスト委託先「【テスト】鈴木次郎（免税）」に紐付け。両方とも実ログイン確認済み。
+- **発見したバグ**: 本番DBの `users` テーブルに `contractor_id` 列が存在しなかった（初期スキーマ `20260605000000_initial_schema.sql` には定義があるが、本番へ未適用のまま運用されていた）。`getAuthContext()`（`utils/auth.ts`）等が `select('role, contractor_id')` していたため、この列参照でクエリ自体が失敗 → `role` が黙って `'contractor'`（子分）にフォールバックしていた。`admin@hibiki.com` は `HIBIKI_OWNER_EMAILS` 環境変数によるショートカットでこの問題を回避できていたため、今まで顕在化していなかった。**既存の子分アカウント（driver01〜05等）も同じ理由で影響を受けていた可能性が高い。**
+- **修正**:
+  1. マイグレーション `20260706000000_add_missing_users_contractor_id.sql` で本番DBに `contractor_id` 列を追加（`ADD COLUMN IF NOT EXISTS`、既存データ無害）。
+  2. `middleware.ts` / `login/actions.ts` のrole判定を、anonキー(RLS経由)のクエリから `service_role` 直接参照に統一（`getAuthContext()`と同じ方式）。ハードコードされていた `TEMP_OWNER_EMAILS = ['admin@hibiki.com']`（2箇所に重複存在）も削除。
+  3. マイグレーション履歴の追跡ズレ（`20260614`/`20260616`が手動SQL Editor実行によりCLI追跡外になっていた）を `supabase migration repair` で解消し、`supabase db push --include-all` で正規化。
+- コミット `ac07a0d`。本番デプロイ（Cloudflare Workers）は修正の都度実施済み、最終版は `c67519a1-...`。
+- 本番アカウント作成用スクリプト `web/scripts/create-production-user.mjs`・`web/scripts/create-driver-test-user.mjs` を追加（`set-production-tenant.mjs` と同系統）。
+- **次に取り組む課題**: Resend経由の通知メール実送受信確認（承認操作→通知メール受信までの通しテスト、まだ未実施）。
 
 #### 2026-07-05（Claude Code セッション）
 
