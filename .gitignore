@@ -18,6 +18,8 @@ web/build/
 # Build outputs (Cloudflare / OpenNext)
 .open-next/
 web/.open-next/
+.wrangler/
+web/.wrangler/
 
 # Supabase local
 supabase/.branches/

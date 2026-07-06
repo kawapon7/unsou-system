@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { createServiceClient } from '@/utils/supabase/service'
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl
@@ -47,18 +48,18 @@ export async function middleware(request: NextRequest) {
 
   // ── ロール解決（master/owner = 親分、それ以外 = 子分） ──
   // バイパス時（user 無し）はロール判定をスキップ。
+  // ⚠️ anonキー(RLS経由)ではなく service_role で直接引く。
+  //    RLSバイパスのため cookie/セッションの状態に左右されず role.ts の getAuthContext() と同じ結果になる。
   let role: string | null = null
   if (user) {
-    const { data: userData } = await supabase
+    const service = createServiceClient()
+    const { data: userData } = await service
       .from('users')
       .select('role')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
 
-    const TEMP_OWNER_EMAILS = ['admin@hibiki.com']
-    role = TEMP_OWNER_EMAILS.includes(user.email ?? '')
-      ? 'master'
-      : (userData?.role ?? user.user_metadata?.role ?? 'contractor')
+    role = userData?.role ?? user.user_metadata?.role ?? 'contractor'
   }
 
   const isOwner = role === 'master' || role === 'owner'

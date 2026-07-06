@@ -2,6 +2,7 @@
 
 import { redirect } from 'next/navigation'
 import { createClient } from '@/utils/supabase/server'
+import { createServiceClient } from '@/utils/supabase/service'
 
 export async function login(formData: FormData) {
   const supabase = await createClient()
@@ -23,16 +24,15 @@ export async function login(formData: FormData) {
     return { error: '認証に失敗しました。' }
   }
 
-  const { data: userData } = await supabase
+  // ⚠️ anonキー(RLS経由)ではなく service_role で直接引く（middleware.ts と同じ判定に揃える）
+  const service = createServiceClient()
+  const { data: userData } = await service
     .from('users')
     .select('role')
     .eq('id', user.id)
-    .single()
+    .maybeSingle()
 
-  const TEMP_OWNER_EMAILS = ['admin@hibiki.com']
-  const role = TEMP_OWNER_EMAILS.includes(user.email ?? '')
-    ? 'master'
-    : (userData?.role ?? user.user_metadata?.role)
+  const role = userData?.role ?? user.user_metadata?.role
 
   if (role === 'master') {
     redirect('/admin/dashboard')
