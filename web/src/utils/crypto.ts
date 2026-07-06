@@ -46,7 +46,8 @@ export function decryptBankFieldValue(value: string | null | undefined): string 
   if (!isEncryptedValue(value)) return value;
   try {
     return decryptText(value);
-  } catch {
+  } catch (e) {
+    console.error('[decryptBankFieldValue] Decryption failed:', e);
     return '（復号エラー）';
   }
 }
