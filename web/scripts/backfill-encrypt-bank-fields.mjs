@@ -48,9 +48,26 @@ function isEncryptedValue(value) {
 
 const supabase = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
 
+async function fetchAllRows(table) {
+  const pageSize = 1000
+  const allRows = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from(table)
+      .select(`id, ${BANK_FIELDS.join(', ')}`)
+      .range(from, from + pageSize - 1)
+    if (error) throw error
+    if (!data || data.length === 0) break
+    allRows.push(...data)
+    if (data.length < pageSize) break
+    from += pageSize
+  }
+  return allRows
+}
+
 async function backfillTable(table) {
-  const { data: rows, error } = await supabase.from(table).select(`id, ${BANK_FIELDS.join(', ')}`)
-  if (error) throw error
+  const rows = await fetchAllRows(table)
 
   let targetCount = 0
   let updatedCount = 0
