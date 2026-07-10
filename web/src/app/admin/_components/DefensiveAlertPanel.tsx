@@ -19,6 +19,7 @@ import {
   type DuplicateGroup,
   type WorkRecordRow,
 } from '@/app/_actions/workRecordActions'
+import { sendDefensiveAlertEmail } from '@/app/_actions/emailActions'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -143,9 +144,11 @@ function ActionRow({
 function MissingInputSection({
   rows,
   onMarkAbsent,
+  onResendEmail,
 }: {
   rows: MissingInputRow[]
   onMarkAbsent: (scheduleId: string, name: string) => void
+  onResendEmail: (row: MissingInputRow) => void
 }) {
   return (
     <AlertSection icon="🔴" title="入力遅延（未入力検知）" count={rows.length} color="red">
@@ -161,6 +164,11 @@ function MissingInputSection({
               <span className="text-zinc-600">{r.projectName}</span>
               <span className="mx-1.5 text-zinc-400">|</span>
               <span className="tabular-nums text-zinc-500">{r.date}</span>
+              {r.emailStatus === 'failed' && (
+                <span className="ml-2 inline-flex rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700">
+                  ⚠️ 自動送信失敗
+                </span>
+              )}
             </div>
             <ActionRow
               phone={r.contractorPhone}
@@ -168,6 +176,15 @@ function MissingInputSection({
               onConfirm={() => onMarkAbsent(r.scheduleId, r.contractorName)}
               confirmLabel="本日休みとして完了"
             />
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => onResendEmail(r)}
+                className="inline-flex rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+              >
+                📧 メール再送信
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -322,7 +339,13 @@ function InvoiceWarningSection({ rows }: { rows: InvoiceWarningRow[] }) {
 
 // ── ⑤ 長期未承認通知書 ───────────────────────────────────
 
-function PendingNoticeCard({ r }: { r: PendingNoticeRow }) {
+function PendingNoticeCard({
+  r,
+  onResendEmail,
+}: {
+  r: PendingNoticeRow
+  onResendEmail: (row: PendingNoticeRow) => void
+}) {
   const [open, setOpen] = useState(false)
 
   return (
@@ -339,6 +362,11 @@ function PendingNoticeCard({ r }: { r: PendingNoticeRow }) {
           <span className="text-zinc-600">{r.targetMonth}</span>
           <span className="text-zinc-400">|</span>
           <span className="font-semibold text-amber-700">{r.hoursElapsed}時間経過</span>
+          {r.emailStatus === 'failed' && (
+            <span className="inline-flex rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700">
+              ⚠️ 自動送信失敗
+            </span>
+          )}
         </span>
         <span className="text-xs text-zinc-400 ml-2 shrink-0">{open ? '▲' : '▼'}</span>
       </button>
@@ -382,6 +410,13 @@ function PendingNoticeCard({ r }: { r: PendingNoticeRow }) {
             {!r.phone && (
               <span className="text-xs text-zinc-400">電話番号未登録（{r.contractorName}）</span>
             )}
+            <button
+              type="button"
+              onClick={() => onResendEmail(r)}
+              className="inline-flex rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:bg-zinc-50"
+            >
+              📧 メール再送信
+            </button>
           </div>
         </div>
       )}
@@ -389,11 +424,17 @@ function PendingNoticeCard({ r }: { r: PendingNoticeRow }) {
   )
 }
 
-function PendingNoticeSection({ rows }: { rows: PendingNoticeRow[] }) {
+function PendingNoticeSection({
+  rows,
+  onResendEmail,
+}: {
+  rows: PendingNoticeRow[]
+  onResendEmail: (row: PendingNoticeRow) => void
+}) {
   return (
     <AlertSection icon="⚠️" title="長期未承認（48時間超・支払通知書）" count={rows.length} color="amber">
       <div className="space-y-2">
-        {rows.map(r => <PendingNoticeCard key={r.noticeId} r={r} />)}
+        {rows.map(r => <PendingNoticeCard key={r.noticeId} r={r} onResendEmail={onResendEmail} />)}
       </div>
     </AlertSection>
   )
@@ -514,6 +555,39 @@ export default function DefensiveAlertPanel() {
     })
   }
 
+  function handleResendMissingInputEmail(row: MissingInputRow) {
+    if (!window.confirm(`「${row.contractorName}」へ入力依頼メールを送信しますか？`)) return
+    startTransition(async () => {
+      const res = await sendDefensiveAlertEmail({
+        alertType:      'missing_input',
+        contractorId:   row.contractorId,
+        scheduleId:     row.scheduleId,
+        contractorName: row.contractorName,
+        projectName:    row.projectName,
+        date:           row.date,
+      })
+      if (res.error) { setLoadErr(res.error); return }
+      showToast('メールを送信しました', true)
+      await load()
+    })
+  }
+
+  function handleResendPendingNoticeEmail(row: PendingNoticeRow) {
+    if (!window.confirm(`「${row.contractorName}」へ承認依頼メールを送信しますか？`)) return
+    startTransition(async () => {
+      const res = await sendDefensiveAlertEmail({
+        alertType:      'pending_notice',
+        contractorId:   row.contractorId,
+        noticeId:       row.noticeId,
+        contractorName: row.contractorName,
+        targetMonth:    row.targetMonth,
+      })
+      if (res.error) { setLoadErr(res.error); return }
+      showToast('メールを送信しました', true)
+      await load()
+    })
+  }
+
   // 突発案件は threshold と同じ work_records なので同ハンドラを流用
   const offMasterRows = (alerts.thresholds ?? [])
     .filter((r: any) => r.isOffMaster)
@@ -573,6 +647,7 @@ export default function DefensiveAlertPanel() {
       <MissingInputSection
         rows={alerts.missingInputs}
         onMarkAbsent={handleMarkAbsent}
+        onResendEmail={handleResendMissingInputEmail}
       />
 
       <DuplicateSection
@@ -588,7 +663,7 @@ export default function DefensiveAlertPanel() {
 
       <InvoiceWarningSection rows={alerts.invoiceWarnings} />
 
-      <PendingNoticeSection rows={alerts.pendingNotices} />
+      <PendingNoticeSection rows={alerts.pendingNotices} onResendEmail={handleResendPendingNoticeEmail} />
     </div>
   )
 }

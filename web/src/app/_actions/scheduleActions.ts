@@ -5,6 +5,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+import { fetchMissingInputs, type MissingInputRow } from './defensiveAlertQueries'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -35,16 +36,7 @@ async function resolveContractorId(userId: string, email?: string): Promise<stri
 
 // ── 型定義 ──────────────────────────────────────────────────
 
-export type MissingInputRow = {
-  scheduleId:      string
-  contractorId:    string
-  contractorName:  string
-  contractorPhone: string | null
-  contractorEmail: string | null
-  projectId:       string
-  projectName:     string
-  date:            string   // 'YYYY-MM-DD'
-}
+export type { MissingInputRow } from './defensiveAlertQueries'
 
 export type ScheduleRow = {
   id:           string
@@ -64,68 +56,18 @@ export type UpdatableScheduleStatus = 'scheduled' | 'absent'
 // getMissingInputs
 // status='scheduled' かつ date<=本日 だが、同一 contractor_id×date の
 // work_records が存在しない予定を返す（未入力アラート）
+// 実際の取得ロジックは defensiveAlertQueries.fetchMissingInputs に委譲する
+// （cronルートからも同じロジックを使うため）。
 // ================================================================
 export async function getMissingInputs(): Promise<ActionResult<MissingInputRow[]>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
-  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
-  const firstOfMonth = `${today.slice(0, 7)}-01`
-
-  const service = createServiceClient()
-  const db = service as any
-
-  const { data: schedules, error: sErr } = await db
-    .from('schedules')
-    .select(`
-      id,
-      contractor_id,
-      project_id,
-      date,
-      contractors ( id, name, phone, email ),
-      projects    ( id, project_name, name )
-    `)
-    .eq('status', 'scheduled')
-    .gte('date', firstOfMonth)
-    .lte('date', today)
-    .eq('tenant_id', tenantId)
-    .order('date', { ascending: false })
-
-  if (sErr) return { data: null, error: sErr.message }
-  if (!schedules?.length) return { data: [], error: null }
-
-  const contractorIds: string[] = [...new Set((schedules as any[]).map((s: any) => s.contractor_id))]
-
-  const { data: workRecords, error: wErr } = await db
-    .from('work_records')
-    .select('contractor_id, date, work_date')
-    .in('contractor_id', contractorIds)
-    .eq('tenant_id', tenantId)
-    .lte('work_date', today)
-
-  if (wErr) return { data: null, error: wErr.message }
-
-  const workedSet = new Set(
-    (workRecords ?? []).map((w: any) => {
-      const recordDate = w.date ?? w.work_date
-      return `${w.contractor_id}:${recordDate}`
-    }),
-  )
-
-  const missing: MissingInputRow[] = (schedules as any[])
-    .filter((s: any) => !workedSet.has(`${s.contractor_id}:${s.date}`))
-    .map((s: any) => ({
-      scheduleId:     s.id,
-      contractorId:   s.contractor_id,
-      contractorName: s.contractors?.name ?? s.contractor_id,
-      contractorPhone: s.contractors?.phone ?? null,
-      contractorEmail: s.contractors?.email ?? null,
-      projectId:      s.project_id,
-      projectName:    s.projects?.project_name ?? s.projects?.name ?? s.project_id,
-      date:           s.date,
-    }))
-
-  return { data: missing, error: null }
+  try {
+    return { data: await fetchMissingInputs(tenantId), error: null }
+  } catch (e) {
+    return { data: null, error: e instanceof Error ? e.message : '未入力アラート取得に失敗しました' }
+  }
 }
 
 // ================================================================
@@ -610,6 +552,7 @@ export async function logNotification(params: {
   destination:  string
   status:       NotificationLogStatus
   messageId?:   string | null
+  alertKey?:    string | null
 }): Promise<ActionResult<{ id: string }>> {
   const db = createServiceClient() as any
 
@@ -621,6 +564,7 @@ export async function logNotification(params: {
       destination:   params.destination,
       status:        params.status,
       message_id:    params.messageId ?? null,
+      alert_key:     params.alertKey  ?? null,
     })
     .select('id')
     .single()

@@ -4,8 +4,17 @@ import { revalidatePath } from 'next/cache'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getMissingInputs, type MissingInputRow } from './scheduleActions'
 import { getDuplicateInputs, type DuplicateGroup } from './workRecordActions'
+import { fetchLongPendingNotices, type PendingNoticeRow } from './defensiveAlertQueries'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+
+// PendingNoticeRow は defensiveAlertQueries.ts に定義を移したが、
+// DefensiveAlertPanel.tsx など既存の呼び出し元がこのファイルからimportしているため、
+// 外部シグネチャを変えないよう再エクスポートする。
+// ⚠️ 'use server' ファイルでは `export type { X }`（fromなしのローカル再エクスポート）は
+// ビルド時に完全に消去されず、本番で `ReferenceError: X is not defined` を起こす
+// （2026-07-10 本番障害で確認）。必ず `from` 付きの直接re-exportにすること。
+export type { PendingNoticeRow } from './defensiveAlertQueries'
 
 // ── 型定義 ──────────────────────────────────────────────────
 
@@ -26,18 +35,6 @@ export type InvoiceWarningRow = {
   invoiceNumber:        string | null
   invoiceStatus:        string | null
   registrationType:     string
-}
-
-export type PendingNoticeRow = {
-  noticeId:       string
-  contractorId:   string
-  contractorName: string
-  phone:          string | null
-  email:          string | null
-  targetMonth:    string
-  createdAt:      string
-  hoursElapsed:   number
-  projectNames:   string[]
 }
 
 export type DefensiveAlerts = {
@@ -148,76 +145,18 @@ async function fetchInvoiceWarnings(): Promise<InvoiceWarningRow[]> {
 
 // ================================================================
 // ⑤ 長期間未承認: 送信後48時間以上 approval_status='unapproved' の支払通知書（未承認検知）
+// 実際の取得ロジックは defensiveAlertQueries.fetchLongPendingNotices に委譲する
+// （cronルートからも同じロジックを使うため）。
 // ================================================================
 export async function getPendingNotices(): Promise<ActionResult<PendingNoticeRow[]>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   try {
-    return { data: await fetchLongPendingNotices(), error: null }
+    const tenantId = await getCurrentTenantId()
+    return { data: await fetchLongPendingNotices(tenantId), error: null }
   } catch (e) {
     return { data: null, error: e instanceof Error ? e.message : '未承認通知書の取得に失敗しました' }
   }
-}
-
-async function fetchLongPendingNotices(): Promise<PendingNoticeRow[]> {
-  const db = createServiceClient() as any
-
-  const threshold = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
-
-  const { data } = await db
-    .from('payment_notices')
-    .select(`
-      id, contractor_id, notice_month, approval_status, created_at,
-      contractors ( id, name, phone, email )
-    `)
-    .eq('approval_status', 'unapproved')
-    .lt('created_at', threshold)
-    .order('created_at', { ascending: true })
-
-  if (!data?.length) return []
-
-  // 各通知書の対象月に稼働したプロジェクト名を schedules から取得
-  const now = Date.now()
-  const rows = await Promise.all(
-    (data as any[]).map(async (r: any) => {
-      const hoursElapsed = Math.floor(
-        (now - new Date(r.created_at).getTime()) / (1000 * 60 * 60),
-      )
-
-      const noticeMonth: string = r.notice_month ?? ''
-      const monthStart = noticeMonth.slice(0, 7) + '-01'
-      const monthEnd   = noticeMonth.slice(0, 7) + '-31'
-
-      const { data: schedules } = await db
-        .from('schedules')
-        .select('projects ( project_name, name )')
-        .eq('contractor_id', r.contractor_id)
-        .gte('date', monthStart)
-        .lte('date', monthEnd)
-
-      const projectNames: string[] = [
-        ...new Set(
-          ((schedules ?? []) as any[])
-            .map((s: any) => s.projects?.project_name ?? s.projects?.name)
-            .filter(Boolean),
-        ),
-      ]
-
-      return {
-        noticeId:       r.id,
-        contractorId:   r.contractor_id,
-        contractorName: r.contractors?.name  ?? r.contractor_id,
-        phone:          r.contractors?.phone ?? null,
-        email:          r.contractors?.email ?? null,
-        targetMonth:    noticeMonth,
-        createdAt:      r.created_at,
-        hoursElapsed,
-        projectNames,
-      }
-    }),
-  )
-
-  return rows
 }
 
 // ================================================================
@@ -228,6 +167,7 @@ export async function getDefensiveAlerts(): Promise<ActionResult<DefensiveAlerts
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   try {
+    const tenantId = await getCurrentTenantId()
     const [
       missingRes,
       duplicatesRes,
@@ -239,7 +179,7 @@ export async function getDefensiveAlerts(): Promise<ActionResult<DefensiveAlerts
       getDuplicateInputs(),
       fetchAndLockThresholdViolations(),
       fetchInvoiceWarnings(),
-      fetchLongPendingNotices(),
+      fetchLongPendingNotices(tenantId),
     ])
 
     const missingInputs = missingRes.data  ?? []
