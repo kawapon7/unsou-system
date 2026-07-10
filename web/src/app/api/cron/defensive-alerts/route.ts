@@ -7,7 +7,7 @@ import {
   buildMissingInputMessage,
   buildPendingNoticeMessage,
 } from '@/app/_actions/defensiveAlertQueries'
-import { deliverAlertEmail } from '@/app/_actions/emailActions'
+import { deliverAlertEmail } from '@/app/_actions/emailCore'
 
 type AlertJob = {
   contractorId: string
@@ -78,14 +78,23 @@ export async function GET(req: NextRequest) {
   const errors: string[] = []
 
   for (const job of jobs) {
-    const result = await deliverAlertEmail(job)
-    if (result.error !== null) {
+    // ⚠️ deliverAlertEmail が {error} を返さず例外を投げるケース
+    // （予期しないDB接続エラー等）でもバッチ全体を中断しないよう try/catch で囲む。
+    try {
+      const result = await deliverAlertEmail(job)
+      if (result.error !== null) {
+        failed++
+        errors.push(`${job.alertKey}: ${result.error}`)
+        continue
+      }
+      if (result.data.status === 'sent') sent++
+      else failed++
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e)
       failed++
-      errors.push(`${job.alertKey}: ${result.error}`)
+      errors.push(`${job.alertKey}: 予期しないエラー: ${message}`)
       continue
     }
-    if (result.data.status === 'sent') sent++
-    else failed++
   }
 
   return NextResponse.json({
