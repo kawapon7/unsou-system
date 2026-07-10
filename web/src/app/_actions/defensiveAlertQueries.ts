@@ -77,7 +77,10 @@ async function fetchEmailStatuses(
   const map = new Map<string, EmailAlertStatus>()
   for (const row of (data ?? []) as any[]) {
     if (!map.has(row.alert_key)) {
-      map.set(row.alert_key, row.status === 'sent' ? 'sent' : 'failed')
+      // 'delivered'（notification_logsのCHECK制約上は正当な値）も未送信バッジの
+      // 誤判定を防ぐため 'sent' 扱いにする。現状この値を書き込む処理はまだないが、
+      // 将来の書き込み元が増えても 'failed' に誤分類されないようにする防御的措置。
+      map.set(row.alert_key, row.status === 'sent' || row.status === 'delivered' ? 'sent' : 'failed')
     }
   }
   return map
@@ -189,8 +192,13 @@ export async function fetchLongPendingNotices(tenantId: string): Promise<Pending
       )
 
       const noticeMonth: string = r.notice_month ?? ''
-      const monthStart = noticeMonth.slice(0, 7) + '-01'
-      const monthEnd   = noticeMonth.slice(0, 7) + '-31'
+      const ym          = noticeMonth.slice(0, 7)
+      const [y, m]       = ym.split('-').map(Number)
+      const monthStart   = `${ym}-01`
+      // 月末日をハードコード('-31')すると4/6/9/11月や2月で無効な日付になり、
+      // Supabaseクエリが（errorチェックなしのため）静かに空配列を返してしまう。
+      // Date.UTC(y, m, 0) は「翌月0日目」＝当月の末日を指すため常に正しい。
+      const monthEnd     = new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10)
 
       const { data: schedules } = await db
         .from('schedules')
