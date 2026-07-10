@@ -4,6 +4,11 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { logNotification } from './scheduleActions'
+import {
+  buildAlertKey,
+  buildMissingInputMessage,
+  buildPendingNoticeMessage,
+} from './defensiveAlertQueries'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -88,25 +93,25 @@ async function sendViaResend(
 }
 
 /**
- * 5大ディフェンシブ・アラート用の催促・警告メールを Resend 経由で送信する。
- * 送信成功時は notification_logs に不変ログ（type='email', status='sent'）を記録する。
+ * 5大ディフェンシブ・アラート用の催促・警告メールを Resend 経由で送信する共通処理。
+ * 認可チェックは行わない（呼び出し元＝cronルート／sendDefensiveAlertEmail で担保する）。
+ * 送信成否にかかわらず notification_logs に alert_key 付きで記録する
+ * （宛先未設定・本文空も「送信失敗」として記録し、他の処理を止めない）。
  */
-export async function sendDefensiveAlertEmail(
-  contractorId: string,
-  alertType:    string,
-  message:      string,
-): Promise<ActionResult<{ messageId: string }>> {
-  const auth = await requireMasterAccess()
-  if (auth.error) return { data: null, error: auth.error }
-
-  const tenantId = await getCurrentTenantId()
+export async function deliverAlertEmail(params: {
+  contractorId: string
+  alertKey:     string
+  alertType:    string
+  message:      string
+  tenantId:     string
+}): Promise<ActionResult<{ status: 'sent' | 'failed'; messageId: string | null }>> {
   const db = createServiceClient() as any
 
   const { data: contractor, error: cErr } = await db
     .from('contractors')
     .select('id, name, email')
-    .eq('id', contractorId)
-    .eq('tenant_id', tenantId)
+    .eq('id', params.contractorId)
+    .eq('tenant_id', params.tenantId)
     .maybeSingle()
 
   if (cErr) return { data: null, error: cErr.message }
@@ -115,32 +120,90 @@ export async function sendDefensiveAlertEmail(
   const contractorEmail = (contractor.email as string | null)?.trim()
   const adminFallback   = process.env.ADMIN_ALERT_EMAIL?.trim()
   const destination     = contractorEmail || adminFallback
+  const subject         = ALERT_SUBJECTS[params.alertType] ?? '【HIBIKI】業務確認のお願い'
+  const body             = params.message.trim()
 
-  if (!destination) {
-    return { data: null, error: '送信先メールアドレスが未設定です（委託先・管理者ともに未登録）' }
+  if (!destination || !body) {
+    const logRes = await logNotification({
+      contractorId: params.contractorId,
+      type:         'email',
+      destination:  destination ?? '(未設定)',
+      status:       'failed',
+      alertKey:     params.alertKey,
+    })
+    if (logRes.error) return { data: null, error: logRes.error }
+    return { data: { status: 'failed', messageId: null }, error: null }
   }
-
-  const subject = ALERT_SUBJECTS[alertType] ?? '【HIBIKI】業務確認のお願い'
-  const body    = message.trim()
-  if (!body) return { data: null, error: 'メッセージ本文が空です' }
 
   const sendResult = await sendViaResend(destination, subject, body)
-  if ('error' in sendResult) {
-    return { data: null, error: sendResult.error }
-  }
+  const status: 'sent' | 'failed' = 'error' in sendResult ? 'failed' : 'sent'
+  const messageId = 'error' in sendResult ? null : sendResult.messageId
 
   const logRes = await logNotification({
-    contractorId,
-    type:        'email',
+    contractorId: params.contractorId,
+    type:         'email',
     destination,
-    status:      'sent',
-    messageId:   sendResult.messageId,
+    status,
+    messageId,
+    alertKey:     params.alertKey,
   })
 
   if (logRes.error) {
-    console.error('[emailActions] notification_logs 記録失敗:', logRes.error)
-    return { data: null, error: `メールは送信しましたがログ記録に失敗しました: ${logRes.error}` }
+    return { data: null, error: `メール処理は完了しましたがログ記録に失敗しました: ${logRes.error}` }
   }
 
-  return { data: { messageId: sendResult.messageId }, error: null }
+  return { data: { status, messageId }, error: null }
+}
+
+/**
+ * 管理画面「📧 メール再送信」ボタン用。承認済み管理者のみ実行可能。
+ * cron の自動送信と同じ buildAlertKey/メッセージ生成関数を使うことで、
+ * emailStatus バッジ（sent/failed/not_sent）が手動再送後も正しく更新される。
+ * dedup（既存レコードがあればスキップ）はここでは行わない —— 手動操作は常に送信する。
+ */
+export async function sendDefensiveAlertEmail(
+  params:
+    | {
+        alertType:      'missing_input'
+        contractorId:   string
+        scheduleId:     string
+        contractorName: string
+        projectName:    string
+        date:           string
+      }
+    | {
+        alertType:      'pending_notice'
+        contractorId:   string
+        noticeId:       string
+        contractorName: string
+        targetMonth:    string
+      },
+): Promise<ActionResult<{ messageId: string }>> {
+  const auth = await requireMasterAccess()
+  if (auth.error) return { data: null, error: auth.error }
+
+  const tenantId = await getCurrentTenantId()
+
+  const alertKey = params.alertType === 'missing_input'
+    ? buildAlertKey('missing_input', params.scheduleId)
+    : buildAlertKey('pending_notice', params.noticeId)
+
+  const message = params.alertType === 'missing_input'
+    ? buildMissingInputMessage(params.contractorName, params.projectName, params.date)
+    : buildPendingNoticeMessage(params.contractorName, params.targetMonth)
+
+  const result = await deliverAlertEmail({
+    contractorId: params.contractorId,
+    alertKey,
+    alertType:    params.alertType,
+    message,
+    tenantId,
+  })
+
+  if (result.error !== null) return { data: null, error: result.error }
+  if (result.data.status === 'failed') {
+    return { data: null, error: 'メール送信に失敗しました（宛先未設定または送信エラー）' }
+  }
+
+  return { data: { messageId: result.data.messageId! }, error: null }
 }
