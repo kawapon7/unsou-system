@@ -1294,8 +1294,8 @@ web/
 | 🟡 中 | 自動デプロイ再設定 | main push 時の自動デプロイは旧Pages連携のため**現在無効**。`web/` で `npm run deploy` を手動実行する運用のため、push後の反映漏れリスクあり。Workers Builds で再設定 |
 | 🟡 中 | 旧URL `unsou-system.pages.dev` の扱い決定 | 7/1のWorkers移行以降404が正常な状態。放置／リダイレクト／Pagesプロジェクト削除のいずれにするか未決定 |
 | 🟢 低 | `.cursorrules` / `agent.md` のコミット | 意図的に作成した未追跡ファイル。別コミットで追加予定 |
-| 🟡 中 | 5大アラートのResendメール自動送信復活 | **設計完了・実装未着手**。設計書 `docs/superpowers/specs/2026-07-10-defensive-alert-email-revival-design.md`（コミット`ae7d5a8`）。次はwriting-plansスキルで実装計画を作成→実装。詳細は5-4参照 |
-| 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認は完了。Resend通知メール実送受信確認は上記タスクの完了をもって完了とする（旧: 単独タスクだったが、メール自動送信復活の一部として統合） |
+| 🟢 低 | 5大アラートのResendメール自動送信復活 | **実装・本番デプロイ完了 2026-07-10**。①入力遅延・⑤長期未承認の2アラートで自動送信＋手動再送信ボタンが稼働中。GitHub Actionsからの本番トリガー疎通も確認済み（`{"tenantsProcessed":1,"candidates":0,...}`）。**残タスク：現在未入力・長期未承認のアラートが0件のため、実際のメール着信は未確認**。翌日以降のJST 9:00自動実行、または実際にアラートが発生した時点で`kawapon7+driver@gmail.com`等への着信を確認し、このタスクをクローズすること。詳細は5-4参照 |
+| 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認は完了。Resend通知メール実送受信確認は上記タスクの残作業（実アラート発生時の着信確認）をもって完了とする |
 | 🟢 低 | B社マルチテナントオンボーディング | テナント分離F0実装完了後 |
 | 🟢 低 | フィールドテスト後 UX 改善 | フィードバック待ち。新機能追加はここまで待つ |
 
@@ -1326,7 +1326,17 @@ web/
 
 ### 5-4. 直近の作業履歴（新しい順）
 
-#### 2026-07-10（Claude Code セッション・引き継ぎメモ）
+#### 2026-07-10（Claude Code セッション・実装完了）
+
+**5大防衛アラートのResendメール自動送信復活を実装・本番デプロイ完了。subagent-driven-developmentスキルで全10タスクを実行、途中で本番障害1件・セキュリティ脆弱性1件を発見しその場で修正。**
+
+- **実装内容**：`notification_logs.alert_key`列追加（重複防止）、`getAllTenantIds()`、共有クエリ・メッセージ生成モジュール`defensiveAlertQueries.ts`（`fetchLongPendingNotices()`のtenant_idフィルタ欠落バグも修正）、cron専用APIルート`/api/cron/defensive-alerts`、管理画面への「📧 メール再送信」ボタン・「⚠️ 自動送信失敗」バッジ、GitHub Actionsによる毎日JST 9:00の自動実行（`.github/workflows/defensive-alerts-cron.yml`）。`CRON_SECRET`を`.env.local`／Cloudflare Workersシークレット／GitHubリポジトリシークレットの3箇所に設定済み。
+- **本番障害が発生・即時修正**：本番デプロイ直後、管理画面全体が`ReferenceError: PendingNoticeRow is not defined`で読み込み不能に。原因は`'use server'`ファイル内の`export type { X }`（`from`句なしのローカル再エクスポート）がビルド時に完全消去されず実行時参照が残っていたこと。`export type { X } from '...'`の直接re-export形式に修正し再デプロイ、`wrangler tail`で本番ログを確認しながら復旧を確認した。**教訓：`tsc --noEmit`はこの種のビルド変換固有の不具合を検出できない。`'use server'`ファイルでのバレ再エクスポートは今後も要注意。**
+- **最終レビューでセキュリティ脆弱性を発見・修正**：`deliverAlertEmail`（cron・手動再送信共通の送信処理、意図的に認可チェックなし）が`'use server'`ファイルからexportされていたため、実質的に認証不要の公開Server Action RPCとして外部から直接呼び出し可能な状態だった（任意内容のメールをHIBIKIドメインから送信可能、かつ不変ログ`notification_logs`への偽装書き込みが可能というリスク）。`defensiveAlertQueries.ts`と同じ「`'use server'`を持たないプレーンモジュール」パターンで新設の`emailCore.ts`へ移し、RPC到達不能にして解消。マージ前に修正・再デプロイ済み。
+- **開発フロー**：`docs/superpowers/plans/2026-07-10-defensive-alert-email-revival.md`（全10タスク）を`subagent-driven-development`で実行。各タスクごとに実装サブエージェント→レビューサブエージェント（spec準拠＋品質）の2段階、最後に全体差分のホールブランチレビューを実施。本番マイグレーション適用時に無関係な既存の移行履歴不整合（`20260614`/`20260616`ファイルの命名パターン起因）を発見、`supabase migration repair`で解消（ボス承認済み）。
+- **残タスク（次のチャットで確認すること）**：GitHub Actions経由の本番疎通は確認済みだが、確認時点で①入力遅延・⑤長期未承認のアラートが0件だったため、**実際のメール着信は未確認**。翌日以降の自動実行、または実アラート発生時に`kawapon7+driver@gmail.com`等への着信を確認し、「Resend通知メール実送受信確認」タスクを完全クローズすること。
+
+#### 2026-07-10（旧エントリ・設計フェーズの記録として保持）
 
 **「Resend通知メール実送受信確認」タスクに着手 → 調査の結果、設計フェーズに移行。実装は未着手。次のチャットで継続すること。**
 
