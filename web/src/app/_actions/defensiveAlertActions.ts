@@ -11,7 +11,10 @@ import { requireOwner } from '@/utils/auth'
 // PendingNoticeRow は defensiveAlertQueries.ts に定義を移したが、
 // DefensiveAlertPanel.tsx など既存の呼び出し元がこのファイルからimportしているため、
 // 外部シグネチャを変えないよう再エクスポートする。
-export type { PendingNoticeRow }
+// ⚠️ 'use server' ファイルでは `export type { X }`（fromなしのローカル再エクスポート）は
+// ビルド時に完全に消去されず、本番で `ReferenceError: X is not defined` を起こす
+// （2026-07-10 本番障害で確認）。必ず `from` 付きの直接re-exportにすること。
+export type { PendingNoticeRow } from './defensiveAlertQueries'
 
 // ── 型定義 ──────────────────────────────────────────────────
 
