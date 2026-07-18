@@ -31,15 +31,6 @@ function closingRange(yearMonth: string, closingDay: string): { from: Date; to: 
   return { from: fromDate, to: toDate }
 }
 
-/** 当月の開始・終了を返す（contractors 用: closing_day がない） */
-function monthRange(yearMonth: string): { from: Date; to: Date } {
-  const [y, m] = yearMonth.split('-').map(Number)
-  return {
-    from: new Date(y, m - 1, 1),
-    to:   new Date(y, m, 0, 23, 59, 59),
-  }
-}
-
 // ── 税額計算 ──────────────────────────────────────────────
 
 function calcTax(amount: number, taxType: string): number {
@@ -150,7 +141,7 @@ type WorkRecordForPayment = {
   projects: {
     price_rules: { buying_price: number }[]
   } | null
-  contractors: (Pick<ContractorRow, 'id' | 'name' | 'invoice_registration_type' | 'payment_site'> & {
+  contractors: (Pick<ContractorRow, 'id' | 'name' | 'invoice_registration_type' | 'closing_day' | 'payment_site'> & {
     tax_category:    string
     has_withholding: boolean
     invoice_number:  string | null
@@ -248,9 +239,15 @@ export async function fetchPaymentByContractor(
   if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
-  const { from, to } = monthRange(yearMonth)
-  const fromStr = from.toISOString().slice(0, 10)
-  const toStr   = to.toISOString().slice(0, 10)
+
+  // 締め日は委託先ごとに異なるため、取得窓は「前月1日〜当月末日」に広げ、
+  // 行ごとに各委託先の closingRange で絞り込む（前月締め分の取りこぼし防止）。
+  // clients 側の fetchBillingByClient と同じパターン。
+  const [yy, mm]  = yearMonth.split('-').map(Number)
+  const fetchFrom = new Date(yy, mm - 2, 1)
+  const fetchTo   = new Date(yy, mm, 0)
+  const fromStr = fetchFrom.toISOString().slice(0, 10)
+  const toStr   = fetchTo.toISOString().slice(0, 10)
 
   const [workResult, payeeResult] = await Promise.all([
     supabase
@@ -269,6 +266,7 @@ export async function fetchPaymentByContractor(
           invoice_registration_type,
           invoice_number,
           has_withholding,
+          closing_day,
           payment_site
         )
       `)
@@ -311,6 +309,10 @@ export async function fetchPaymentByContractor(
   for (const row of rows) {
     const contractor = row.contractors
     if (!contractor) continue
+
+    const { from: ccFrom, to: ccTo } = closingRange(yearMonth, String(contractor.closing_day ?? '月末'))
+    const workDate = new Date(row.work_date)
+    if (workDate < ccFrom || workDate > ccTo) continue
 
     const projectId = (row as any).project_id as string | null
     const rule = payeeMap.get(`${row.contractor_id}:${projectId}`)
@@ -536,20 +538,22 @@ export async function generatePaymentNotice(
   if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
-  const { from, to } = monthRange(yearMonth)
-  const fromStr    = from.toISOString().slice(0, 10)
-  const toStr      = to.toISOString().slice(0, 10)
   const targetMonth = `${yearMonth}-01`
 
   // 委託先マスタ
   const { data: c, error: cErr } = await supabase
     .from('contractors')
-    .select('tax_category, invoice_registration_type, has_withholding')
+    .select('tax_category, invoice_registration_type, has_withholding, closing_day')
     .eq('id', contractorId)
     .eq('tenant_id', tenantId)
     .single()
   if (cErr || !c) return { data: null, error: cErr?.message ?? '委託先が見つかりません' }
   const contractor = c as any
+
+  // 締め日は委託先ごとに異なる（fetchPaymentByContractor と同じ closingRange ロジック）
+  const { from, to } = closingRange(yearMonth, String(contractor.closing_day ?? '月末'))
+  const fromStr    = from.toISOString().slice(0, 10)
+  const toStr      = to.toISOString().slice(0, 10)
 
   // project_payees ルール（この委託先の全案件設定）
   const { data: payeeRulesData, error: prErr } = await supabase
@@ -766,14 +770,19 @@ export async function generateAllPaymentNotices(
   if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
-  const { from, to } = monthRange(yearMonth)
+
+  // 締め日は委託先ごとに異なるため、対象委託先の洗い出しは「前月1日〜当月末日」に広げる。
+  // 実際の集計期間は generatePaymentNotice 側で各委託先の closing_day により再度絞り込まれる。
+  const [yy, mm]  = yearMonth.split('-').map(Number)
+  const fetchFrom = new Date(yy, mm - 2, 1)
+  const fetchTo   = new Date(yy, mm, 0)
 
   const { data: workRows, error: wErr } = await supabase
     .from('work_records')
     .select('contractor_id')
     .eq('tenant_id', tenantId)
-    .gte('work_date', from.toISOString().slice(0, 10))
-    .lte('work_date', to.toISOString().slice(0, 10))
+    .gte('work_date', fetchFrom.toISOString().slice(0, 10))
+    .lte('work_date', fetchTo.toISOString().slice(0, 10))
     .not('contractor_id', 'is', null)
   if (wErr) return { data: null, error: wErr.message }
 

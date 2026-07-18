@@ -10,6 +10,7 @@ import {
   SchemaType,
   type ResponseSchema,
 } from '@google/generative-ai'
+import * as XLSX from 'xlsx'
 
 // ── モデル設定（1行換装ポイント） ──────────────────────────
 const MODEL = 'gemini-2.5-flash'
@@ -145,6 +146,20 @@ export function isGeminiSupported(mimeType: string): mimeType is GeminiSupported
   return (GEMINI_SUPPORTED_MIME_TYPES as readonly string[]).includes(mimeType)
 }
 
+// ── 表形式ファイル（Excel/CSV）でサポートされる MIME タイプ ──
+
+export const SPREADSHEET_SUPPORTED_MIME_TYPES = [
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // .xlsx
+  'application/vnd.ms-excel', // .xls
+  'text/csv',
+] as const
+
+export type SpreadsheetSupportedMimeType = typeof SPREADSHEET_SUPPORTED_MIME_TYPES[number]
+
+export function isSpreadsheetSupported(mimeType: string): mimeType is SpreadsheetSupportedMimeType {
+  return (SPREADSHEET_SUPPORTED_MIME_TYPES as readonly string[]).includes(mimeType)
+}
+
 // ── メイン抽出関数 ────────────────────────────────────────
 
 /**
@@ -181,7 +196,87 @@ export async function extractInvoiceData(
     EXTRACTION_PROMPT,
   ])
 
-  const raw  = result.response.text()
+  return parseExtractionResult(result.response.text())
+}
+
+// ── 表形式ファイル（Excel/CSV）→ テキスト変換 ─────────────────
+
+/**
+ * xlsx/xls/csv バッファを、Gemini に渡すためのプレーンテキスト（CSV相当）に変換する。
+ * 先頭シートのみを対象とする（請求書1件=1ブック/1シート運用を想定）。
+ */
+function spreadsheetToText(fileBuffer: Buffer): string {
+  const workbook  = XLSX.read(fileBuffer, { type: 'buffer' })
+  const sheetName = workbook.SheetNames[0]
+  if (!sheetName) {
+    throw new Error('スプレッドシートにシートが見つかりません')
+  }
+  const sheet = workbook.Sheets[sheetName]
+  return XLSX.utils.sheet_to_csv(sheet)
+}
+
+const SPREADSHEET_EXTRACTION_PROMPT = `あなたは日本の運送業向け請求書データ抽出専門AIです。
+以下はExcel/CSVファイルから変換したCSVテキストです（請求書または明細一覧）。
+内容を精密に解析し、指定のJSONスキーマに厳密に従って情報を抽出してください。
+
+【抽出ルール】
+- issuerName: 発行者（会社名・屋号）。列見出しや先頭行から判断。不明な場合は「不明」とする
+- invoiceDate: 発行日をYYYY-MM-DD形式で。不明・非記載ならnull
+- subtotal: すべての品目の税抜き金額合計（整数）
+- taxAmount: 消費税額合計（整数）。記載がない場合は subtotal × 0.1 の四捨五入値
+- registrationNumber: 「T」で始まる14文字（T+13桁数字）の登録番号。記載なければ空文字「」
+- items: 各明細行を1件ずつ配列に。最低1件は必須（合計行・小計行は含めない）
+- dueDate: 支払期限日。記載なければnull
+- totalAmount: 税込合計金額。記載なければ subtotal + taxAmount の値
+- issuerPhone: 発行者電話番号。記載なければnull
+- notes: 振込先情報や備考。記載なければnull
+
+【重要な注意事項】
+- すべての金額はカンマ・円マーク（¥）を除いた純粋な整数として出力すること
+- 税込金額を誤って subtotal に入れないこと。必ず税抜きで抽出すること
+- CSVの空セルは無視し、意味のある行のみを items に含めること
+
+--- CSVデータ ---
+`
+
+/**
+ * xlsx/xls/csv ファイルを Gemini 1.5 Flash に送り、請求書データを構造化抽出する。
+ * バイナリ添付ではなく、CSVテキスト化した内容をプロンプトとして送信する。
+ *
+ * @throws GEMINI_API_KEY 未設定の場合、またはAPI呼び出し失敗時
+ */
+export async function extractInvoiceDataFromSpreadsheet(
+  fileBuffer: Buffer,
+): Promise<ExtractedInvoiceData> {
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) {
+    throw new Error('環境変数 GEMINI_API_KEY が設定されていません')
+  }
+
+  const csvText = spreadsheetToText(fileBuffer)
+  if (!csvText.trim()) {
+    throw new Error('スプレッドシートに読み取れるデータがありません')
+  }
+
+  const genAI = new GoogleGenerativeAI(apiKey)
+  const model = genAI.getGenerativeModel({
+    model: MODEL,
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: RESPONSE_SCHEMA,
+    },
+  })
+
+  const result = await model.generateContent([
+    SPREADSHEET_EXTRACTION_PROMPT + csvText,
+  ])
+
+  return parseExtractionResult(result.response.text())
+}
+
+// ── 共通レスポンス整形 ────────────────────────────────────────
+
+function parseExtractionResult(raw: string): ExtractedInvoiceData {
   const data = JSON.parse(raw) as ExtractedInvoiceData
 
   // 数値フィールドを確実に整数化（Gemini が小数を返す場合があるため）

@@ -4,7 +4,9 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { mergeMetadata } from '@/app/_actions/scan-voice-bridge'
 import {
   extractInvoiceData,
+  extractInvoiceDataFromSpreadsheet,
   isGeminiSupported,
+  isSpreadsheetSupported,
   type ExtractedInvoiceData,
 } from '@/utils/scan/aiExtractor'
 
@@ -13,6 +15,7 @@ const ALLOWED_TYPES = [
   'image/jpeg',
   'application/pdf',
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/vnd.ms-excel',
   'text/csv',
 ]
 
@@ -85,8 +88,8 @@ export async function POST(req: NextRequest) {
     workRecordId:  wrid,
   }).catch(() => { /* scan_jobs テーブル未適用環境でも続行 */ })
 
-  // ── Gemini 非対応形式（xlsx, csv）は即時 queued 返却 ──
-  if (!isGeminiSupported(file.type)) {
+  // ── どちらの抽出経路にも該当しない形式は queued のまま返却 ──
+  if (!isGeminiSupported(file.type) && !isSpreadsheetSupported(file.type)) {
     if (wrid) {
       mergeMetadata('work_records', wrid, {
         'scan::job_id':       jobId,
@@ -112,7 +115,9 @@ export async function POST(req: NextRequest) {
 
   try {
     const fileBuffer = Buffer.from(await file.arrayBuffer())
-    const extracted  = await extractInvoiceData(fileBuffer, file.type)
+    const extracted  = isGeminiSupported(file.type)
+      ? await extractInvoiceData(fileBuffer, file.type)
+      : await extractInvoiceDataFromSpreadsheet(fileBuffer)
 
     // ── 成功: scan_jobs と metadata に結果を保存 ─────────
     await upsertScanJob({

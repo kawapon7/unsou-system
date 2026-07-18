@@ -12,31 +12,6 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
-  }
   public: {
     Tables: {
       approval_history: {
@@ -131,6 +106,8 @@ export type Database = {
           is_invoice_registered: boolean
           metadata: Json
           name: string | null
+          payment_day: string
+          payment_month_offset: number
           payment_site: number
           phone: string | null
           tax_treatment: string | null
@@ -156,6 +133,8 @@ export type Database = {
           is_invoice_registered?: boolean
           metadata?: Json
           name?: string | null
+          payment_day?: string
+          payment_month_offset?: number
           payment_site: number
           phone?: string | null
           tax_treatment?: string | null
@@ -181,6 +160,8 @@ export type Database = {
           is_invoice_registered?: boolean
           metadata?: Json
           name?: string | null
+          payment_day?: string
+          payment_month_offset?: number
           payment_site?: number
           phone?: string | null
           tax_treatment?: string | null
@@ -215,6 +196,7 @@ export type Database = {
           bank_branch: string | null
           bank_name: string | null
           branch_name: string | null
+          closing_day: string
           contractor_type: string
           created_at: string
           email: string
@@ -224,6 +206,9 @@ export type Database = {
           invoice_registration_type: string
           invoice_status: string | null
           name: string
+          parent_contractor_id: string | null
+          payment_day: string
+          payment_month_offset: number
           payment_site: number
           payment_type: string
           phone: string | null
@@ -240,6 +225,7 @@ export type Database = {
           bank_branch?: string | null
           bank_name?: string | null
           branch_name?: string | null
+          closing_day?: string
           contractor_type?: string
           created_at?: string
           email: string
@@ -249,6 +235,9 @@ export type Database = {
           invoice_registration_type: string
           invoice_status?: string | null
           name: string
+          parent_contractor_id?: string | null
+          payment_day?: string
+          payment_month_offset?: number
           payment_site: number
           payment_type: string
           phone?: string | null
@@ -265,6 +254,7 @@ export type Database = {
           bank_branch?: string | null
           bank_name?: string | null
           branch_name?: string | null
+          closing_day?: string
           contractor_type?: string
           created_at?: string
           email?: string
@@ -274,6 +264,9 @@ export type Database = {
           invoice_registration_type?: string
           invoice_status?: string | null
           name?: string
+          parent_contractor_id?: string | null
+          payment_day?: string
+          payment_month_offset?: number
           payment_site?: number
           payment_type?: string
           phone?: string | null
@@ -285,10 +278,50 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "contractors_parent_contractor_id_fkey"
+            columns: ["parent_contractor_id"]
+            isOneToOne: false
+            referencedRelation: "contractors"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "contractors_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      driver_project_assignments: {
+        Row: {
+          contractor_id: string
+          project_id: string
+          tenant_id: string
+        }
+        Insert: {
+          contractor_id: string
+          project_id: string
+          tenant_id: string
+        }
+        Update: {
+          contractor_id?: string
+          project_id?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "driver_project_assignments_contractor_id_fkey"
+            columns: ["contractor_id"]
+            isOneToOne: false
+            referencedRelation: "contractors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "driver_project_assignments_project_id_fkey"
+            columns: ["project_id"]
+            isOneToOne: false
+            referencedRelation: "projects"
             referencedColumns: ["id"]
           },
         ]
@@ -478,6 +511,7 @@ export type Database = {
       }
       notification_logs: {
         Row: {
+          alert_key: string | null
           contractor_id: string
           created_at: string
           destination: string
@@ -487,6 +521,7 @@ export type Database = {
           type: string
         }
         Insert: {
+          alert_key?: string | null
           contractor_id: string
           created_at?: string
           destination: string
@@ -496,6 +531,7 @@ export type Database = {
           type: string
         }
         Update: {
+          alert_key?: string | null
           contractor_id?: string
           created_at?: string
           destination?: string
@@ -516,6 +552,7 @@ export type Database = {
       }
       payment_notices: {
         Row: {
+          adjustment_amount: number
           approval_status: string
           contractor_id: string
           created_at: string
@@ -544,6 +581,7 @@ export type Database = {
           updated_at: string
         }
         Insert: {
+          adjustment_amount?: number
           approval_status?: string
           contractor_id: string
           created_at?: string
@@ -572,6 +610,7 @@ export type Database = {
           updated_at?: string
         }
         Update: {
+          adjustment_amount?: number
           approval_status?: string
           contractor_id?: string
           created_at?: string
@@ -693,25 +732,52 @@ export type Database = {
       }
       project_payees: {
         Row: {
+          adjustment_enabled: boolean
           contractor_id: string
           created_at: string
           id: string
+          margin_type: string
+          margin_value: number
+          payee_tier: string
+          payment_type: string
           project_id: string
+          rounding_rule: string
           share_rate: number | null
+          tax_method: string
+          unit_price: number | null
+          work_source_contractor_id: string | null
         }
         Insert: {
+          adjustment_enabled?: boolean
           contractor_id: string
           created_at?: string
           id?: string
+          margin_type?: string
+          margin_value?: number
+          payee_tier?: string
+          payment_type?: string
           project_id: string
+          rounding_rule?: string
           share_rate?: number | null
+          tax_method?: string
+          unit_price?: number | null
+          work_source_contractor_id?: string | null
         }
         Update: {
+          adjustment_enabled?: boolean
           contractor_id?: string
           created_at?: string
           id?: string
+          margin_type?: string
+          margin_value?: number
+          payee_tier?: string
+          payment_type?: string
           project_id?: string
+          rounding_rule?: string
           share_rate?: number | null
+          tax_method?: string
+          unit_price?: number | null
+          work_source_contractor_id?: string | null
         }
         Relationships: [
           {
@@ -728,6 +794,13 @@ export type Database = {
             referencedRelation: "projects"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "project_payees_work_source_contractor_id_fkey"
+            columns: ["work_source_contractor_id"]
+            isOneToOne: false
+            referencedRelation: "contractors"
+            referencedColumns: ["id"]
+          },
         ]
       }
       projects: {
@@ -738,6 +811,7 @@ export type Database = {
           created_at: string
           default_margin_rate: number | null
           destination: string | null
+          driver_visible: boolean
           id: string
           name: string | null
           operation_end: string | null
@@ -758,6 +832,7 @@ export type Database = {
           created_at?: string
           default_margin_rate?: number | null
           destination?: string | null
+          driver_visible?: boolean
           id?: string
           name?: string | null
           operation_end?: string | null
@@ -778,6 +853,7 @@ export type Database = {
           created_at?: string
           default_margin_rate?: number | null
           destination?: string | null
+          driver_visible?: boolean
           id?: string
           name?: string | null
           operation_end?: string | null
@@ -864,7 +940,7 @@ export type Database = {
           created_at: string
           date: string
           id: string
-          project_id: string
+          project_id: string | null
           status: string
           tenant_id: string
           updated_at: string
@@ -874,7 +950,7 @@ export type Database = {
           created_at?: string
           date: string
           id?: string
-          project_id: string
+          project_id?: string | null
           status?: string
           tenant_id?: string
           updated_at?: string
@@ -884,7 +960,7 @@ export type Database = {
           created_at?: string
           date?: string
           id?: string
-          project_id?: string
+          project_id?: string | null
           status?: string
           tenant_id?: string
           updated_at?: string
@@ -908,24 +984,35 @@ export type Database = {
       }
       users: {
         Row: {
+          contractor_id: string | null
           created_at: string
           email: string
           id: string
           role: string
         }
         Insert: {
+          contractor_id?: string | null
           created_at?: string
           email: string
           id: string
           role: string
         }
         Update: {
+          contractor_id?: string | null
           created_at?: string
           email?: string
           id?: string
           role?: string
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "users_contractor_id_fkey"
+            columns: ["contractor_id"]
+            isOneToOne: false
+            referencedRelation: "contractors"
+            referencedColumns: ["id"]
+          },
+        ]
       }
       work_records: {
         Row: {
@@ -937,10 +1024,12 @@ export type Database = {
           end_time: string | null
           id: string
           is_approved_by_master: boolean
+          is_off_master: boolean
           metadata: Json
           note: string | null
+          off_master_job_name: string | null
           piece_count: number | null
-          project_id: string
+          project_id: string | null
           raw_spot_text: string | null
           start_time: string | null
           status: string
@@ -956,10 +1045,12 @@ export type Database = {
           end_time?: string | null
           id?: string
           is_approved_by_master?: boolean
+          is_off_master?: boolean
           metadata?: Json
           note?: string | null
+          off_master_job_name?: string | null
           piece_count?: number | null
-          project_id: string
+          project_id?: string | null
           raw_spot_text?: string | null
           start_time?: string | null
           status?: string
@@ -975,10 +1066,12 @@ export type Database = {
           end_time?: string | null
           id?: string
           is_approved_by_master?: boolean
+          is_off_master?: boolean
           metadata?: Json
           note?: string | null
+          off_master_job_name?: string | null
           piece_count?: number | null
-          project_id?: string
+          project_id?: string | null
           raw_spot_text?: string | null
           start_time?: string | null
           status?: string
@@ -1014,8 +1107,7 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      is_owner: { Args: never; Returns: boolean }
-      my_contractor_id: { Args: never; Returns: string }
+      [_ in never]: never
     }
     Enums: {
       [_ in never]: never
@@ -1144,9 +1236,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {},
   },

@@ -765,6 +765,8 @@ function ContractorsTab() {
   }
 
   const invoiceLabel = (v: string) => INVOICE_REG_TYPES.find(t => t.value === v)?.label ?? v
+  // payment_type は 'bank_transfer'（旧データの英語値）と '振込'/'現金'（本フォーム経由の日本語値）が混在するため変換する
+  const paymentMethodLabel = (v: string) => (v === 'bank_transfer' ? '振込' : PAYMENT_METHODS.find(t => t.value === v)?.label ?? v)
 
   return (
     <div>
@@ -792,6 +794,7 @@ function ContractorsTab() {
                 <th className="px-4 py-3 text-left font-medium">氏名</th>
                 <th className="px-4 py-3 text-left font-medium">メール</th>
                 <th className="px-4 py-3 text-left font-medium">支払方式</th>
+                <th className="px-4 py-3 text-left font-medium">締め日</th>
                 <th className="px-4 py-3 text-left font-medium">サイト</th>
                 <th className="px-4 py-3 text-left font-medium">インボイス</th>
                 <th className="px-4 py-3 text-left font-medium">電話番号</th>
@@ -803,7 +806,8 @@ function ContractorsTab() {
                 <tr key={row.id} className="hover:bg-zinc-50">
                   <td className="px-4 py-3 font-medium text-zinc-900">{row.name}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.email ?? '—'}</td>
-                  <td className="px-4 py-3 text-zinc-600">{row.payment_type}</td>
+                  <td className="px-4 py-3 text-zinc-600">{paymentMethodLabel(row.payment_type)}</td>
+                  <td className="px-4 py-3 text-zinc-600">{row.closing_day === '月末' || row.closing_day == null ? '月末' : `${row.closing_day}日`}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.payment_site}日</td>
                   <td className="px-4 py-3 text-zinc-600">{invoiceLabel(row.invoice_registration_type)}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.phone ?? '—'}</td>
