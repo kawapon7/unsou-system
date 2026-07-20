@@ -3,18 +3,21 @@ import { getAllTenantIds } from '@/utils/tenant'
 import {
   fetchMissingInputs,
   fetchLongPendingNotices,
+  fetchOverdueInvoices,
   buildAlertKey,
   buildMissingInputMessage,
   buildPendingNoticeMessage,
+  buildOverdueInvoiceMessage,
 } from '@/app/_actions/defensiveAlertQueries'
 import { deliverAlertEmail } from '@/app/_actions/emailCore'
 
 type AlertJob = {
-  contractorId: string
-  alertKey:     string
-  alertType:    'missing_input' | 'pending_notice'
-  message:      string
-  tenantId:     string
+  contractorId?: string
+  clientId?:     string
+  alertKey:      string
+  alertType:     'missing_input' | 'pending_notice' | 'overdue_invoice'
+  message:       string
+  tenantId:      string
 }
 
 // ── Route Handler ─────────────────────────────────────────
@@ -41,9 +44,10 @@ export async function GET(req: NextRequest) {
 
   try {
     for (const tenantId of tenantIds) {
-      const [missing, pending] = await Promise.all([
+      const [missing, pending, overdue] = await Promise.all([
         fetchMissingInputs(tenantId),
         fetchLongPendingNotices(tenantId),
+        fetchOverdueInvoices(tenantId),
       ])
 
       for (const m of missing) {
@@ -64,6 +68,17 @@ export async function GET(req: NextRequest) {
           alertKey:     buildAlertKey('pending_notice', p.noticeId),
           alertType:    'pending_notice',
           message:      buildPendingNoticeMessage(p.contractorName, p.targetMonth),
+          tenantId,
+        })
+      }
+
+      for (const o of overdue) {
+        if (o.emailStatus !== 'not_sent') continue
+        jobs.push({
+          clientId:  o.clientId,
+          alertKey:  buildAlertKey('overdue_invoice', o.invoiceId),
+          alertType: 'overdue_invoice',
+          message:   buildOverdueInvoiceMessage(o.companyName, o.dueDate, o.totalAmount, o.daysOverdue),
           tenantId,
         })
       }
