@@ -3,7 +3,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 // ── 型定義 ──────────────────────────────────────────────────
 
 export type EmailAlertStatus = 'sent' | 'failed' | 'not_sent'
-export type AlertKeyType     = 'missing_input' | 'pending_notice'
+export type AlertKeyType     = 'missing_input' | 'pending_notice' | 'overdue_invoice'
 
 export type MissingInputRow = {
   scheduleId:      string
@@ -30,6 +30,16 @@ export type PendingNoticeRow = {
   emailStatus:    EmailAlertStatus
 }
 
+export type OverdueInvoiceRow = {
+  invoiceId:    string
+  clientId:     string
+  companyName:  string
+  dueDate:      string   // 'YYYY-MM-DD'
+  totalAmount:  number
+  daysOverdue:  number
+  emailStatus:  EmailAlertStatus
+}
+
 // ── 純粋関数（alert_key・メール本文） ─────────────────────────
 // cronルート・手動再送信ボタンの両方が同じ関数を使うことで、
 // キー／本文の食い違い（＝emailStatusバッジの不整合）を防ぐ。
@@ -53,6 +63,16 @@ export function buildPendingNoticeMessage(
   const ym = targetMonth.slice(0, 7)
   const [y, m] = ym.split('-')
   return `${contractorName} 様\n\n${y}年${m}月分の支払通知書がまだご確認（承認）いただけておりません。内容をご確認のうえ、承認手続きをお願いいたします。\n\n※本メールは自動送信です。`
+}
+
+export function buildOverdueInvoiceMessage(
+  companyName:  string,
+  dueDate:      string,
+  totalAmount:  number,
+  daysOverdue:  number,
+): string {
+  const yen = totalAmount.toLocaleString('ja-JP')
+  return `荷主「${companyName}」の請求書（入金予定日 ${dueDate}）が入金予定日を${daysOverdue}日超過しています。\n請求金額: ¥${yen}\n\n入金管理画面（/admin/sales）でご確認のうえ、対応をお願いいたします。\n\n※本メールは自動送信です。`
 }
 
 // ── notification_logs 突き合わせ（emailStatus 判定） ─────────
@@ -235,5 +255,53 @@ export async function fetchLongPendingNotices(tenantId: string): Promise<Pending
   return rows.map(r => ({
     ...r,
     emailStatus: statusMap.get(buildAlertKey('pending_notice', r.noticeId)) ?? 'not_sent',
+  }))
+}
+
+// ================================================================
+// fetchOverdueInvoices
+// ⑥ 延滞請求書: status='issued' かつ due_date<今日(JST) の請求書を返す。
+// invoices自体にtenant_id列がないため、clients!inner経由で絞り込む
+// （fetchLongPendingNoticesのcontractors!innerと同じパターン）。
+// ================================================================
+export async function fetchOverdueInvoices(tenantId: string): Promise<OverdueInvoiceRow[]> {
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+  const db = createServiceClient() as any
+
+  const { data, error } = await db
+    .from('invoices')
+    .select(`
+      id, client_id, due_date, total_amount, status,
+      clients!inner ( id, company_name, tenant_id )
+    `)
+    .eq('status', 'issued')
+    .lt('due_date', today)
+    .eq('clients.tenant_id', tenantId)
+    .order('due_date', { ascending: true })
+
+  if (error) throw new Error(error.message)
+  if (!data?.length) return []
+
+  const todayMs = new Date(`${today}T00:00:00+09:00`).getTime()
+
+  const overdue = (data as any[]).map((inv: any) => {
+    const dueMs = new Date(`${inv.due_date}T00:00:00+09:00`).getTime()
+    const daysOverdue = Math.round((todayMs - dueMs) / (1000 * 60 * 60 * 24))
+    return {
+      invoiceId:   inv.id as string,
+      clientId:    inv.client_id as string,
+      companyName: inv.clients?.company_name ?? inv.client_id,
+      dueDate:     inv.due_date as string,
+      totalAmount: inv.total_amount as number,
+      daysOverdue,
+    }
+  })
+
+  const keys      = overdue.map(o => buildAlertKey('overdue_invoice', o.invoiceId))
+  const statusMap = await fetchEmailStatuses(db, keys)
+
+  return overdue.map(o => ({
+    ...o,
+    emailStatus: statusMap.get(buildAlertKey('overdue_invoice', o.invoiceId)) ?? 'not_sent',
   }))
 }
