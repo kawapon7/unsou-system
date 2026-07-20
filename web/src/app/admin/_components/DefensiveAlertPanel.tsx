@@ -9,6 +9,7 @@ import {
   type ThresholdAlertRow,
   type InvoiceWarningRow,
   type PendingNoticeRow,
+  type OverdueInvoiceRow,
 } from '@/app/_actions/defensiveAlertActions'
 import {
   updateScheduleStatus,
@@ -440,6 +441,44 @@ function PendingNoticeSection({
   )
 }
 
+// ── 延滞請求書（督促・延滞管理） -────────────────────────
+// ⚠️ コード内コメントの丸数字は既存の「⑥突発案件アラート」まで使用済みのため、
+// 本セクションには丸数字を付けない（UIのtitle文言自体には元々丸数字は無いため実害なし）。
+
+const yenAmount = (n: number) => `¥${n.toLocaleString('ja-JP')}`
+
+function OverdueInvoiceSection({ rows }: { rows: OverdueInvoiceRow[] }) {
+  return (
+    <AlertSection icon="🔴" title="延滞請求書（入金予定日超過）" count={rows.length} color="red">
+      <div className="space-y-2">
+        {rows.map(r => (
+          <div
+            key={r.invoiceId}
+            className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm"
+          >
+            <div>
+              <span className="font-medium text-zinc-900">{r.companyName}</span>
+              <span className="mx-1.5 text-zinc-400">|</span>
+              <span className="text-zinc-600">入金予定日 {r.dueDate}</span>
+              <span className="mx-1.5 text-zinc-400">|</span>
+              <span className="font-semibold text-rose-700">{r.daysOverdue}日超過</span>
+              <span className="ml-1.5 text-zinc-500">（{yenAmount(r.totalAmount)}）</span>
+              {r.emailStatus === 'failed' && (
+                <span className="ml-2 inline-flex rounded-full bg-rose-100 px-1.5 py-0.5 text-[10px] font-medium text-rose-700">
+                  ⚠️ 自動送信失敗
+                </span>
+              )}
+            </div>
+            <p className="text-xs text-zinc-500 mt-1">
+              入金管理画面（/admin/sales）で入金状況を確認してください。
+            </p>
+          </div>
+        ))}
+      </div>
+    </AlertSection>
+  )
+}
+
 // ── ⑥ 突発案件アラート ──────────────────────────────────
 
 function OffMasterSection({
@@ -664,6 +703,8 @@ export default function DefensiveAlertPanel() {
       <InvoiceWarningSection rows={alerts.invoiceWarnings} />
 
       <PendingNoticeSection rows={alerts.pendingNotices} onResendEmail={handleResendPendingNoticeEmail} />
+
+      <OverdueInvoiceSection rows={alerts.overdueInvoices} />
     </div>
   )
 }
