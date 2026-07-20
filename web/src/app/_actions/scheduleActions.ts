@@ -547,19 +547,21 @@ export type NotificationLogType   = 'email' | 'sms' | 'import_log' | 'reminder'
 export type NotificationLogStatus = 'sent' | 'failed' | 'delivered'
 
 export async function logNotification(params: {
-  contractorId: string
-  type:         NotificationLogType
-  destination:  string
-  status:       NotificationLogStatus
-  messageId?:   string | null
-  alertKey?:    string | null
+  contractorId?: string
+  clientId?:     string
+  type:          NotificationLogType
+  destination:   string
+  status:        NotificationLogStatus
+  messageId?:    string | null
+  alertKey?:     string | null
 }): Promise<ActionResult<{ id: string }>> {
   const db = createServiceClient() as any
 
   const { data, error } = await db
     .from('notification_logs')
     .insert({
-      contractor_id: params.contractorId,
+      contractor_id: params.contractorId ?? null,
+      client_id:     params.clientId ?? null,
       type:          params.type,
       destination:   params.destination,
       status:        params.status,
