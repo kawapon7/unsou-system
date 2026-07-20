@@ -59,17 +59,19 @@ function Td({
   right,
   bold,
   muted,
+  warn,
 }: {
   children: React.ReactNode
   right?: boolean
   bold?: boolean
   muted?: boolean
+  warn?: boolean
 }) {
   return (
     <td
       className={`px-4 py-3 text-sm ${right ? 'text-right' : ''} ${
         bold ? 'font-semibold text-zinc-900' : ''
-      } ${muted ? 'text-zinc-400' : 'text-zinc-700'}`}
+      } ${warn ? 'text-rose-700 font-semibold' : muted ? 'text-zinc-400' : 'text-zinc-700'}`}
     >
       {children}
     </td>
@@ -459,6 +461,9 @@ function PaymentStatusTab({ yearMonth }: { yearMonth: string }) {
   const [updating, setUpdating] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+  const isOverdue = (r: SalesListRow) => r.status === 'issued' && !!r.dueDate && r.dueDate < today
+
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
@@ -531,9 +536,12 @@ function PaymentStatusTab({ yearMonth }: { yearMonth: string }) {
             </thead>
             <tbody className="divide-y divide-zinc-100">
               {rows.map(r => (
-                <tr key={r.invoiceId} className="hover:bg-zinc-50">
+                <tr
+                  key={r.invoiceId}
+                  className={`hover:bg-zinc-50 ${isOverdue(r) ? 'bg-rose-50' : ''}`}
+                >
                   <Td bold>{r.companyName}</Td>
-                  <Td muted>{r.dueDate || '—'}</Td>
+                  <Td warn={isOverdue(r)}>{r.dueDate || '—'}{isOverdue(r) && ' ⚠️'}</Td>
                   <Td><StatusBadge status={r.status} /></Td>
                   <Td right bold>{yen(r.totalAmount)}</Td>
                   <td className="px-4 py-3">
