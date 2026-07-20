@@ -19,6 +19,7 @@ const ALERT_SUBJECTS: Record<string, string> = {
   threshold:       '【HIBIKI】稼働実績の確認をお願いします',
   duplicate:       '【HIBIKI】実績データの重複について',
   invoice_warning: '【HIBIKI】インボイス登録番号のご確認',
+  overdue_invoice: '【HIBIKI】延滞請求書のお知らせ',
 }
 
 async function sendViaResend(
@@ -64,37 +65,51 @@ async function sendViaResend(
 /**
  * 5大ディフェンシブ・アラート用の催促・警告メールを Resend 経由で送信する共通処理。
  * 認可チェックは行わない（呼び出し元＝cronルート／sendDefensiveAlertEmail で担保する）。
+ * contractorId（委託先起点）または clientId（荷主起点、⑥延滞請求書のみ）の
+ * どちらか一方を渡す。clientId の場合は荷主本人には送らず ADMIN_ALERT_EMAIL 宛に送る
+ * （社内向けアラートのため）。
  * 送信成否にかかわらず notification_logs に alert_key 付きで記録する
  * （宛先未設定・本文空も「送信失敗」として記録し、他の処理を止めない）。
  */
 export async function deliverAlertEmail(params: {
-  contractorId: string
-  alertKey:     string
-  alertType:    string
-  message:      string
-  tenantId:     string
+  contractorId?: string
+  clientId?:     string
+  alertKey:      string
+  alertType:     string
+  message:       string
+  tenantId:      string
 }): Promise<ActionResult<{ status: 'sent' | 'failed'; messageId: string | null }>> {
   const db = createServiceClient() as any
 
-  const { data: contractor, error: cErr } = await db
-    .from('contractors')
-    .select('id, name, email')
-    .eq('id', params.contractorId)
-    .eq('tenant_id', params.tenantId)
-    .maybeSingle()
+  let destination: string | undefined
 
-  if (cErr) return { data: null, error: cErr.message }
-  if (!contractor) return { data: null, error: '委託先が見つかりません' }
+  if (params.clientId) {
+    destination = process.env.ADMIN_ALERT_EMAIL?.trim()
+  } else if (params.contractorId) {
+    const { data: contractor, error: cErr } = await db
+      .from('contractors')
+      .select('id, name, email')
+      .eq('id', params.contractorId)
+      .eq('tenant_id', params.tenantId)
+      .maybeSingle()
 
-  const contractorEmail = (contractor.email as string | null)?.trim()
-  const adminFallback   = process.env.ADMIN_ALERT_EMAIL?.trim()
-  const destination     = contractorEmail || adminFallback
-  const subject         = ALERT_SUBJECTS[params.alertType] ?? '【HIBIKI】業務確認のお願い'
-  const body             = params.message.trim()
+    if (cErr) return { data: null, error: cErr.message }
+    if (!contractor) return { data: null, error: '委託先が見つかりません' }
+
+    const contractorEmail = (contractor.email as string | null)?.trim()
+    const adminFallback   = process.env.ADMIN_ALERT_EMAIL?.trim()
+    destination = contractorEmail || adminFallback
+  } else {
+    return { data: null, error: 'contractorId または clientId のいずれかが必要です' }
+  }
+
+  const subject = ALERT_SUBJECTS[params.alertType] ?? '【HIBIKI】業務確認のお願い'
+  const body    = params.message.trim()
 
   if (!destination || !body) {
     const logRes = await logNotification({
       contractorId: params.contractorId,
+      clientId:     params.clientId,
       type:         'email',
       destination:  destination ?? '(未設定)',
       status:       'failed',
@@ -110,6 +125,7 @@ export async function deliverAlertEmail(params: {
 
   const logRes = await logNotification({
     contractorId: params.contractorId,
+    clientId:     params.clientId,
     type:         'email',
     destination,
     status,
