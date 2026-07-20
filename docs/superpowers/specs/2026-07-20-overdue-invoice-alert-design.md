@@ -41,26 +41,54 @@ GitHub Actions（毎日 JST 9:00、既存cronに相乗り）
 ```
 
 * 既存の`fetchMissingInputs`（`defensiveAlertQueries.ts`）と同じJST日付算出パターン（`toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })`）を流用し、`fetchOverdueInvoices(tenantId)`を新設する。
-* 送信先：`deliverAlertEmail`は現状`contractor.email || ADMIN_ALERT_EMAIL`を宛先にする実装だが、本アラートは`contractor_id`を持たない（`invoices`は`client_id`のみ）。荷主には送らない方針のため、`contractorId`を渡さず常に`ADMIN_ALERT_EMAIL`宛に送信する新しい呼び出し経路を`deliverAlertEmail`に追加する（`contractorId`を省略可能にする）。
+* 送信先：本アラートは`contractor`を持たず`client_id`のみを持つため、`deliverAlertEmail`に`clientId`引数を追加する。荷主のメールアドレスには送らない方針（社内向けのみ）のため、`clientId`が渡された場合は常に`ADMIN_ALERT_EMAIL`宛に送信し、`logNotification`には`clientId`を渡す（`contractorId`は渡さない）。`ADMIN_ALERT_EMAIL`未設定の場合は他の防衛アラートと同様に宛先なし＝`status='failed'`として記録する。
 * cronルート・GitHub Actionsワークフロー自体への変更は「呼び出すクエリ関数が1つ増える」のみで、シークレット検証・fail-closed方針・テナント横断ループの構造は無変更。
 
 ## 4. データベース変更
 
-マイグレーション不要。
+**発見した制約：** `notification_logs.contractor_id`は`NOT NULL REFERENCES contractors(id)`。延滞請求書アラートは`invoices.client_id`（荷主）が主体であり、紐づく`contractor`が存在しないため、現状のスキーマのままでは`logNotification`でログを記録できない。これに対応する小さなマイグレーションが必要。
 
+新規マイグレーション（`supabase/migrations/20260720000000_notification_logs_client_id.sql`）：
+
+```sql
+-- notification_logs は contractor_id NOT NULL のため、
+-- 委託先を持たないアラート（延滞請求書＝荷主起点）を記録できない。
+-- client_id を追加し、どちらか一方が必須というCHECK制約に変更する。
+
+alter table notification_logs
+  alter column contractor_id drop not null;
+
+alter table notification_logs
+  add column if not exists client_id uuid references clients(id) on delete cascade;
+
+alter table notification_logs
+  add constraint notification_logs_subject_check
+  check (
+    (contractor_id is not null and client_id is null) or
+    (contractor_id is null and client_id is not null)
+  );
+
+create index if not exists idx_notification_logs_client_id
+  on notification_logs (client_id);
+```
+
+* RLS（`notification_logs_owner_select`）は`is_owner()`のみで判定しており`contractor_id`を参照しないため、この変更で挙動は変わらない。
+* 不変ログの`UPDATE`/`DELETE`拒否トリガー（`20260627000001_notification_logs_immutability_triggers.sql`）は列に依存しないため無変更で有効なまま。
 * `notification_logs.alert_key`は既存のTEXT列（`20260710000000_add_alert_key_to_notification_logs.sql`で追加済み）にCHECK制約が無いため、`overdue_invoice:{invoiceId}`という新しい値をそのままINSERTできる。
 * `notification_logs.type`（`email`/`sms`/`import_log`/`reminder`のCHECK制約）は既存の`email`をそのまま使う。
 * TypeScript側の`AlertKeyType`（`defensiveAlertQueries.ts`）に`'overdue_invoice'`を追加する。
+* `logNotification`（`scheduleActions.ts`）の`contractorId: string`必須引数を`contractorId?: string; clientId?: string`のどちらか一方を渡す形に変更する。
 
 ## 5. サーバー側の変更
 
 | ファイル | 変更内容 |
 |---|---|
+| `web/src/app/_actions/scheduleActions.ts` | `logNotification`の引数を`contractorId?: string; clientId?: string`に変更（どちらか一方必須）。`insert`時に対応する列のみ渡す |
 | `web/src/app/_actions/defensiveAlertQueries.ts` | `fetchOverdueInvoices(tenantId)`を新設。`invoices`を`clients!inner(tenant_id, company_name)`でjoinし`status='issued' AND due_date < today(JST)`で抽出、`alert_key`付与まで行う |
-| `web/src/app/_actions/emailCore.ts` | `ALERT_SUBJECTS`に`overdue_invoice`の件名を追加。`deliverAlertEmail`の`contractorId`引数を省略可能にし、省略時は`ADMIN_ALERT_EMAIL`のみを宛先にする分岐を追加 |
-| `web/src/app/api/cron/defensive-alerts/route.ts` | テナント横断ループ内で`fetchOverdueInvoices`を呼び出し、未送信分のみ送信する処理を追加 |
-| `web/src/app/_actions/defensiveAlertActions.ts` | `getDefensiveAlerts()`の`Promise.all`に⑥を追加し、返却型に`overdueInvoices`フィールドと`totalCount`への合算を追加 |
-| `web/src/app/admin/sales/actions.ts` | `fetchSalesList`が返す各行に「延滞中か」の判定に必要な情報（既存の`status`・`due_date`で判定可能なため、追加取得は不要。画面側で判定ロジックを実装） |
+| `web/src/app/_actions/emailCore.ts` | `ALERT_SUBJECTS`に`overdue_invoice`の件名を追加。`deliverAlertEmail`の引数に`clientId?: string`を追加（`contractorId`とは排他）。`clientId`が渡された場合は`ADMIN_ALERT_EMAIL`宛に送信し`logNotification`へ`clientId`を渡す |
+| `web/src/app/api/cron/defensive-alerts/route.ts` | テナント横断ループ内で`fetchOverdueInvoices`を呼び出し、未送信分のみ送信する処理を追加。`AlertJob`型に`clientId?: string`を追加 |
+| `web/src/app/_actions/defensiveAlertActions.ts` | `getDefensiveAlerts()`の`Promise.all`に⑥を追加し、返却型`DefensiveAlerts`に`overdueInvoices: OverdueInvoiceRow[]`フィールドと`totalCount`への合算を追加 |
+| `web/src/app/admin/sales/actions.ts` | 変更なし（`fetchSalesList`が既に返す`status`・`dueDate`で画面側の強調表示判定が可能） |
 
 ## 6. UIコンポーネント変更
 
