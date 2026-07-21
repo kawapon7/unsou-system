@@ -10,7 +10,9 @@
 
 ## 着手順序と概要
 
-### 1. 督促・延滞管理（優先度：最初に着手）
+### 1. 督促・延滞管理（優先度：最初に着手）✅ 実装完了（2026-07-21）
+
+> 設計書: `docs/superpowers/specs/2026-07-20-overdue-invoice-alert-design.md` / 実装プラン: `docs/superpowers/plans/2026-07-20-overdue-invoice-alert.md`（全9タスク完了・レビュー全件Approved）。本番デプロイは未実施（詳細は`docs/HANDOVER_MASTER.md`§5-4の2026-07-21エントリ参照）。
 
 **概要：** 入金予定日を超過したのに「入金済」になっていない請求書を検知し、既存の5大防衛アラート（`notification_logs`テーブル・Resendメール送信基盤）と同じ仕組みで督促アラートを追加する。「未入力アラート」はあるが「未入金アラート」がない現状の穴を埋める。
 

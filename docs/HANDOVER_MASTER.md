@@ -1298,7 +1298,7 @@ web/
 | 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認は完了。Resend通知メール実送受信確認は上記タスクの残作業（実アラート発生時の着信確認）をもって完了とする |
 | 🟢 低 | B社マルチテナントオンボーディング | テナント分離F0実装完了後 |
 | 🟢 低 | フィールドテスト後 UX 改善 | フィードバック待ち。新機能追加はここまで待つ |
-| 🟢 低 | 一般的な請求・支払い管理ソフトとの機能ギャップ検討 | 2026-07-18にClaude Codeが比較分析。詳細は5-4参照。時間のある時に再開予定（フィールドテスト後UX改善と合わせて検討） |
+| 🟢 低 | 一般的な請求・支払い管理ソフトとの機能ギャップ検討 | 2026-07-18にClaude Codeが比較分析。7項目中「①督促・延滞管理」は2026-07-21に実装完了（詳細は5-4参照）。残り6項目は時間のある時に再開予定（フィールドテスト後UX改善と合わせて検討） |
 
 ### 5-3. 現在の実装状況（フェーズ2 進行中）
 
@@ -1314,6 +1314,7 @@ web/
 | VOICE機能（音声操作・TTS） | ✅ 完了 | Gemini 2.0 Flash、`voice-actions.ts` |
 | お気に入り（ショートカット）機能 | ✅ 完了 | localStorage、`hibiki_admin_favorites` |
 | 5大防衛アラート | ✅ 完了 | Actions基盤 + `DefensiveAlertPanel` UI |
+| 督促・延滞管理アラート（⑥延滞請求書） | ✅ 完了 2026-07-21 | `fetchOverdueInvoices` + cron統合 + `DefensiveAlertPanel`/入金管理画面表示。社内向けのみ・初回送信のみ |
 | Resend メール送信 | ✅ 完了 2026-06-20 | 本番キー設定済み・送信テスト確認済み |
 | SMS催促リンク生成 | ✅ 完了 | `smsLink.ts`（`sms:` URLスキーム） |
 | Googleフォーム緊急インポート | ✅ 口作成完了 | ファジーマッチングは未実装 |
@@ -1326,6 +1327,28 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-07-21（Claude Code セッション・実装完了、本番デプロイは未実施）
+
+**督促・延滞管理アラート（機能ギャップ分析7項目のうち①、優先度最初）を実装完了。subagent-driven-developmentスキルで全8タスクを実行、レビューはすべてApproved。ボスの判断で本番デプロイは今回見送り、ブランチのマージのみ実施。**
+
+- **実装内容**：入金予定日（`invoices.due_date`）を超過したのに`status='issued'`のままの請求書を検知する「⑥延滞請求書」アラートを、既存の5大防衛アラートと同じcron・メール・UI基盤に統合。
+  - `defensiveAlertQueries.ts`に`fetchOverdueInvoices(tenantId)`・`buildOverdueInvoiceMessage`を新設（`fetchLongPendingNotices`と同じJST日付判定・`clients!inner`テナントフィルタパターン）
+  - cronルート（`/api/cron/defensive-alerts`）の既存テナント横断ループに統合、`DefensiveAlertPanel`に新セクション、入金管理画面（画面③）の延滞行を赤字強調
+  - 通知対象は社内（`ADMIN_ALERT_EMAIL`）向けのみ・初回送信のみ（荷主本人への督促メールは対象外、繰り返し通知もなし）
+- **設計時に発見した見落とし**：`notification_logs.contractor_id`が`NOT NULL REFERENCES contractors(id)`だったため、`contractor`を持たず`client`のみを持つこのアラートはそのままでは記録できないことが実装前調査で判明。設計書を修正し、マイグレーション（`20260720000000_notification_logs_client_id.sql`：`contractor_id`のNOT NULL解除＋`client_id`列追加＋どちらか一方必須のCHECK制約）を追加してから実装に着手した。
+- **DB移行時に既知の履歴ドリフトが再発**：`npx supabase db push`実行時、2026-07-10と同種の移行履歴ドリフト（`20260614`/`20260616`系列がCLI追跡外になっていた）が再発し、Task 1の実装がブロックされた。ボス承認のうえ`supabase migration repair --status reverted 20260614 20260616` → `supabase db push --include-all`で解消（再発防止策は未着手・今後の検討課題）。
+- **実地検証**（本番DBに一時テストデータを2件挿入→cron実行→削除、テストデータはクリーンアップ済み）：
+  - cronルート直接curl：延滞請求書1件検知・Resend経由でメール送信成功（`status='sent'`、`message_id`記録）を確認。ただしResendアカウントがテストモード（未検証ドメイン）のため、検証済みアドレス以外への送信は403で失敗することが判明（コード側の問題ではなくResend側のテストモード制限。本番ドメイン検証済みなら解消見込み、要確認）
+  - 同じcurlを2回連続実行 → 2回目は`candidates:0`で重複送信されないことを確認
+  - `DefensiveAlertPanel`に「延滞請求書」セクションが正しいバッジ件数・超過日数・金額で表示されることを確認
+  - 入金管理画面で延滞行が赤字強調表示されることを確認
+  - 「入金済にする」ボタンで対象請求書のステータスを変更 → 入金管理画面の強調表示・`DefensiveAlertPanel`のバッジ件数の両方から正しく消えることを確認
+- **開発フロー**：`docs/superpowers/plans/2026-07-20-overdue-invoice-alert.md`（全9タスク）を`subagent-driven-development`で実行。git worktree（`.worktrees/overdue-invoice-alert`）で隔離実装。各タスクごとに実装サブエージェント（haiku中心・judgment要素があるもののみsonnet）→レビューサブエージェント（spec準拠＋品質、sonnet）の2段階、全タスクSpec compliance ✅・Approved。
+- **残タスク（次のチャットで確認すること）**：
+  1. **本番デプロイ未実施**。ボスの判断で今回はマージのみ。デプロイ時は`ADMIN_ALERT_EMAIL`環境変数の本番設定（Cloudflare Workersシークレット）を確認すること（ローカル`.env.local`には無かったため、本番にも未設定の可能性が高い）
+  2. Resendのテストモード制限（検証済みアドレス以外へ送信できない403エラー）の解消要否を確認。本番運用で`ADMIN_ALERT_EMAIL`に検証済みでないアドレスを設定する場合、ドメイン検証（resend.com/domains）が必要になる
+  3. マイグレーション履歴ドリフト（`20260614`/`20260616`系列）が2026-07-10・2026-07-21と2回連続で再発している。手動SQL Editor実行が原因と推測されるが、再発防止策（CLI経由の運用徹底等）は未検討のまま
 
 #### 2026-07-18（Claude Code セッション・分析のみ、未着手）
 
