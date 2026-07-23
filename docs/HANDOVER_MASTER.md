@@ -1330,7 +1330,7 @@ web/
 
 #### 2026-07-21（Claude Code セッション・実装完了、本番デプロイは未実施）
 
-**督促・延滞管理アラート（機能ギャップ分析7項目のうち①、優先度最初）を実装完了。subagent-driven-developmentスキルで全8タスクを実行、レビューはすべてApproved。ボスの判断で本番デプロイは今回見送り、ブランチのマージのみ実施。**
+**督促・延滞管理アラート（機能ギャップ分析7項目のうち①、優先度最初）を実装完了。subagent-driven-developmentスキルで全9タスクを実行、個別タスクレビュー・最終ホールブランチレビューともすべてApproved。ボスの判断で本番デプロイ・マージともに今回は見送り、ブランチ`overdue-invoice-alert`（`.worktrees/overdue-invoice-alert`）を保持したままセッション終了。次回セッションでマージ/PR/デプロイいずれにするか判断すること。**
 
 - **実装内容**：入金予定日（`invoices.due_date`）を超過したのに`status='issued'`のままの請求書を検知する「⑥延滞請求書」アラートを、既存の5大防衛アラートと同じcron・メール・UI基盤に統合。
   - `defensiveAlertQueries.ts`に`fetchOverdueInvoices(tenantId)`・`buildOverdueInvoiceMessage`を新設（`fetchLongPendingNotices`と同じJST日付判定・`clients!inner`テナントフィルタパターン）
@@ -1346,9 +1346,10 @@ web/
   - 「入金済にする」ボタンで対象請求書のステータスを変更 → 入金管理画面の強調表示・`DefensiveAlertPanel`のバッジ件数の両方から正しく消えることを確認
 - **開発フロー**：`docs/superpowers/plans/2026-07-20-overdue-invoice-alert.md`（全9タスク）を`subagent-driven-development`で実行。git worktree（`.worktrees/overdue-invoice-alert`）で隔離実装。各タスクごとに実装サブエージェント（haiku中心・judgment要素があるもののみsonnet）→レビューサブエージェント（spec準拠＋品質、sonnet）の2段階、全タスクSpec compliance ✅・Approved。
 - **残タスク（次のチャットで確認すること）**：
-  1. **本番デプロイ未実施**。ボスの判断で今回はマージのみ。デプロイ時は`ADMIN_ALERT_EMAIL`環境変数の本番設定（Cloudflare Workersシークレット）を確認すること（ローカル`.env.local`には無かったため、本番にも未設定の可能性が高い）
-  2. Resendのテストモード制限（検証済みアドレス以外へ送信できない403エラー）の解消要否を確認。本番運用で`ADMIN_ALERT_EMAIL`に検証済みでないアドレスを設定する場合、ドメイン検証（resend.com/domains）が必要になる
-  3. マイグレーション履歴ドリフト（`20260614`/`20260616`系列）が2026-07-10・2026-07-21と2回連続で再発している。手動SQL Editor実行が原因と推測されるが、再発防止策（CLI経由の運用徹底等）は未検討のまま
+  1. **ブランチ`overdue-invoice-alert`が未マージのまま**。worktree `.worktrees/overdue-invoice-alert`に実装済みコミット（`8f11c62..f94c3b7`、10コミット）が残っている。次回セッション冒頭で「①mainへマージ ②PR作成 ③このまま保持 ④破棄」のどれにするかボスに確認すること
+  2. **本番デプロイ未実施**（マージ後の話）。デプロイ時は`ADMIN_ALERT_EMAIL`環境変数の本番設定（Cloudflare Workersシークレット）を確認すること（ローカル`.env.local`には無かったため、本番にも未設定の可能性が高い）。未設定のままcronが走ると延滞アラートが送信失敗のまま焼き付き、後から設定しても自動再送されない点に注意（最終レビューで指摘済み）
+  3. Resendのテストモード制限（検証済みアドレス以外へ送信できない403エラー）の解消要否を確認。本番運用で`ADMIN_ALERT_EMAIL`に検証済みでないアドレスを設定する場合、ドメイン検証（resend.com/domains）が必要になる
+  4. マイグレーション履歴ドリフト（`20260614`/`20260616`系列）が2026-07-10・2026-07-21と2回連続で再発している。手動SQL Editor実行が原因と推測されるが、再発防止策（CLI経由の運用徹底等）は未検討のまま
 
 #### 2026-07-18（Claude Code セッション・分析のみ、未着手）
 
