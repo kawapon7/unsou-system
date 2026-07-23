@@ -1291,7 +1291,7 @@ web/
 | ✅ 完了 2026-07-06 | 本番ユーザー作成・実ログイン確認 | master(`kawapon7+hibiki@gmail.com`)・driver(`kawapon7+driver@gmail.com`)とも実ログイン確認済み。この過程で権限誤判定の重大バグを発見・修正（詳細は5-4参照） |
 | 🟡 中 | テナント分離 F0 実装 | `docs/superpowers/plans/2026-06-27-tenant-isolation-phase0.md`。B社導入前まで。出発点=Task0でステージング実査→A社正準UUID確定→計画内 `<TENANT_A_UUID>` 置換→Cursor実装。挙動不変。⚠️現状の本番ユーザーは`user_metadata.tenant_id='local-dev'`（既存データと一致）で運用中。F0実装時はこのアカウントもUUID移行対象に含めること |
 | ✅ 完了 2026-07-01〜02深夜 | APIキー/トークンのローテーション | 2026-07-01セッションでチャットに各種キー露出（Cloudflare token/Supabase/Gemini/Resend）。深夜作業で日付を跨ぎつつ全キー再発行・差し替え済み（ユーザー確認）。Supabase側は「Legacy API Keys（旧来のanon/service_roleキー）」の再発行で手こずった |
-| 🟡 中 | 自動デプロイ再設定 | main push 時の自動デプロイは旧Pages連携のため**現在無効**。`web/` で `npm run deploy` を手動実行する運用のため、push後の反映漏れリスクあり。Workers Builds で再設定 |
+| 🟠 あと一歩 2026-07-23 | 自動デプロイ再設定 | **GitHub Actions方式で実装・push済み**（`.github/workflows/deploy.yml`、コミット`b8069eb`）。main push（`web/**`変更時）で `npm run deploy` をCI実行。GitHub secrets 4つ登録済み（NEXT_PUBLIC_SUPABASE_URL/ANON_KEY・CLOUDFLARE_API_TOKEN・CLOUDFLARE_ACCOUNT_ID）。**初回実行はビルド全成功→デプロイ段でCloudflare認証失敗**（`Invalid access token [code:9109]`）。**残作業＝CLOUDFLARE_API_TOKENの再発行と入れ直しのみ**。手順：Cloudflare My Profile→API Tokens→Create Token→テンプレ「Edit Cloudflare Workers」で発行→GitHubの同名secretを編集で上書き→`gh workflow run deploy.yml`（またはActionsタブのRun workflow）で再実行。ビルド側（Node24・NEXT_PUBLIC焼き込み）は検証済みで問題なし |
 | 🟡 中 | 旧URL `unsou-system.pages.dev` の扱い決定 | 7/1のWorkers移行以降404が正常な状態。放置／リダイレクト／Pagesプロジェクト削除のいずれにするか未決定 |
 | 🟢 低 | `.cursorrules` / `agent.md` のコミット | 意図的に作成した未追跡ファイル。別コミットで追加予定 |
 | ✅ 完了 2026-07-23 | 5大アラートのResendメール自動送信復活 | 実装・本番デプロイ完了 2026-07-10。①入力遅延・⑤長期未承認の2アラートで自動送信＋手動再送信ボタンが稼働中。**2026-07-23、実アラート発生時のメール着信をボスが確認済み → タスククローズ**。これをもって7/6引き継ぎ課題「Resend通知メール実送受信確認」も完全クローズ。詳細は5-4参照 |
