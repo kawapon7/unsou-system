@@ -1,0 +1,66 @@
+name: Deploy to Cloudflare Workers
+
+# main への push で本番（Cloudflare Workers）へ自動ビルド＆デプロイする。
+# 旧 Cloudflare Pages 連携は 2026-07-01 の Workers 移行で無効化されたため、
+# その代替としてこのワークフローで自動デプロイを復活させる。
+# 手動デプロイ（web/ で npm run deploy）と同一のコマンドを CI から実行する。
+
+on:
+  push:
+    branches: [main]
+    # docs/ のみの変更では無駄な本番デプロイを走らせない。
+    # web/ 配下、またはこのワークフロー自身が変わったときだけ発火する。
+    paths:
+      - 'web/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch: {}   # 手動実行（Actions タブの Run workflow ボタン）も許可
+
+# 同時に複数のデプロイが走ってレースするのを防ぐ。
+# cancel-in-progress: false → 進行中の wrangler deploy を途中でキャンセルせず、後続を待たせる。
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+# このワークフローはリポジトリ書き込みを行わない。最小権限に絞る。
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # ローカル開発環境（Node 24）に合わせる。build/deploy の差分を避けるため。
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build & Deploy to Cloudflare Workers
+        # = ALLOW_DEV_AUTH_BYPASS=false opennextjs-cloudflare build && opennextjs-cloudflare deploy
+        run: npm run deploy
+        env:
+          # --- ビルド時に必要（NEXT_PUBLIC_* はクライアントバンドルへ焼き込まれる） ---
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+          # --- wrangler（opennextjs-cloudflare deploy）の認証 ---
+          # CLOUDFLARE_API_TOKEN は Workers Scripts:Edit 権限のトークン。
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          # --- セキュリティ注意（認証バイパス焼き込み事故の恒久対策） ---
+          # ALLOW_DEV_AUTH_BYPASS は上記 deploy スクリプトが常に =false を強制するため、
+          # ここでは意図的に渡さない。CI には .env.local（gitignore 済み）が存在しないため、
+          # 2026-07-01 に発生した「.env.local の =true がビルドへ混入」事故は構造的に再発しない。
+          # 実行時シークレット（SUPABASE_SERVICE_ROLE_KEY / ENCRYPTION_KEY / GEMINI_API_KEY /
+          # RESEND_API_KEY / HIBIKI_OWNER_EMAILS 等）は Worker 側に wrangler secret で設定済みで、
+          # deploy では消えないため CI へ複製しない（GitHub 側の機密面を最小化する意図）。
