@@ -3,6 +3,7 @@
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireOwner, requireAuth } from '@/utils/auth'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { getCompanyInfo, type CompanyInfo } from '@/utils/company'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -27,6 +28,8 @@ export type InvoicePdfData = {
   taxAmount:     number
   totalAmount:   number
   isTaxable:     boolean
+  /** 発行元（自社）情報。DBの自社マスタから取得する */
+  company:       CompanyInfo
 }
 
 export async function fetchInvoicePdfData(
@@ -89,8 +92,14 @@ export async function fetchInvoicePdfData(
   const suffix        = invoice?.id ? invoice.id.replace(/-/g, '').slice(0, 5).toUpperCase() : 'XXXXX'
   const invoiceNumber = `INV-${yearMonth.replace('-', '')}-${suffix}`
 
+  // ⚠️ fail-closed: 自社情報が未登録ならPDFを生成せずエラーを返す。
+  //    仮の登録番号を印字した請求書が社外に出るのを防ぐ。
+  const companyRes = await getCompanyInfo(tenantId)
+  if (!companyRes.data) return { data: null, error: companyRes.error }
+
   return {
     data: {
+      company: companyRes.data,
       invoiceNumber,
       issueDate:    new Date().toISOString().slice(0, 10),
       dueDate,
@@ -137,6 +146,8 @@ export type PaymentNoticePdfData = {
   deductionRate:        number   // e.g. 0.02
   deduction:            number
   totalAmount:          number
+  /** 発行元（自社）情報。振込先は支払通知書には印字しない */
+  company:              CompanyInfo
 }
 
 export async function fetchPaymentNoticePdfData(
@@ -164,7 +175,9 @@ export async function fetchPaymentNoticePdfData(
   const to     = new Date(y, m, 0).toISOString().slice(0, 10)
 
   const [contractorRes, noticeRes, workRes, expenseRes, projectsRes] = await Promise.all([
-    service.from('contractors').select('name, invoice_registration_type').eq('id', contractorId).single(),
+    // tenant_id は自社情報の取得に使う（ドライバー閲覧時は上の isOwner ブロックを通らないため、
+    // 委託先レコード自身からテナントを引く）
+    service.from('contractors').select('name, invoice_registration_type, tenant_id').eq('id', contractorId).single(),
     (service as any).from('payment_notices')
       .select('subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction')
       .eq('contractor_id', contractorId)
@@ -221,8 +234,13 @@ export async function fetchPaymentNoticePdfData(
   const deductionRate = laborTax > 0 ? Math.round((deduction / laborTax) * 100) / 100 : 0
   const totalAmount = totalEx + totalTax - deduction
 
+  // ⚠️ fail-closed: 自社情報が未登録なら支払通知書も発行しない（請求書と同じ方針）
+  const companyRes = await getCompanyInfo((contractor as any).tenant_id ?? '')
+  if (!companyRes.data) return { data: null, error: companyRes.error }
+
   return {
     data: {
+      company:             companyRes.data,
       contractorName:      contractor.name,
       invoiceRegistration: contractor.invoice_registration_type === 'registered' ? 'registered' : 'unregistered',
       noticeMonth:         `${y}年${m}月分`,

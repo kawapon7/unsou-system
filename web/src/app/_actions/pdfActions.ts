@@ -8,6 +8,7 @@ import { decryptBankFieldValue } from '@/utils/crypto'
 import { calcInvoiceTax } from '@/lib/invoice'
 import { getTransitionalDeductionRate } from '@/utils/billing/taxCalculator'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { getCompanyInfo, type CompanyInfo } from '@/utils/company'
 import InvoicePdfTemplate from '@/app/admin/_components/InvoicePdfTemplate'
 import PaymentNoticePdfTemplate from '@/app/admin/_components/PaymentNoticePdfTemplate'
 import { ensurePdfFonts } from '@/utils/pdf/registerFonts'
@@ -33,6 +34,8 @@ export type InvoicePdfTemplateData = {
   taxAmount:     number
   totalAmount:   number
   isTaxable:     boolean
+  /** 発行元（自社）情報。DBの自社マスタ由来 */
+  company:       CompanyInfo
 }
 
 export type LaborPdfLine = {
@@ -68,6 +71,8 @@ export type PaymentNoticePdfTemplateData = {
   accountType:         string
   accountNumber:       string
   accountHolder:       string
+  /** 発行元（自社）情報。上の bank* は委託先（支払先）の口座であり別物 */
+  company:             CompanyInfo
 }
 
 export type PdfPayload = {
@@ -198,8 +203,13 @@ export async function buildInvoicePdfData(
   const suffix        = invoice?.id ? invoice.id.replace(/-/g, '').slice(0, 5).toUpperCase() : 'DRAFT'
   const invoiceNumber = `INV-${yearMonth.replace('-', '')}-${suffix}`
 
+  // ⚠️ fail-closed: 自社情報が未登録ならPDFを生成せずエラーを返す
+  const companyRes = await getCompanyInfo(tenantId)
+  if (!companyRes.data) return { data: null, error: companyRes.error }
+
   return {
     data: {
+      company: companyRes.data,
       invoiceNumber,
       issueDate:    new Date().toISOString().slice(0, 10),
       dueDate,
@@ -291,8 +301,13 @@ export async function buildPaymentNoticePdfData(
   const deduction     = !registered && laborTax > 0 ? Math.round(laborWithTax * deductionRate) : 0
   const totalAmount   = laborNet + laborTax + expenseNet + expenseTax - deduction
 
+  // ⚠️ fail-closed: 自社情報が未登録なら支払通知書も発行しない
+  const companyRes = await getCompanyInfo(tenantId)
+  if (!companyRes.data) return { data: null, error: companyRes.error }
+
   return {
     data: {
+      company:             companyRes.data,
       contractorName:      contractor.name,
       noticeMonth:         bounds.label,
       issueDate:           new Date().toISOString().slice(0, 10),

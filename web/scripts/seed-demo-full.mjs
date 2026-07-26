@@ -127,9 +127,17 @@ async function cleanupDemo() {
   await db.from('expense_records').delete().like('remarks', `${DEMO_PREFIX}%`)
 
   // 支払通知書: デモ委託先 × デモ対象月 のみ。承認履歴が付いたものは消せないので触れない。
+  // ⚠️ 保護対象ドライバーにもデモの稼働データを割り当てているため、その支払通知書も掃除対象に含める。
+  //    含めないと再実行時に UNIQUE(contractor_id, notice_month) で衝突する。
+  //    消すのは支払通知書だけで、委託先レコード自体は残す。
   const { data: demoContractors } = await db.from('contractors').select('id')
     .like('email', `%${DEMO_EMAIL_SUFFIX}`)
-  const cIds = (demoContractors ?? []).map(c => c.id)
+  const { data: protectedRow } = await db.from('contractors').select('id')
+    .eq('email', PROTECTED_EMAIL).maybeSingle()
+  const cIds = [
+    ...(demoContractors ?? []).map(c => c.id),
+    ...(protectedRow ? [protectedRow.id] : []),
+  ]
   if (cIds.length) {
     await db.from('payment_notices').delete()
       .in('contractor_id', cIds)
@@ -175,7 +183,9 @@ async function seedClients() {
       has_invoice:           invoice,
       bank_name:             enc(bank),
       bank_branch:           enc(branch),
-      account_type:          enc('普通'),
+      // account_type は utils/crypto.ts の BANK_FIELD_KEYS に含まれない＝アプリ側で復号されない。
+      // 暗号化すると画面に暗号文がそのまま出るため、平文で保存する。
+      account_type:          '普通',
       account_number:        enc(acct),
       account_holder:        enc(holder),
       tenant_id:             TENANT_ID,
@@ -222,7 +232,8 @@ async function seedContractors() {
       show_detail_switch:        multi,
       bank_name:                 enc(bank),
       bank_branch:               enc(branch),
-      account_type:              enc('普通'),
+      // account_type は暗号化しない（BANK_FIELD_KEYS 対象外・アプリ側で復号されないため）
+      account_type:              '普通',
       account_number:            enc(acct),
       account_holder:            enc(holder),
       tenant_id:                 TENANT_ID,

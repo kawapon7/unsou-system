@@ -1,0 +1,163 @@
+'use client'
+
+import { useState, useEffect, useCallback } from 'react'
+import { fetchCompanyForEdit, saveCompany, type CompanyFormValues } from './actions'
+
+const EMPTY: CompanyFormValues = {
+  name: '', invoice_reg_number: '', postal_code: '', address: '', phone: '', email: '',
+  bank_name: '', bank_branch: '', account_type: '', account_number: '', account_holder: '',
+}
+
+function Field({
+  label, value, onChange, placeholder, required, hint, type = 'text',
+}: {
+  label: string
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  required?: boolean
+  hint?: string
+  type?: string
+}) {
+  return (
+    <label className="block">
+      <span className="text-sm font-medium text-zinc-700">
+        {label}
+        {required && <span className="ml-1 text-red-600">*</span>}
+      </span>
+      <input
+        type={type}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="mt-1 w-full rounded-md border border-zinc-300 px-3 py-2 text-sm
+                   focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+      />
+      {hint && <span className="mt-1 block text-xs text-zinc-500">{hint}</span>}
+    </label>
+  )
+}
+
+export default function CompanySettingsPage() {
+  const [values,  setValues]  = useState<CompanyFormValues>(EMPTY)
+  const [loading, setLoading] = useState(true)
+  const [saving,  setSaving]  = useState(false)
+  const [error,   setError]   = useState<string | null>(null)
+  const [saved,   setSaved]   = useState(false)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    const res = await fetchCompanyForEdit()
+    if (res.error) setError(res.error)
+    else if (res.data) setValues(res.data)
+    setLoading(false)
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const set = (key: keyof CompanyFormValues) => (v: string) => {
+    setValues(prev => ({ ...prev, [key]: v }))
+    setSaved(false)
+  }
+
+  async function handleSave() {
+    setSaving(true)
+    setError(null)
+    const res = await saveCompany(values)
+    setSaving(false)
+    if (res.error) { setError(res.error); return }
+    setSaved(true)
+  }
+
+  if (loading) {
+    return <div className="p-8 text-sm text-zinc-500">読み込み中...</div>
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl p-6">
+      <header className="mb-6">
+        <h1 className="text-xl font-bold text-zinc-900">自社情報</h1>
+        <p className="mt-1 text-sm text-zinc-600">
+          請求書・支払通知書のPDFに発行元として印字される情報です。
+          会社名とインボイス登録番号が未登録の場合、PDFは発行できません。
+        </p>
+      </header>
+
+      {error && (
+        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
+      {saved && (
+        <div className="mb-4 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
+          保存しました。
+        </div>
+      )}
+
+      <section className="mb-8 space-y-4">
+        <h2 className="border-b border-zinc-200 pb-2 text-sm font-semibold text-zinc-900">
+          請求書に必須の項目
+        </h2>
+        <Field
+          label="会社名" required
+          value={values.name} onChange={set('name')}
+          placeholder="株式会社○○運送"
+        />
+        <Field
+          label="インボイス登録番号" required
+          value={values.invoice_reg_number} onChange={set('invoice_reg_number')}
+          placeholder="T1234567890123"
+          hint="「T」＋13桁。誤った番号を載せると、受け取った荷主が仕入税額控除を受けられなくなります。"
+        />
+      </section>
+
+      <section className="mb-8 space-y-4">
+        <h2 className="border-b border-zinc-200 pb-2 text-sm font-semibold text-zinc-900">
+          連絡先
+        </h2>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="郵便番号" value={values.postal_code} onChange={set('postal_code')} placeholder="123-4567" />
+          <Field label="電話番号" value={values.phone} onChange={set('phone')} placeholder="03-1234-5678" />
+        </div>
+        <Field label="住所" value={values.address} onChange={set('address')} placeholder="東京都○○区○○1-2-3" />
+        <Field label="メールアドレス" type="email" value={values.email} onChange={set('email')} placeholder="info@example.co.jp" />
+      </section>
+
+      <section className="mb-8 space-y-4">
+        <h2 className="border-b border-zinc-200 pb-2 text-sm font-semibold text-zinc-900">
+          振込先口座
+        </h2>
+        <p className="text-xs text-zinc-500">
+          請求書PDFにのみ印字されます（支払通知書には出ません）。
+          口座情報は暗号化して保存されます。
+        </p>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <Field label="銀行名"   value={values.bank_name}   onChange={set('bank_name')}   placeholder="○○銀行" />
+          <Field label="支店名"   value={values.bank_branch} onChange={set('bank_branch')} placeholder="○○支店" />
+          <Field label="口座種別" value={values.account_type} onChange={set('account_type')} placeholder="普通" />
+          <Field label="口座番号" value={values.account_number} onChange={set('account_number')} placeholder="1234567" />
+        </div>
+        <Field label="口座名義" value={values.account_holder} onChange={set('account_holder')} placeholder="カ）マルマルウンソウ" />
+      </section>
+
+      <div className="flex items-center gap-3 border-t border-zinc-200 pt-6">
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="rounded-md bg-zinc-900 px-5 py-2 text-sm font-medium text-white
+                     hover:bg-zinc-800 disabled:opacity-50"
+        >
+          {saving ? '保存中...' : '保存'}
+        </button>
+        <button
+          onClick={() => void load()}
+          disabled={saving}
+          className="rounded-md border border-zinc-300 px-5 py-2 text-sm font-medium text-zinc-700
+                     hover:bg-zinc-50 disabled:opacity-50"
+        >
+          取り消して再読み込み
+        </button>
+      </div>
+    </div>
+  )
+}

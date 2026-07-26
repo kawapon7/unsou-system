@@ -1,13 +1,8 @@
 import type { InvoicePdfData } from '@/app/_actions/pdf-actions'
 
-// 自社情報（環境変数でオーバーライド可能）
-const COMPANY = {
-  name:          process.env.NEXT_PUBLIC_COMPANY_NAME           ?? '○○運送有限会社',
-  invoiceReg:    process.env.NEXT_PUBLIC_INVOICE_REG_NUMBER     ?? 'T0000000000000',
-  phone:         process.env.NEXT_PUBLIC_COMPANY_PHONE          ?? '000-0000-0000',
-  email:         process.env.NEXT_PUBLIC_COMPANY_EMAIL          ?? 'info@example.com',
-  address:       process.env.NEXT_PUBLIC_COMPANY_ADDRESS        ?? '〒000-0000 東京都○○区',
-}
+// 自社情報は data.company（DBの自社マスタ由来）から受け取る。
+// 以前はここに定数をハードコードし NEXT_PUBLIC_COMPANY_* で上書きする作りだったが、
+// 1デプロイ＝1社分しか持てずマルチテナントで破綻するため廃止した。
 
 function yen(n: number) {
   return `¥${n.toLocaleString('ja-JP')}`
@@ -36,11 +31,12 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }) {
         </div>
         {/* 右：自社情報 */}
         <div className="text-right text-xs text-zinc-600 space-y-0.5">
-          <p className="text-sm font-bold text-zinc-900">{COMPANY.name}</p>
-          <p>登録番号 {COMPANY.invoiceReg}</p>
-          <p>{COMPANY.address}</p>
-          <p>TEL: {COMPANY.phone}</p>
-          <p>{COMPANY.email}</p>
+          <p className="text-sm font-bold text-zinc-900">{data.company.name}</p>
+          <p>登録番号 {data.company.invoiceRegNumber}</p>
+          {data.company.postalCode && <p>〒{data.company.postalCode}</p>}
+          {data.company.address && <p>{data.company.address}</p>}
+          {data.company.phone && <p>TEL: {data.company.phone}</p>}
+          {data.company.email && <p>{data.company.email}</p>}
         </div>
       </div>
 
@@ -119,11 +115,32 @@ export function InvoiceDocument({ data }: { data: InvoicePdfData }) {
         </div>
       </div>
 
+      {/* ── 振込先 ──────────────────────────────────────────── */}
+      {/* 自社マスタに口座が未登録なら欄ごと出さない（空欄の振込先を印字しないため） */}
+      {data.company.bank.bankName && data.company.bank.accountNumber && (
+        <div className="mt-6 rounded border border-zinc-300 px-4 py-3">
+          <h2 className="text-xs font-semibold text-zinc-500 uppercase tracking-widest mb-2">
+            お 振 込 先
+          </h2>
+          <div className="text-xs text-zinc-800 space-y-0.5">
+            <p>
+              {data.company.bank.bankName} {data.company.bank.bankBranch}
+              {data.company.bank.accountType && `　${data.company.bank.accountType}`}
+            </p>
+            <p>口座番号 {data.company.bank.accountNumber}</p>
+            <p>口座名義 {data.company.bank.accountHolder}</p>
+          </div>
+          <p className="mt-2 text-[10px] text-zinc-400">
+            ※ 振込手数料は貴社にてご負担くださいますようお願いいたします。
+          </p>
+        </div>
+      )}
+
       {/* ── 備考 ────────────────────────────────────────────── */}
       <div className="mt-10 pt-6 border-t border-zinc-200">
         <p className="text-xs text-zinc-400">
           ※ 本請求書はインボイス制度（適格請求書等保存方式）に準拠しています。<br />
-          ※ 登録番号 {COMPANY.invoiceReg}
+          ※ 登録番号 {data.company.invoiceRegNumber}
         </p>
       </div>
     </div>

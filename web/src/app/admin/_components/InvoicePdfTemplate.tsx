@@ -10,13 +10,8 @@ import { ensurePdfFonts } from '@/utils/pdf/registerFonts'
 
 ensurePdfFonts()
 
-const COMPANY = {
-  name:       process.env.NEXT_PUBLIC_COMPANY_NAME       ?? '○○運送有限会社',
-  invoiceReg: process.env.NEXT_PUBLIC_INVOICE_REG_NUMBER ?? 'T0000000000000',
-  phone:      process.env.NEXT_PUBLIC_COMPANY_PHONE      ?? '000-0000-0000',
-  email:      process.env.NEXT_PUBLIC_COMPANY_EMAIL      ?? 'info@example.com',
-  address:    process.env.NEXT_PUBLIC_COMPANY_ADDRESS    ?? '〒000-0000 東京都○○区',
-}
+// 自社情報は data.company（DBの自社マスタ由来）から受け取る。
+// 以前は環境変数で上書きする定数だったが、1デプロイ＝1社分しか持てないため廃止した。
 
 const s = StyleSheet.create({
   page:       { padding: 40, fontFamily: 'NotoSansJP', fontSize: 9, color: '#18181b' },
@@ -66,11 +61,11 @@ export default function InvoicePdfTemplate({ data }: { data: InvoicePdfTemplateD
             <Text style={{ fontSize: 8, color: '#71717a' }}>{data.invoiceMonth}</Text>
           </View>
           <View style={{ textAlign: 'right', fontSize: 8, color: '#52525b' }}>
-            <Text style={{ fontSize: 10, fontWeight: 700, color: '#18181b' }}>{COMPANY.name}</Text>
-            <Text>登録番号 {COMPANY.invoiceReg}</Text>
-            <Text>{COMPANY.address}</Text>
-            <Text>TEL: {COMPANY.phone}</Text>
-            <Text>{COMPANY.email}</Text>
+            <Text style={{ fontSize: 10, fontWeight: 700, color: '#18181b' }}>{data.company.name}</Text>
+            <Text>登録番号 {data.company.invoiceRegNumber}</Text>
+            <Text>{data.company.address}</Text>
+            <Text>TEL: {data.company.phone}</Text>
+            <Text>{data.company.email}</Text>
           </View>
         </View>
 
@@ -131,9 +126,25 @@ export default function InvoicePdfTemplate({ data }: { data: InvoicePdfTemplateD
           </View>
         </View>
 
+        {/* 振込先。自社マスタに口座が未登録なら欄ごと出さない */}
+        {data.company.bank.bankName && data.company.bank.accountNumber && (
+          <View style={{ marginTop: 16, borderWidth: 1, borderColor: '#d4d4d8', padding: 10 }}>
+            <Text style={{ fontSize: 8, color: '#71717a', marginBottom: 4 }}>お振込先</Text>
+            <Text style={{ fontSize: 9 }}>
+              {data.company.bank.bankName} {data.company.bank.bankBranch}
+              {data.company.bank.accountType ? `　${data.company.bank.accountType}` : ''}
+            </Text>
+            <Text style={{ fontSize: 9 }}>口座番号 {data.company.bank.accountNumber}</Text>
+            <Text style={{ fontSize: 9 }}>口座名義 {data.company.bank.accountHolder}</Text>
+            <Text style={{ fontSize: 7, color: '#a1a1aa', marginTop: 4 }}>
+              ※ 振込手数料は貴社にてご負担くださいますようお願いいたします。
+            </Text>
+          </View>
+        )}
+
         <View style={s.footer}>
           <Text>※ 本請求書はインボイス制度（適格請求書等保存方式）に準拠しています。</Text>
-          <Text>※ 登録番号 {COMPANY.invoiceReg}</Text>
+          <Text>※ 登録番号 {data.company.invoiceRegNumber}</Text>
         </View>
       </Page>
     </Document>

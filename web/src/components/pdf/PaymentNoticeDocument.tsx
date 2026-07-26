@@ -1,10 +1,7 @@
 import type { PaymentNoticePdfData } from '@/app/_actions/pdf-actions'
 
-// 自社情報（環境変数でオーバーライド可能）
-const COMPANY = {
-  name:   process.env.NEXT_PUBLIC_COMPANY_NAME ?? '○○運送有限会社',
-  phone:  process.env.NEXT_PUBLIC_COMPANY_PHONE ?? '000-0000-0000',
-}
+// 自社情報は data.company（DBの自社マスタ由来）から受け取る。
+// ⚠️ 支払通知書は自社→委託先への支払い通知のため、自社の振込先は印字しない（誤送金防止）。
 
 function yen(n: number) {
   return `¥${n.toLocaleString('ja-JP')}`
@@ -41,9 +38,9 @@ export function PaymentNoticeDocument({ data }: { data: PaymentNoticePdfData }) 
           </p>
         </div>
         <div className="text-right text-xs text-zinc-600 space-y-0.5">
-          <p className="text-sm font-bold text-zinc-900">{COMPANY.name}</p>
+          <p className="text-sm font-bold text-zinc-900">{data.company.name}</p>
           <p>発行日: {fmtDate(data.issueDate)}</p>
-          <p>TEL: {COMPANY.phone}</p>
+          <p>TEL: {data.company.phone}</p>
         </div>
       </div>
 
@@ -165,7 +162,7 @@ export function PaymentNoticeDocument({ data }: { data: PaymentNoticePdfData }) 
           </p>
         )}
         <p className="text-xs text-zinc-400">
-          ※ ご不明点は {COMPANY.phone} までお問い合わせください。
+          ※ ご不明点は {data.company.phone} までお問い合わせください。
         </p>
       </div>
     </div>

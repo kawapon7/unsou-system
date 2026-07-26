@@ -10,10 +10,8 @@ import { ensurePdfFonts } from '@/utils/pdf/registerFonts'
 
 ensurePdfFonts()
 
-const COMPANY = {
-  name:  process.env.NEXT_PUBLIC_COMPANY_NAME  ?? '○○運送有限会社',
-  phone: process.env.NEXT_PUBLIC_COMPANY_PHONE ?? '000-0000-0000',
-}
+// 自社情報は data.company（DBの自社マスタ由来）から受け取る。
+// ⚠️ 支払通知書に自社の振込先は印字しない（自社→委託先への支払通知のため。誤送金防止）。
 
 const EXPENSE_TYPE_LABEL: Record<string, string> = {
   toll:    '高速・有料道路代',
@@ -71,9 +69,9 @@ export default function PaymentNoticePdfTemplate({ data }: { data: PaymentNotice
             </Text>
           </View>
           <View style={{ textAlign: 'right', fontSize: 8, color: '#52525b' }}>
-            <Text style={{ fontSize: 10, fontWeight: 700, color: '#18181b' }}>{COMPANY.name}</Text>
+            <Text style={{ fontSize: 10, fontWeight: 700, color: '#18181b' }}>{data.company.name}</Text>
             <Text>発行日: {fmtDate(data.issueDate)}</Text>
-            <Text>TEL: {COMPANY.phone}</Text>
+            <Text>TEL: {data.company.phone}</Text>
           </View>
         </View>
 
@@ -166,7 +164,7 @@ export default function PaymentNoticePdfTemplate({ data }: { data: PaymentNotice
           {isUnregistered && data.deduction > 0 && (
             <Text>※ インボイス未登録業者への支払いのため、経過措置（仕入税額控除{deductPct}%相当）を適用しています。</Text>
           )}
-          <Text>※ ご不明点は {COMPANY.phone} までお問い合わせください。</Text>
+          <Text>※ ご不明点は {data.company.phone} までお問い合わせください。</Text>
         </View>
       </Page>
     </Document>

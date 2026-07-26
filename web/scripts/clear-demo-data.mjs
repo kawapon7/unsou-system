@@ -104,12 +104,21 @@ async function main() {
     .filter(c => c.email !== PROTECTED_EMAIL)
     .map(c => c.id)
 
+  // ⚠️ 保護対象ドライバーにもデモの稼働データを割り当てているため、
+  //    その支払通知書は削除対象に含める（委託先レコード自体は残す）。
+  const { data: protectedRow } = await db.from('contractors').select('id')
+    .eq('email', PROTECTED_EMAIL).maybeSingle()
+  const noticeContractorIds = [
+    ...contractorIds,
+    ...(protectedRow ? [protectedRow.id] : []),
+  ]
+
   console.log(`デモ案件 ${projectIds.length} 件 / デモ委託先 ${contractorIds.length} 件を起点に削除します。\n`)
 
   // ── 支払通知書は承認履歴が付いていると FK(ON DELETE RESTRICT) で削除できない。
   //    履歴が付いた行は対象から外し、警告を出す（不変ログは絶対に消さない）。
   const { data: notices } = await db.from('payment_notices').select('id')
-    .in('contractor_id', contractorIds.length ? contractorIds : ['00000000-0000-0000-0000-000000000000'])
+    .in('contractor_id', noticeContractorIds.length ? noticeContractorIds : ['00000000-0000-0000-0000-000000000000'])
     .in('notice_month', DEMO_MONTHS)
   const noticeIds = (notices ?? []).map(n => n.id)
 
