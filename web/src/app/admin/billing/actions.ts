@@ -725,7 +725,11 @@ export async function generatePaymentNotice(
   //    承認フロー（合意証跡）が成立しないため厳禁。
   const noticePayload = {
     target_month:           targetMonth,
-    status:                 'issued',
+    // ⚠️ payment_notices.status の許可値は 'unapproved' | 'approved' | 'locked' のみ
+    //    （DBのCHECK制約 payment_notices_status_check）。
+    //    'issued' / 'paid' は invoices（請求書）側の語彙であり、ここで使うと
+    //    「new row violates check constraint」で生成が必ず失敗する。
+    status:                 'unapproved',
     subtotal_registered:    subtotalRegistered,
     tax_registered:         taxRegistered,
     subtotal_unregistered:  subtotalUnregistered,
