@@ -1289,6 +1289,8 @@ web/
 | ✅ 完了 2026-07-02 | security-reviewスキルによるP0-P2セキュリティ監査・修正 | 認可ガード欠落・クロステナントIDOR等7件修正（`a7d937d`）。詳細は5-4参照 |
 | ✅ 完了 2026-07-02 | admin@hibiki.com パスワード不明問題の解消 | Supabase Admin API（service_role）で直接パスワード更新。詳細は5-4参照 |
 | ✅ 完了 2026-07-06 | 本番ユーザー作成・実ログイン確認 | master(`kawapon7+hibiki@gmail.com`)・driver(`kawapon7+driver@gmail.com`)とも実ログイン確認済み。この過程で権限誤判定の重大バグを発見・修正（詳細は5-4参照） |
+| 🔴 高 | **本番DBの作り直し（現行をテスト環境化）** | **2026-07-27に方針決定・未着手。** 現行の本番DB(`hbpnhbsmsuhjyrohpluu`)をテスト環境として残し、**新しいSupabaseプロジェクトを本番として新規作成する**。理由=本番DBが1つしかなくテストも開発も本番で行っており、既にデモデータで汚染されている（予定140・稼働125・案件20等）。実データは未投入のため**今なら移行コストがほぼゼロ**。A社の実運用開始後だと稼働中データの移行になり危険。⚠️**着手前の必須条件**: マイグレーション不整合の解消（下記の別項目）。⚠️新DBは**テナント分離F0の形（`tenants`テーブル・uuid）で最初から作れる**ため、F0の変換手順・ダウンタイム・Task 5Bが丸ごと不要になる可能性がある（要検討）。費用は**新規作成$0で確認済み**（詳細は §5-4の2026-07-27） |
+| 🔴 高 | マイグレーションと本番スキーマの不整合を解消 | **本番DBの作り直しの前提条件。** 本番に適用済みだが**リポジトリにファイルが無い**マイグレーションが1件ある: `20260720000000_notification_logs_client_id`（`notification_logs.client_id` uuid列）。このままマイグレーションを再生しても本番と同じスキーマにならず、荷主向けアラートの記録が壊れる。加えて7/26以降の3件はMCP経由適用のためバージョン番号がファイル名とズレている（内容は同一、実害小）。**対応: 欠落分のマイグレーションファイルを起こし、`supabase db diff` 等で本番スキーマとの完全一致を確認する** |
 | 🟡 中 | テナント分離 F0 実装 | **計画書を全面改訂: `docs/superpowers/plans/2026-07-27-tenant-isolation-phase0.md`**（旧`2026-06-27-...md`は廃止・参照禁止）。改訂理由は自社マスタ実装との衝突。**Task 0(事前調査)は実施済み**、正準テナントUUID = `00000000-0000-0000-0000-0000000000a1` に確定。方式は「`tenants`テーブル新設 → 全テーブルが `tenants(id)` を FK 参照」。B社導入前まで。⚠️着手前に **Task 5B**（`tenant_id`をDEFAULT依存で渡していないINSERTの修正）を必ず済ませること。⚠️現状の本番ユーザーは`user_metadata.tenant_id='local-dev'`で運用中。F0実装時はこのアカウントもUUID移行対象 |
 | ✅ 完了 2026-07-01〜02深夜 | APIキー/トークンのローテーション | 2026-07-01セッションでチャットに各種キー露出（Cloudflare token/Supabase/Gemini/Resend）。深夜作業で日付を跨ぎつつ全キー再発行・差し替え済み（ユーザー確認）。Supabase側は「Legacy API Keys（旧来のanon/service_roleキー）」の再発行で手こずった |
 | ✅ 完了 2026-07-27 | 自動デプロイ再設定 | **CLOUDFLARE_API_TOKEN を再発行してGitHub secretへ入れ直し、復旧を確認**（run `30262909199` success、Worker更新 `2026-07-27T11:43:02Z`）。以降 `web/**` を含む main への push で自動デプロイされる。以下は経緯: **GitHub Actions方式で実装・push済み**（`.github/workflows/deploy.yml`、コミット`b8069eb`）。main push（`web/**`変更時）で `npm run deploy` をCI実行。GitHub secrets 4つ登録済み（NEXT_PUBLIC_SUPABASE_URL/ANON_KEY・CLOUDFLARE_API_TOKEN・CLOUDFLARE_ACCOUNT_ID）。**初回実行はビルド全成功→デプロイ段でCloudflare認証失敗**（`Invalid access token [code:9109]`）。**残作業＝CLOUDFLARE_API_TOKENの再発行と入れ直しのみ**。手順：Cloudflare My Profile→API Tokens→Create Token→テンプレ「Edit Cloudflare Workers」で発行→GitHubの同名secretを編集で上書き→`gh workflow run deploy.yml`（またはActionsタブのRun workflow）で再実行。ビルド側（Node24・NEXT_PUBLIC焼き込み）は検証済みで問題なし |
@@ -1374,6 +1376,22 @@ web/
   - 不変ログの backfill にトリガー一時無効化＋UPDATEを使う手順は**CLAUDE.md §2に抵触**していた。`ADD COLUMN ... DEFAULT`（PG11+は既存行も埋まり行トリガーも発火しない）方式に変更し、UPDATEもトリガー無効化も不要にした。
   - `getAllTenantIds()` が `contractors` の DISTINCT を取っていたため、**委託先0件のテナントにアラートメールが飛ばない**取りこぼしがあった。`tenants` から引く修正タスクを新設。
   - **Task 5B を新設**: `tenant_id` を渡さず DB の DEFAULT に依存している INSERT が存在し、F0でDEFAULTを撤去すると壊れる。着手前に必ず解消すること。確定1件（`admin/billing/actions.ts` の `noticePayload`）＋未確定の候補21件を計画書に記録済み。
+
+**5. 本番DBの作り直し方針を決定（実行は未着手）**
+支払通知書の承認テストの相談から、**「テストと本番が同じDBである」という構造的な問題**が論点化した。
+
+- きっかけ: 承認すると `approval_history` に記録が入り、①その記録はトリガーでDELETE禁止 ②FKが `ON DELETE RESTRICT` のため支払通知書も消せなくなる、という相互ロックが発生する（**現物のFK定義とトリガーで確認済み**）。DB管理者がトリガーを一時無効化すれば物理的には消せるが、不変ログの保証そのものを破る操作なので常態化させてはいけない。
+- **現状認識**: `approval_history` は現在0件のため、まだ何もロックされていない。ただし本番DBは既に実質デモデータベース（予定140・稼働125・案件20・委託先16・支払通知書13・自社情報はダミー登録番号）で、**実データは1件も入っていない**。
+- **決定（2026-07-27）**:
+  1. 現行の本番DB(`hbpnhbsmsuhjyrohpluu`)を**テスト環境として残す**
+  2. **新しいSupabaseプロジェクトを本番として新規作成する**
+  3. **今日は方針決定と記録のみ。実行は別セッション**（本番の作り直しは中断が最も危険なため）
+- **費用（実測・2026-07-27時点）**: 新規プロジェクト作成は **$0**（Supabase APIで確認）。組織は Free プラン。
+  - Free: $0 / DB 500MB / **バックアップ無し** / PITR無し / **1週間の無操作で自動停止** / **アクティブ2プロジェクトまで**
+  - Pro: **$25/月** / 8GB / **バックアップ7日分** / PITRは**別途$100/月**
+  - **判断**: 今日〜フィールドテスト中は$0で進む。**A社の実データ投入時点でProへ（$25/月）**。無料枠はバックアップが「無し」であり、請求・支払データを預かる状態では許容できない。PITR($100/月)はA社1社の規模では不要。
+  - ⚠️ 未確認: Supabaseのプランは**組織単位**のため、「本番だけPro・テストはFree」にするには別組織が必要かもしれない。新DB作成時に確認する。
+- **他サービスへの乗り換えは却下**。依存度を実測したところ src 105ファイル中 **42がSupabase依存・24がSupabase Auth・RLSポリシーを含むマイグレーション16本**。SupabaseはDB/認証/RLSを兼ねており、乗り換えは3つ同時の置き換えになる。特に**テナント分離設計はPostgreSQLのRLSが前提**。節約できるのは月$6〜20程度（Neon $19・Railway $5〜等）で、42ファイルの改修と設計やり直しに見合わない。Cloudflare D1はSQLiteのためRLSもPostgres型も使えず論外。**「Supabaseが高い」のではなく、この規模の業務DB代として$25は妥当**という結論。
 
 #### 2026-07-26（Claude Code セッション・デモデータ総合テスト／自社マスタ実装）
 
