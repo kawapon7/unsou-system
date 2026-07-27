@@ -32,13 +32,15 @@
 
 ### テナント対象テーブル（実測 2026-07-27）
 
-**A群 — 既に `tenant_id text` を持つ（値は全て `'local-dev'`）。uuid へ変換する（7テーブル）:**
-`clients`(6行) / `contractors`(16) / `projects`(20) / `work_records`(125) / `expense_records`(19) / `schedules`(140) / `driver_project_assignments`(3)
+**A群 — 既に `tenant_id text` を持つ（値は全て `'local-dev'`）。uuid へ変換する（10テーブル）:**
+`clients`(6行) / `contractors`(16) / `projects`(20) / `work_records`(125) / `expense_records`(19) / `schedules`(140) / `driver_project_assignments`(3) / **`project_payees`(12) / `invoices`(0) / `payment_notices`(10)**
 
 > ⚠️ 旧計画は `driver_project_assignments` を「uuid型・変換不要」と記載していたが**誤り**。2026-07-26のバグ修正（`20260726000000_fix_driver_project_assignments_tenant_id_type.sql`）で text に統一済みのため、A群に含める。
+>
+> ⚠️ **2026-07-27追記**: `project_payees` / `invoices` / `payment_notices` の3テーブルは、当初B群（列なし）に分類していたが、本番障害の修正（`20260727000000_add_missing_tenant_id_columns.sql`、コミット`d87bccb`）で `text NOT NULL DEFAULT 'local-dev'` を追加済みのため**A群へ移動**した。原因は `a7d937d`(2026-07-02) がクエリに `tenant_id` フィルタを追加した際に列追加マイグレーションを作り忘れていたこと。
 
-**B群 — `tenant_id` を持たないため追加する（9テーブル）:**
-`approval_history`(0行) / `billing_records`(0) / `invoices`(0) / `notification_logs`(8) / `payment_notices`(10) / `payments`(0) / `price_rules`(20) / `project_payees`(12) / `scan_jobs`(1)
+**B群 — `tenant_id` を持たないため追加する（6テーブル）:**
+`approval_history`(0行) / `billing_records`(0) / `notification_logs`(8) / `payments`(0) / `price_rules`(20) / `scan_jobs`(1)
 
 **C群 — 個別対応:**
 `companies`(0行) … `tenant_id text UNIQUE` を既に持つ。uuid へ変換し FK を張る（Task 2）。
@@ -59,7 +61,7 @@ DBの `tenant_id` が uuid になった瞬間から、**アプリが `'local-dev
 **推奨適用手順（A社1社・フィールドテスト中のため、数分のダウンタイムを許容する）:**
 1. 利用者のいない時間帯を選ぶ
 2. Supabaseダッシュボードでバックアップを取得
-3. Task 1〜5 のマイグレーションを順に適用
+3. Task 1〜5 のマイグレーションを順に適用（**Task 5B のアプリ側修正を先に済ませておくこと**。DEFAULT撤去で `tenant_id` を渡していない INSERT が壊れる）
 4. Task 9 のスクリプトを実行（全ユーザーの `app_metadata.tenant_id` をUUIDに設定）
 5. アプリをデプロイ（Task 6〜8 の変更を反映）
 6. **全ユーザーが再ログイン**（JWTに新しい `app_metadata` を載せるため）
@@ -72,7 +74,7 @@ DBの `tenant_id` が uuid になった瞬間から、**アプリが `'local-dev
 ## Task 1: `tenants` テーブル新設 ＋ A社行の投入
 
 **Files:**
-- Create: `supabase/migrations/20260727000000_create_tenants.sql`
+- Create: `supabase/migrations/20260727010000_create_tenants.sql`
 
 **Interfaces:**
 - Produces: `tenants` テーブルと `id = <TENANT_A_UUID>` の行。以降の全 `tenant_id` FK の参照先。
@@ -125,7 +127,7 @@ Expected: 1行。`id = 00000000-0000-0000-0000-0000000000a1`、`name = 'A社'`�
 
 ```bash
 git status   # .next/ .open-next/ が居ないこと
-git add supabase/migrations/20260727000000_create_tenants.sql
+git add supabase/migrations/20260727010000_create_tenants.sql
 git commit -m "feat(tenant): F0 tenants テーブルを新設しA社行を投入"
 ```
 
@@ -134,7 +136,7 @@ git commit -m "feat(tenant): F0 tenants テーブルを新設しA社行を投入
 ## Task 2: `companies.tenant_id` を uuid へ変換し FK を張る
 
 **Files:**
-- Create: `supabase/migrations/20260727000001_companies_tenant_id_to_uuid.sql`
+- Create: `supabase/migrations/20260727010001_companies_tenant_id_to_uuid.sql`
 
 **Interfaces:**
 - Consumes: `tenants` テーブルとA社行（Task 1）。
@@ -188,20 +190,20 @@ Expected: 2行（UNIQUE と FK が両方存在）。
 
 ```bash
 git status
-git add supabase/migrations/20260727000001_companies_tenant_id_to_uuid.sql
+git add supabase/migrations/20260727010001_companies_tenant_id_to_uuid.sql
 git commit -m "feat(tenant): F0 companies.tenant_id を uuid 化し tenants を参照"
 ```
 
 ---
 
-## Task 3: B群9テーブルへ `tenant_id` を追加（DEFAULT付きで既存行も同時に埋める）
+## Task 3: B群6テーブルへ `tenant_id` を追加（DEFAULT付きで既存行も同時に埋める）
 
 **Files:**
-- Create: `supabase/migrations/20260727000002_add_tenant_id_missing_tables.sql`
+- Create: `supabase/migrations/20260727010002_add_tenant_id_missing_tables.sql`
 
 **Interfaces:**
 - Consumes: `tenants` のA社行（Task 1）。
-- Produces: B群9テーブルに `tenant_id uuid`（全行 `<TENANT_A_UUID>`、この時点では nullable・FKなし。Task 5で締める）。
+- Produces: B群6テーブルに `tenant_id uuid`（全行 `<TENANT_A_UUID>`、この時点では nullable・FKなし。Task 5で締める）。
 
 > **なぜ `UPDATE` ではなく `ADD COLUMN ... DEFAULT` なのか（重要）**
 > `approval_history` / `notification_logs` は不変ログであり、`UPDATE` / `DELETE` が
@@ -215,7 +217,7 @@ git commit -m "feat(tenant): F0 companies.tenant_id を uuid 化し tenants を�
 - [ ] **Step 1: マイグレーション作成**
 
 ```sql
--- tenant_id 未保持の9テーブルへ列を追加する。
+-- tenant_id 未保持の6テーブルへ列を追加する。
 -- DEFAULT を付けて追加することで既存行も同時に A社UUID で埋まる（PG11+）。
 -- ⚠️ approval_history / notification_logs は不変ログ（UPDATE禁止）のため、
 --    UPDATE 文による backfill は行わない。この ADD COLUMN DEFAULT 方式なら
@@ -227,9 +229,11 @@ BEGIN;
 DO $$
 DECLARE
   tbl text;
+  -- project_payees / invoices / payment_notices は 20260727000000 で
+  -- text 列を追加済みのため、ここではなく Task 4（A群）で uuid へ変換する。
   tables text[] := ARRAY[
-    'approval_history','billing_records','invoices','notification_logs',
-    'payment_notices','payments','price_rules','project_payees','scan_jobs'
+    'approval_history','billing_records','notification_logs',
+    'payments','price_rules','scan_jobs'
   ];
 BEGIN
   FOREACH tbl IN ARRAY tables
@@ -265,20 +269,20 @@ Expected: 全行 `nulls = 0`。`total` は notification_logs=8 / payment_notices
 
 ```bash
 git status
-git add supabase/migrations/20260727000002_add_tenant_id_missing_tables.sql
+git add supabase/migrations/20260727010002_add_tenant_id_missing_tables.sql
 git commit -m "feat(tenant): F0 不足9テーブルへ tenant_id を追加(既存行も充填)"
 ```
 
 ---
 
-## Task 4: A群7テーブルの `tenant_id` を text → uuid へ変換
+## Task 4: A群10テーブルの `tenant_id` を text → uuid へ変換
 
 **Files:**
-- Create: `supabase/migrations/20260727000003_tenant_id_text_to_uuid.sql`
+- Create: `supabase/migrations/20260727010003_tenant_id_text_to_uuid.sql`
 
 **Interfaces:**
 - Consumes: `tenants` のA社行（Task 1）。
-- Produces: A群7テーブルの `tenant_id` が `uuid`、全行 `<TENANT_A_UUID>`。
+- Produces: A群10テーブルの `tenant_id` が `uuid`、全行 `<TENANT_A_UUID>`。
 
 > A群はいずれも不変ログではないため `UPDATE` で値を書き換えてよい。
 > `clients` 等は `DEFAULT 'local-dev'` を持つため、型変換の前に DEFAULT を落とす必要がある
@@ -287,9 +291,11 @@ git commit -m "feat(tenant): F0 不足9テーブルへ tenant_id を追加(既�
 - [ ] **Step 1: マイグレーション作成**
 
 ```sql
--- A群7テーブル: DEFAULT撤去 → 'local-dev' を A社UUID へ書換え → 型を uuid へ変換。
+-- A群10テーブル: DEFAULT撤去 → 'local-dev' を A社UUID へ書換え → 型を uuid へ変換。
 -- driver_project_assignments は 20260726000000 で uuid→text にした経緯があるが、
 -- ここで改めて他テーブルと揃えて uuid にする（3行のみ）。
+-- project_payees / invoices / payment_notices は 20260727000000（本番障害の修正）で
+-- text 列を追加したテーブル。同じA群として一括変換する。
 BEGIN;
 
 DO $$
@@ -297,7 +303,8 @@ DECLARE
   tbl text;
   tables text[] := ARRAY[
     'clients','contractors','projects','work_records',
-    'expense_records','schedules','driver_project_assignments'
+    'expense_records','schedules','driver_project_assignments',
+    'project_payees','invoices','payment_notices'
   ];
 BEGIN
   FOREACH tbl IN ARRAY tables
@@ -346,7 +353,7 @@ Expected: 1行のみ（`00000000-0000-0000-0000-0000000000a1`）。
 
 ```bash
 git status
-git add supabase/migrations/20260727000003_tenant_id_text_to_uuid.sql
+git add supabase/migrations/20260727010003_tenant_id_text_to_uuid.sql
 git commit -m "feat(tenant): F0 A群7テーブルの tenant_id を uuid へ統一"
 ```
 
@@ -355,7 +362,7 @@ git commit -m "feat(tenant): F0 A群7テーブルの tenant_id を uuid へ統�
 ## Task 5: `NOT NULL` ＋ FK ＋ インデックス付与
 
 **Files:**
-- Create: `supabase/migrations/20260727000004_tenant_id_constraints.sql`
+- Create: `supabase/migrations/20260727010004_tenant_id_constraints.sql`
 
 **Interfaces:**
 - Consumes: 全テーブルの `tenant_id` が uuid・NULLなし（Task 3・4完了後）。
@@ -376,12 +383,13 @@ DO $$
 DECLARE
   tbl text;
   tables text[] := ARRAY[
-    -- A群
+    -- A群（Task 4 で uuid へ変換した10テーブル）
     'clients','contractors','projects','work_records',
     'expense_records','schedules','driver_project_assignments',
-    -- B群
-    'approval_history','billing_records','invoices','notification_logs',
-    'payment_notices','payments','price_rules','project_payees','scan_jobs'
+    'project_payees','invoices','payment_notices',
+    -- B群（Task 3 で uuid 列を追加した6テーブル）
+    'approval_history','billing_records','notification_logs',
+    'payments','price_rules','scan_jobs'
   ];
 BEGIN
   FOREACH tbl IN ARRAY tables
@@ -421,8 +429,138 @@ Expected: 17（16テーブル ＋ `companies`）。
 
 ```bash
 git status
-git add supabase/migrations/20260727000004_tenant_id_constraints.sql
+git add supabase/migrations/20260727010004_tenant_id_constraints.sql
 git commit -m "feat(tenant): F0 tenant_id に NOT NULL/FK(tenants)/index を付与"
+```
+
+---
+
+## Task 5B: `DEFAULT` 撤去で壊れる INSERT の洗い出しと修正
+
+**Files:**
+- Modify: 下の調査で確定した箇所（最低1件は確定済み → `web/src/app/admin/billing/actions.ts:726-740`）
+
+**Interfaces:**
+- Consumes: Task 3・4で `tenant_id` の `DEFAULT` が撤去されていること。
+- Produces: テナント対象16テーブルへの全 INSERT / UPSERT が `tenant_id` を明示的に渡す。
+
+> **なぜ必要か（F0の隠れた地雷）**
+> 現在、一部の INSERT は `tenant_id` を渡さず DB の `DEFAULT 'local-dev'` に依存して通っている。
+> Task 3・4 で DEFAULT を撤去し Task 5 で `NOT NULL` を付けた瞬間、これらは
+> `null value in column "tenant_id" violates not-null constraint` で**必ず失敗する**。
+> 2026-07-26 の `driver_project_assignments`、2026-07-27 の `project_payees` と
+> 同じ「コードとDBの前提がずれたまま気付かれない」型の事故であり、F0適用と同時に
+> 本番の書き込みが壊れる。**Task 5 の適用前に必ず解消すること。**
+
+- [ ] **Step 1: 確定済みの1件を修正**
+
+`web/src/app/admin/billing/actions.ts` の `noticePayload`（支払通知書の生成）は
+`tenant_id` を含まず、DEFAULT に依存している。現在:
+```ts
+  const noticePayload = {
+    target_month:           targetMonth,
+    // ⚠️ payment_notices.status の許可値は 'unapproved' | 'approved' | 'locked' のみ
+```
+に `tenant_id` を追加する:
+```ts
+  const noticePayload = {
+    target_month:           targetMonth,
+    // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる。
+    tenant_id:              tenantId,
+    // ⚠️ payment_notices.status の許可値は 'unapproved' | 'approved' | 'locked' のみ
+```
+
+> この関数のスコープに `tenantId` が存在することを先に確認すること
+> （`const tenantId = await getCurrentTenantId()` があるか）。無ければ追加する。
+
+- [ ] **Step 2: 残りの候補を機械的に洗い出す**
+
+次のスクリプトを `/tmp` などに保存して `web/` で実行する（リポジトリにはコミットしない）:
+
+```python
+#!/usr/bin/env python3
+"""tenant対象テーブルへの insert/upsert で tenant_id を明示していない箇所を洗い出す。"""
+import re, sys, pathlib
+
+TABLES = {
+    'clients','contractors','projects','work_records','expense_records','schedules',
+    'driver_project_assignments','project_payees','invoices','payment_notices',
+    'approval_history','billing_records','notification_logs','payments',
+    'price_rules','scan_jobs',
+}
+root    = pathlib.Path('src')
+from_re = re.compile(r"from\(\s*'([a-z_]+)'\s*\)")
+op_re   = re.compile(r"\.(insert|upsert)\s*\(")
+findings = []
+
+for path in sorted(root.rglob('*.ts')) + sorted(root.rglob('*.tsx')):
+    lines = path.read_text(encoding='utf-8').splitlines()
+    for i, line in enumerate(lines):
+        m = op_re.search(line)
+        if not m:
+            continue
+        table = None
+        for j in range(i, max(-1, i - 4), -1):
+            fm = from_re.search(lines[j])
+            if fm:
+                table = fm.group(1); break
+        if table not in TABLES:
+            continue
+        depth, buf = 0, []
+        for k in range(i, min(len(lines), i + 40)):
+            buf.append(lines[k])
+            depth += lines[k].count('(') - lines[k].count(')')
+            if k > i and depth <= 0:
+                break
+        if 'tenant_id' not in '\n'.join(buf):
+            findings.append((table, str(path), i + 1, m.group(1)))
+
+for t, p, l, op in sorted(findings):
+    print(f"{t:28} {p}:{l}  ({op})")
+print(f"\n計 {len(findings)} 件", file=sys.stderr)
+```
+
+- [ ] **Step 3: 候補を1件ずつ目視で確定させる**
+
+> ⚠️ **このスクリプトの出力は候補であって確定ではない。** 呼び出し行から下方向40行しか見ないため、
+> ペイロードが**呼び出しの前に変数として定義**されている場合（`const payload = {...}` → `.insert(payload)`、
+> `...noticePayload` のスプレッド）を取りこぼし、**誤検出**になる。
+> 実例: `src/app/admin/projects/actions.ts:241` は候補に挙がるが、`payload` に `tenant_id` があるため**問題なし**。
+>
+> 各候補について「渡しているペイロードの実体を遡って読み、`tenant_id` が入っているか」を目視で確認すること。
+
+2026-07-27時点のスクリプト出力（22件・**未確定の候補**）:
+
+| テーブル | 箇所 |
+|---|---|
+| `approval_history` | `_actions/approvalActions.ts:125,158` / `_actions/billing-actions.ts:71` / `_actions/driver-actions.ts:170` |
+| `clients` / `contractors` / `projects` / `work_records` / `price_rules` / `project_payees` | `utils/run-conduction-test.ts:40,54,88,103,115,125`（疎通テスト用ユーティリティ。本番経路ではないため優先度低） |
+| `driver_project_assignments` | `admin/users/actions.ts:324` |
+| `expense_records` | `_actions/voice-actions.ts:188` / `driver/dashboard/actions.ts:197` |
+| `invoices` | `_actions/billing-actions.ts:151`(upsert) / `admin/sales/actions.ts:421` |
+| `notification_logs` | `_actions/scheduleActions.ts:561` |
+| `payment_notices` | `_actions/billing-actions.ts:288`(upsert) / **`admin/billing/actions.ts:759`（Step 1で確定済み）** |
+| `project_payees` | `admin/projects/actions.ts:241`（**誤検出と確認済み・対応不要**） |
+| `scan_jobs` | `api/scan/upload/route.ts:40`(upsert) |
+| `schedules` | `_actions/scheduleActions.ts:334,425`(upsert) |
+
+- [ ] **Step 4: 確定した箇所へ `tenant_id` を追加**
+
+各所で `getCurrentTenantId()` の戻り値をペイロードに明示的に含める。
+`approval_history` / `notification_logs` は**INSERTのみ許可**の不変ログなので、
+INSERT に列を足すのは規約上問題ない（UPDATE/DELETE を書かないこと）。
+
+- [ ] **Step 5: 型チェック**
+
+Run: `cd web && npx tsc --noEmit`
+Expected: EXIT 0
+
+- [ ] **Step 6: コミット**
+
+```bash
+git status
+git add web/src/app/admin/billing/actions.ts   # 他に修正したファイルも明示的に追加
+git commit -m "fix(tenant): F0 DEFAULT撤去に備え INSERT へ tenant_id を明示"
 ```
 
 ---
@@ -778,6 +916,7 @@ Expected: `insert or update on table "clients" violates foreign key constraint "
 - [ ] 全 auth ユーザー（10名）の `app_metadata.tenant_id` が設定済み。
 - [ ] `getCurrentTenantId()` が `app_metadata` を一次ソースに読む。`DEV_TENANT_ID` がUUID。
 - [ ] `getAllTenantIds()` が `tenants` から引いている。
+- [ ] テナント対象テーブルへの全 INSERT / UPSERT が `tenant_id` を明示している（Task 5B）。DEFAULT依存の箇所が残っていない。
 - [ ] 不変ログのトリガー4本がすべて有効なまま（一度も無効化していない）。
 - [ ] `cd web && npx tsc --noEmit` が EXIT 0。
 - [ ] アプリ挙動は従来通り（RLS未導入のため）。ドライバー別案件フィルターと自社情報の保存が成功する。

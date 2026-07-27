@@ -1289,16 +1289,18 @@ web/
 | ✅ 完了 2026-07-02 | security-reviewスキルによるP0-P2セキュリティ監査・修正 | 認可ガード欠落・クロステナントIDOR等7件修正（`a7d937d`）。詳細は5-4参照 |
 | ✅ 完了 2026-07-02 | admin@hibiki.com パスワード不明問題の解消 | Supabase Admin API（service_role）で直接パスワード更新。詳細は5-4参照 |
 | ✅ 完了 2026-07-06 | 本番ユーザー作成・実ログイン確認 | master(`kawapon7+hibiki@gmail.com`)・driver(`kawapon7+driver@gmail.com`)とも実ログイン確認済み。この過程で権限誤判定の重大バグを発見・修正（詳細は5-4参照） |
-| 🟡 中 | テナント分離 F0 実装 | `docs/superpowers/plans/2026-06-27-tenant-isolation-phase0.md`。B社導入前まで。出発点=Task0でステージング実査→A社正準UUID確定→計画内 `<TENANT_A_UUID>` 置換→Cursor実装。挙動不変。⚠️現状の本番ユーザーは`user_metadata.tenant_id='local-dev'`（既存データと一致）で運用中。F0実装時はこのアカウントもUUID移行対象に含めること |
+| 🟡 中 | テナント分離 F0 実装 | **計画書を全面改訂: `docs/superpowers/plans/2026-07-27-tenant-isolation-phase0.md`**（旧`2026-06-27-...md`は廃止・参照禁止）。改訂理由は自社マスタ実装との衝突。**Task 0(事前調査)は実施済み**、正準テナントUUID = `00000000-0000-0000-0000-0000000000a1` に確定。方式は「`tenants`テーブル新設 → 全テーブルが `tenants(id)` を FK 参照」。B社導入前まで。⚠️着手前に **Task 5B**（`tenant_id`をDEFAULT依存で渡していないINSERTの修正）を必ず済ませること。⚠️現状の本番ユーザーは`user_metadata.tenant_id='local-dev'`で運用中。F0実装時はこのアカウントもUUID移行対象 |
 | ✅ 完了 2026-07-01〜02深夜 | APIキー/トークンのローテーション | 2026-07-01セッションでチャットに各種キー露出（Cloudflare token/Supabase/Gemini/Resend）。深夜作業で日付を跨ぎつつ全キー再発行・差し替え済み（ユーザー確認）。Supabase側は「Legacy API Keys（旧来のanon/service_roleキー）」の再発行で手こずった |
-| 🟠 あと一歩 2026-07-23 | 自動デプロイ再設定 | **GitHub Actions方式で実装・push済み**（`.github/workflows/deploy.yml`、コミット`b8069eb`）。main push（`web/**`変更時）で `npm run deploy` をCI実行。GitHub secrets 4つ登録済み（NEXT_PUBLIC_SUPABASE_URL/ANON_KEY・CLOUDFLARE_API_TOKEN・CLOUDFLARE_ACCOUNT_ID）。**初回実行はビルド全成功→デプロイ段でCloudflare認証失敗**（`Invalid access token [code:9109]`）。**残作業＝CLOUDFLARE_API_TOKENの再発行と入れ直しのみ**。手順：Cloudflare My Profile→API Tokens→Create Token→テンプレ「Edit Cloudflare Workers」で発行→GitHubの同名secretを編集で上書き→`gh workflow run deploy.yml`（またはActionsタブのRun workflow）で再実行。ビルド側（Node24・NEXT_PUBLIC焼き込み）は検証済みで問題なし |
+| ✅ 完了 2026-07-27 | 自動デプロイ再設定 | **CLOUDFLARE_API_TOKEN を再発行してGitHub secretへ入れ直し、復旧を確認**（run `30262909199` success、Worker更新 `2026-07-27T11:43:02Z`）。以降 `web/**` を含む main への push で自動デプロイされる。以下は経緯: **GitHub Actions方式で実装・push済み**（`.github/workflows/deploy.yml`、コミット`b8069eb`）。main push（`web/**`変更時）で `npm run deploy` をCI実行。GitHub secrets 4つ登録済み（NEXT_PUBLIC_SUPABASE_URL/ANON_KEY・CLOUDFLARE_API_TOKEN・CLOUDFLARE_ACCOUNT_ID）。**初回実行はビルド全成功→デプロイ段でCloudflare認証失敗**（`Invalid access token [code:9109]`）。**残作業＝CLOUDFLARE_API_TOKENの再発行と入れ直しのみ**。手順：Cloudflare My Profile→API Tokens→Create Token→テンプレ「Edit Cloudflare Workers」で発行→GitHubの同名secretを編集で上書き→`gh workflow run deploy.yml`（またはActionsタブのRun workflow）で再実行。ビルド側（Node24・NEXT_PUBLIC焼き込み）は検証済みで問題なし |
 | 🟡 中 | 旧URL `unsou-system.pages.dev` の扱い決定 | 7/1のWorkers移行以降404が正常な状態。放置／リダイレクト／Pagesプロジェクト削除のいずれにするか未決定 |
 | 🟢 低 | `.cursorrules` / `agent.md` のコミット | 意図的に作成した未追跡ファイル。別コミットで追加予定 |
 | ✅ 完了 2026-07-23 | 5大アラートのResendメール自動送信復活 | 実装・本番デプロイ完了 2026-07-10。①入力遅延・⑤長期未承認の2アラートで自動送信＋手動再送信ボタンが稼働中。**2026-07-23、実アラート発生時のメール着信をボスが確認済み → タスククローズ**。これをもって7/6引き継ぎ課題「Resend通知メール実送受信確認」も完全クローズ。詳細は5-4参照 |
 | ✅ 完了 2026-07-26 | 総合テスト用デモデータ投入 | `web/scripts/seed-demo-full.mjs` / `clear-demo-data.mjs` を新規作成（コミット`7959237`）。予定137・実績122・支払通知書10。5大アラート発火状態を確認済み。**削除は `node web/scripts/clear-demo-data.mjs --execute`**（既定はDRY RUN）。詳細は5-4参照 |
 | ✅ 完了 2026-07-26 | 自社マスタ（請求書発行元）実装 | 設計欠落の発覚に対応（コミット`650fe39`）。`companies`拡張＋`/admin/settings/company`編集画面＋PDF4テンプレートの定数全廃。**PDFを出すには先に「マスタ・設定→自社情報」の登録が必要**（未登録はfail-closedでエラー停止）。詳細は5-4参照 |
 | ✅ 完了 2026-07-26 | ドライバー別案件フィルター保存バグ修正 | `driver_project_assignments.tenant_id` がuuid型で保存が本番で必ず失敗していた。textに統一（マイグレーション`20260726000000_...`）。詳細は5-4参照 |
-| 🟡 中 | 本セッション変更の本番反映 | コミット`7959237`/`4eb8584`/`650fe39`は**未デプロイ**。自動デプロイがCLOUDFLARE_API_TOKEN未再発行で停止中のため、先に上記「自動デプロイ再設定」の残作業が必要 |
+| ✅ 完了 2026-07-27 | 7/26分の本番反映 | 自動デプロイ復旧と同時に `7959237`/`4eb8584`/`650fe39` が本番へ反映済み |
+| ✅ 完了 2026-07-27 | 支払通知書の生成が本番で失敗する不具合を修正 | 独立した2件（`d87bccb`）。①`project_payees`/`invoices`/`payment_notices` に `tenant_id` 列が無いのにコードが要求（`a7d937d`で列追加マイグレーション作り忘れ）→ マイグレーション`20260727000000`で追加。②`payment_notices.status` に `invoices` 側の語彙 `'issued'` が混入しCHECK制約違反（`b15134a`が混入元）→ `'unapproved'` へ修正。**7月上旬から本番で壊れており、UI経由で一度も実行されていなかったため露見していなかった。**実地確認済み（生成が通り「承認待ち」表示、DBに `status='unapproved'` の行が3件増加） |
+| 🟡 中 | 自社情報の登録（PDF fail-closed解除） | 自社マスタ本番反映により、**自社情報未登録だと請求書・支払通知書PDFが出せない**（`companies`0件）。`/admin/settings/company` で会社名・インボイス登録番号（必須2項目）を登録する必要あり。入力欄の文字色が薄く判読しにくい問題は修正・デプロイ済み（`7f4968b`） |
 | 🟢 低 | 既存ダミーデータの削除 | 委託先7・案件10（【テスト】印）が残存し【デモ】データと混在。本番DBへの`DELETE`はハーネスにブロックされるため、SupabaseダッシュボードのSQL Editorでボスが実行する必要がある |
 | 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認・Resend通知メール実送受信確認はすべて完了（2026-07-23）。以降はフィールドテスト運用フィードバック待ち |
 | 🟢 低 | B社マルチテナントオンボーディング | テナント分離F0実装完了後 |
@@ -1332,6 +1334,46 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-07-27（Claude Code セッション・自動デプロイ復旧／本番バグ2件修正／F0計画改訂）
+
+**停止していた自動デプロイを復旧させ、7/26分を本番反映。その過程で7月上旬から本番で壊れていたバグ2件を発見・修正した。**
+
+**1. 自動デプロイの復旧（クローズ）**
+`CLOUDFLARE_API_TOKEN` を再発行しGitHub secretへ入れ直し。前回の失敗（`Invalid access token [code:9109]`）は解消。
+以降 `web/**` を含む main への push で自動デプロイが走る。本セッションで3回のデプロイに成功（`11:43` / `13:04` / `13:22`）。
+検証はCIの success だけでなく、Cloudflare API で Worker の `modified_on` が実際に更新されたことまで毎回確認した。
+
+**2. 支払通知書の生成が本番で必ず失敗していた不具合（`d87bccb`）**
+「請求・支払管理」から支払通知書を生成すると失敗する、という報告から systematic-debugging で追跡。**独立した2件**が重なっていた。
+
+- ① `column project_payees.tenant_id does not exist`
+  `a7d937d`（2026-07-02 セキュリティ監査P0-P2）がテナント分離のため各クエリに `tenant_id` フィルタ／INSERT値を追加した際、**列を持たない3テーブルへの列追加マイグレーションを作り忘れていた**。
+  影響: `project_payees`（支払通知書の生成・案件の支払先の一覧/更新/削除）、`invoices`（請求書の作成）、`payment_notices`（支払通知書の保存）。
+  対応: `supabase/migrations/20260727000000_add_missing_tenant_id_columns.sql` で既存A群と同一定義 `text NOT NULL DEFAULT 'local-dev'` を追加。**uuidにしなかったのは、`getCurrentTenantId()` が現状 `'local-dev'` を返すため**（uuidにすると7/26の`driver_project_assignments`と同じ型不一致事故になる）。
+- ② `new row violates check constraint "payment_notices_status_check"`
+  `payment_notices.status` の許可値は `unapproved`/`approved`/`locked` のみだが、`b15134a`（P0セキュリティ改修）で **`invoices` 側の語彙 `'issued'` が混入**していた。`'unapproved'` へ修正（`admin/billing/actions.ts:728`）。承認フローの挙動は不変。
+
+**いずれも7月上旬から本番で壊れていたが、UI経由でこの操作が一度も実行されておらず露見していなかった。**
+実地確認済み: 生成が通り画面表示が「承認待ち」「再生成」に変化。DBでも `status='unapproved'` / `approval_status='pending'` / `tenant_id='local-dev'` の行が3件増加した。
+
+> ⚠️ 教訓: 「セキュリティ強化でクエリに条件を足す」変更は、**DB側に列があるかを必ず確認する**こと。7/2・7/26・7/27と同型の事故が3回続いている。
+
+**3. 自社情報ページの入力欄が判読困難だった問題（`7f4968b`）**
+`Field` コンポーネントの input に文字色指定が無く親要素の薄い色を継承していた。他の管理画面は `text-zinc-900` / `bg-white` を明示しており、このページだけ漏れ。`text-zinc-900` / `placeholder:text-zinc-400` / `bg-white` を追加。
+
+**4. テナント分離F0の計画を全面改訂（`46744ef`）**
+新: `docs/superpowers/plans/2026-07-27-tenant-isolation-phase0.md` ／ 旧`2026-06-27-...md`は冒頭に廃止理由を明記して**参照禁止**にした。
+
+- **改訂理由**: 旧計画は `companies` をテナントマスタ兼用にする前提だったが、7/26の自社マスタ実装で `companies` が「請求書の発行元情報」の表として `tenant_id text UNIQUE` を持つ形になり正面衝突していた。
+- **採用方式**: `tenants` テーブルを新設し、`companies` を含む全テーブルが `tenants(id)` を FK 参照する。「1テナント＝1社」は `companies.tenant_id` の UNIQUE 制約で維持。
+  - 判断の分岐点は「案1: companiesをテナント兼用」vs「案2: tenants新設」。案1でもB社導入は可能だが、契約したテナントの一覧がDB上のどこにも無い状態になる。データがほぼ空の今が変換の最安タイミングであるため案2を採用した。
+- **Task 0（事前調査）は実施済み**。全テーブルの `tenant_id` は `'local-dev'` 単一、UUIDはどこにも存在せず。**正準テナントUUID = `00000000-0000-0000-0000-0000000000a1`** に確定。
+- 旧計画からの実質的な訂正:
+  - `driver_project_assignments` を「uuid型・変換不要」としていたのは**誤り**（7/26にtextへ統一済み）。変換対象に含めた。
+  - 不変ログの backfill にトリガー一時無効化＋UPDATEを使う手順は**CLAUDE.md §2に抵触**していた。`ADD COLUMN ... DEFAULT`（PG11+は既存行も埋まり行トリガーも発火しない）方式に変更し、UPDATEもトリガー無効化も不要にした。
+  - `getAllTenantIds()` が `contractors` の DISTINCT を取っていたため、**委託先0件のテナントにアラートメールが飛ばない**取りこぼしがあった。`tenants` から引く修正タスクを新設。
+  - **Task 5B を新設**: `tenant_id` を渡さず DB の DEFAULT に依存している INSERT が存在し、F0でDEFAULTを撤去すると壊れる。着手前に必ず解消すること。確定1件（`admin/billing/actions.ts` の `noticePayload`）＋未確定の候補21件を計画書に記録済み。
 
 #### 2026-07-26（Claude Code セッション・デモデータ総合テスト／自社マスタ実装）
 
