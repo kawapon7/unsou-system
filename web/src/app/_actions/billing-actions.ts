@@ -150,13 +150,19 @@ async function finalizeInvoice(
     .from('invoices')
     .upsert(
       {
-        client_id:          clientId,
-        invoice_month:      invoiceMonthDate,
-        total_tax_excluded: result.subtotal,
-        consumption_tax:    result.taxAmount,
-        total_amount:       newTotalAmount,
-        due_date:           dueDate.toISOString().slice(0, 10),
-        status:             'draft',
+        client_id:           clientId,
+        invoice_month:       invoiceMonthDate,
+        // ⚠️ target_month / total_amount_ex_tax / total_tax は旧列だが NOT NULL・DEFAULT なし。
+        //    渡さないと 23502 not-null violation で upsert が必ず失敗する（2026-07-28まで実際に失敗していた）。
+        //    値は新列（invoice_month / total_tax_excluded / consumption_tax）と必ず同じにすること。
+        target_month:        invoiceMonthDate,
+        total_amount_ex_tax: result.subtotal,
+        total_tax:           result.taxAmount,
+        total_tax_excluded:  result.subtotal,
+        consumption_tax:     result.taxAmount,
+        total_amount:        newTotalAmount,
+        due_date:            dueDate.toISOString().slice(0, 10),
+        status:              'draft',
       },
       { onConflict: 'client_id,invoice_month' },
     )

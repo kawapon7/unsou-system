@@ -12,6 +12,31 @@ export type Database = {
   __InternalSupabase: {
     PostgrestVersion: "14.5"
   }
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
+  }
   public: {
     Tables: {
       approval_history: {
@@ -172,19 +197,55 @@ export type Database = {
       }
       companies: {
         Row: {
+          account_holder: string | null
+          account_number: string | null
+          account_type: string | null
+          address: string | null
+          bank_branch: string | null
+          bank_name: string | null
           created_at: string
+          email: string | null
           id: string
+          invoice_reg_number: string | null
           name: string
+          phone: string | null
+          postal_code: string | null
+          tenant_id: string | null
+          updated_at: string | null
         }
         Insert: {
+          account_holder?: string | null
+          account_number?: string | null
+          account_type?: string | null
+          address?: string | null
+          bank_branch?: string | null
+          bank_name?: string | null
           created_at?: string
+          email?: string | null
           id?: string
+          invoice_reg_number?: string | null
           name: string
+          phone?: string | null
+          postal_code?: string | null
+          tenant_id?: string | null
+          updated_at?: string | null
         }
         Update: {
+          account_holder?: string | null
+          account_number?: string | null
+          account_type?: string | null
+          address?: string | null
+          bank_branch?: string | null
+          bank_name?: string | null
           created_at?: string
+          email?: string | null
           id?: string
+          invoice_reg_number?: string | null
           name?: string
+          phone?: string | null
+          postal_code?: string | null
+          tenant_id?: string | null
+          updated_at?: string | null
         }
         Relationships: []
       }
@@ -432,6 +493,7 @@ export type Database = {
           target_month: string
           tax_registered: number
           tax_unregistered: number
+          tenant_id: string
           total_amount: number
           total_amount_ex_tax: number
           total_deduction: number
@@ -458,6 +520,7 @@ export type Database = {
           target_month: string
           tax_registered?: number
           tax_unregistered?: number
+          tenant_id?: string
           total_amount?: number
           total_amount_ex_tax: number
           total_deduction?: number
@@ -484,6 +547,7 @@ export type Database = {
           target_month?: string
           tax_registered?: number
           tax_unregistered?: number
+          tenant_id?: string
           total_amount?: number
           total_amount_ex_tax?: number
           total_deduction?: number
@@ -512,7 +576,8 @@ export type Database = {
       notification_logs: {
         Row: {
           alert_key: string | null
-          contractor_id: string
+          client_id: string | null
+          contractor_id: string | null
           created_at: string
           destination: string
           id: string
@@ -522,7 +587,8 @@ export type Database = {
         }
         Insert: {
           alert_key?: string | null
-          contractor_id: string
+          client_id?: string | null
+          contractor_id?: string | null
           created_at?: string
           destination: string
           id?: string
@@ -532,7 +598,8 @@ export type Database = {
         }
         Update: {
           alert_key?: string | null
-          contractor_id?: string
+          client_id?: string | null
+          contractor_id?: string | null
           created_at?: string
           destination?: string
           id?: string
@@ -541,6 +608,13 @@ export type Database = {
           type?: string
         }
         Relationships: [
+          {
+            foreignKeyName: "notification_logs_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
           {
             foreignKeyName: "notification_logs_contractor_id_fkey"
             columns: ["contractor_id"]
@@ -574,6 +648,7 @@ export type Database = {
           target_month: string
           tax_registered: number
           tax_unregistered: number
+          tenant_id: string
           total_amount: number
           total_deduction: number
           total_excluding_tax: number
@@ -603,6 +678,7 @@ export type Database = {
           target_month: string
           tax_registered?: number
           tax_unregistered?: number
+          tenant_id?: string
           total_amount?: number
           total_deduction?: number
           total_excluding_tax?: number
@@ -632,6 +708,7 @@ export type Database = {
           target_month?: string
           tax_registered?: number
           tax_unregistered?: number
+          tenant_id?: string
           total_amount?: number
           total_deduction?: number
           total_excluding_tax?: number
@@ -744,6 +821,7 @@ export type Database = {
           rounding_rule: string
           share_rate: number | null
           tax_method: string
+          tenant_id: string
           unit_price: number | null
           work_source_contractor_id: string | null
         }
@@ -760,6 +838,7 @@ export type Database = {
           rounding_rule?: string
           share_rate?: number | null
           tax_method?: string
+          tenant_id?: string
           unit_price?: number | null
           work_source_contractor_id?: string | null
         }
@@ -776,6 +855,7 @@ export type Database = {
           rounding_rule?: string
           share_rate?: number | null
           tax_method?: string
+          tenant_id?: string
           unit_price?: number | null
           work_source_contractor_id?: string | null
         }
@@ -1236,6 +1316,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {},
   },

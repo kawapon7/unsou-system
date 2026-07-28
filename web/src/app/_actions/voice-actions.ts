@@ -182,13 +182,18 @@ export async function saveVoiceExpense(
 
   const service           = createServiceClient()
   const amountTaxExcluded = Math.round(params.amount / 1.1)
+  const expenseType       = CATEGORY_TO_TYPE[params.category] ?? 'other'
 
   const { error } = await service
     .from('expense_records')
     .insert({
       contractor_id:       params.contractorId,
       expense_date:        params.date,
-      expense_type:        CATEGORY_TO_TYPE[params.category] ?? 'other',
+      expense_type:        expenseType,
+      // ⚠️ category / amount は旧列だが NOT NULL・DEFAULT なし。渡さないと 23502 で必ず失敗する。
+      //    既存データの慣例に合わせ category=expense_type / amount=amount_actual を維持すること。
+      category:            expenseType,
+      amount:              params.amount,
       amount_actual:       params.amount,
       amount_tax_excluded: amountTaxExcluded,
       tax_category:        'taxable_10',

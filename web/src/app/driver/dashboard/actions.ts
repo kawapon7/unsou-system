@@ -198,6 +198,10 @@ export async function submitExpense(
       contractor_id:       contractorId,
       expense_date:        params.expenseDate,
       expense_type:        params.expenseType,
+      // ⚠️ category / amount は旧列だが NOT NULL・DEFAULT なし。渡さないと 23502 で必ず失敗する。
+      //    既存データの慣例に合わせ category=expense_type / amount=amount_actual を維持すること。
+      category:            params.expenseType,
+      amount:              params.amountActual,
       amount_actual:       params.amountActual,
       amount_tax_excluded: amountTaxExcluded,
       tax_category:        'exclusive',

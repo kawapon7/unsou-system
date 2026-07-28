@@ -157,7 +157,10 @@ export async function buildInvoicePdfData(
     service.from('invoices')
       .select('id, total_tax_excluded, consumption_tax, total_amount, due_date, total_amount_ex_tax, total_tax')
       .eq('client_id', clientId)
-      .eq('target_month', toDbMonth(yearMonth))
+      // ⚠️ 検索キーは invoice_month。書き込み側（billing-actions.ts）が invoice_month を正とするため。
+      //    旧列 target_month で検索すると請求書が見つからず、下の ?? フォールバックで
+      //    「承認された請求額ではない、その場で再計算した金額」のPDFが黙って出る（2026-07-28修正）。
+      .eq('invoice_month', toDbMonth(yearMonth))
       .maybeSingle(),
     service.from('projects')
       .select('id, project_name, sale_amount, price_rules(selling_price)')

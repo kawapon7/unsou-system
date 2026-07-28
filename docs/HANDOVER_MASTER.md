@@ -1289,11 +1289,11 @@ web/
 | ✅ 完了 2026-07-02 | security-reviewスキルによるP0-P2セキュリティ監査・修正 | 認可ガード欠落・クロステナントIDOR等7件修正（`a7d937d`）。詳細は5-4参照 |
 | ✅ 完了 2026-07-02 | admin@hibiki.com パスワード不明問題の解消 | Supabase Admin API（service_role）で直接パスワード更新。詳細は5-4参照 |
 | ✅ 完了 2026-07-06 | 本番ユーザー作成・実ログイン確認 | master(`kawapon7+hibiki@gmail.com`)・driver(`kawapon7+driver@gmail.com`)とも実ログイン確認済み。この過程で権限誤判定の重大バグを発見・修正（詳細は5-4参照） |
-| 🔴 高 | **本番DBの作り直し（現行をテスト環境化）** | **2026-07-27に方針決定・未着手。** 現行の本番DB(`hbpnhbsmsuhjyrohpluu`)をテスト環境として残し、**新しいSupabaseプロジェクトを本番として新規作成する**。理由=本番DBが1つしかなくテストも開発も本番で行っており、既にデモデータで汚染されている（予定140・稼働125・案件20等）。実データは未投入のため**今なら移行コストがほぼゼロ**。A社の実運用開始後だと稼働中データの移行になり危険。✅**着手前の必須条件（マイグレーション不整合の解消）は2026-07-27にクリア済み** — マイグレーション42本で本番スキーマを再現できる状態になった。⚠️新DBは**テナント分離F0の形（`tenants`テーブル・uuid）で最初から作れる**ため、F0の変換手順・ダウンタイム・Task 5Bが丸ごと不要になる可能性がある（要検討）。費用は**新規作成$0で確認済み**（詳細は §5-4の2026-07-27） |
+| 🟡 中 | **本番DBの作り直し（現行をテスト環境化）** | **⏰2026-07-28、実行タイミングを「F0実装後・完成一歩手前」と確定（ボス判断）。今は作らない。** 理由: ①**F0（`tenants`）未実装のうちに作ると新DBの最大の利点が消える** — 古い形（`tenant_id='local-dev'`）で作ることになり結局あとから変換が要る ②**テスト中にDBを2つに増やすと変更の二重反映が必要**になり、7/27に丸一日かけて直した「設計図と実物のズレ」を自分で作り直すことになる ③マイグレーションから数分で作れるので急ぐ利益がない（費用も$0のまま）。⚠️**この計画の前提条件＝「マイグレーションを流せば本番スキーマが再現できる」状態の維持。テスト中のスキーマ変更は必ずマイグレーションファイル経由で行い、Supabaseダッシュボードで直接いじらないこと。** 崩れると新DBを作る手段そのものが失われる。新DBは**新組織**に作る（プランは組織単位のため、本番だけPro化するには組織を分ける必要がある。ただし**プロジェクトの組織間移動は公式機能としてあるため不可逆判断ではない**）。⚠️**2個目のプロジェクトはバックアップにならない**（Supabaseにプロジェクト間の自動複製は無い）。Freeのバックアップ手段は `supabase db dump` のみ、Proなら日次7日分が標準。⚠️**会社ごとにDBを分ける方式は却下**（接続先が`NEXT_PUBLIC_SUPABASE_URL`のビルド時焼き込みのため社数だけデプロイが必要になり、既存の`tenant_id`実装＝ソース23ファイル・RLSポリシー14マイグレーションが活きない。1社増ごとに$10/月）。以下は決定時の記録: **2026-07-27に方針決定・未着手。** 現行の本番DB(`hbpnhbsmsuhjyrohpluu`)をテスト環境として残し、**新しいSupabaseプロジェクトを本番として新規作成する**。理由=本番DBが1つしかなくテストも開発も本番で行っており、既にデモデータで汚染されている（予定140・稼働125・案件20等）。実データは未投入のため**今なら移行コストがほぼゼロ**。A社の実運用開始後だと稼働中データの移行になり危険。✅**着手前の必須条件（マイグレーション不整合の解消）は2026-07-27にクリア済み** — マイグレーション42本で本番スキーマを再現できる状態になった。⚠️新DBは**テナント分離F0の形（`tenants`テーブル・uuid）で最初から作れる**ため、F0の変換手順・ダウンタイム・Task 5Bが丸ごと不要になる可能性がある（要検討）。費用は**新規作成$0で確認済み**（詳細は §5-4の2026-07-27） |
 | ✅ 完了 2026-07-27 | マイグレーションと本番スキーマの不整合を解消 | **本番DBの作り直しの前提条件をクリア。マイグレーション42本＝本番適用済み42件で1:1完全一致**（差分ゼロを機械照合で確認）。作業内容: ①欠落していた `20260720000000_notification_logs_client_id.sql` を本番introspectから復元（実際の変更は4点=`client_id`追加・`contractor_id`のNOT NULL解除・排他CHECK `notification_logs_subject_check`・索引。当初の想定より広かった）。②バージョン番号ズレ3件をリネームで解消（`20260726073900`/`20260726080856`/`20260727123545`）。**放置は危険だった**——`extend_companies_for_invoice_issuer` の `ADD CONSTRAINT companies_tenant_id_unique` に `IF NOT EXISTS` ガードが無く、名前がズレたまま現DBへ再適用すると必ず失敗する。③**全オブジェクト416件を機械照合し、マイグレーションのどこにも現れない15列を発見**（DBがダッシュボード先行で作られマイグレーションが後追いだった名残）→ `20260727141425_align_schema_with_production.sql` で追認・本番適用済み（`IF NOT EXISTS` のみのため**no-opを実測検証**: COL259/CON65/IDX40/POL28/TRG7/FN6 が適用前後で完全一致、データ件数も不変）。⚠️MCP経由適用はバージョンを自動採番するため、適用後にファイル名を採番結果へ合わせる運用にした（これがズレ3件の原因） |
-| 🔴 高 | 請求書生成が本番で壊れている（`invoices` upsert） | **2026-07-27のスキーマ照合中に発見。7/27に修正した支払通知書と同型の不具合。** `billing-actions.ts:149-162` の `invoices` upsert に2つの欠陥: ①`total_amount_ex_tax` が **NOT NULL・DEFAULTなし**なのに payload が渡していない → `23502 not-null violation`。②`onConflict: 'client_id,invoice_month'` を指定しているが、本番の `invoices` に **UNIQUE(client_id, invoice_month) が存在しない** → `42P10 no unique constraint matching`。本番の `invoices` は**0件**で、UI経由で一度も成功していない可能性が高い。**対応: payload に `total_amount_ex_tax` を追加し、UNIQUE制約を新規マイグレーションで追加する**（制約追加は本番DB作り直しの前にやるか後にやるか要判断） |
-| 🟡 中 | `expense_records.category` のNOT NULL違反 | 2026-07-27発見。`category` は **NOT NULL・DEFAULTなし**だが、`driver/dashboard/actions.ts` と `voice-actions.ts` の INSERT がこの列を渡していない。現本番の19件は seed スクリプト経由で入っているため露見していない。**新DBでは立替金登録が `23502` で失敗する。** 対応: INSERT側で `category` を渡すか、列にDEFAULTを付ける |
-| 🟡 中 | `web/src/types/supabase.ts` が古い | 2026-07-27発見。`notification_logs` の型定義に `client_id` が無く、`contractor_id` が**非NULL必須**として定義されている（実スキーマはNULL許容）。荷主向けアラートを実装する際に型が邪魔になる。`generate_typescript_types` で再生成すること |
+| ✅ 完了 2026-07-28 | 請求書生成が本番で壊れている（`invoices` upsert） | **2026-07-28に修正・実地検証まで完了（§5-4参照）。実際の欠陥は報告の2件ではなく4件だった。** 以下は発見時点の記録: **2026-07-27のスキーマ照合中に発見。7/27に修正した支払通知書と同型の不具合。** `billing-actions.ts:149-162` の `invoices` upsert に2つの欠陥: ①`total_amount_ex_tax` が **NOT NULL・DEFAULTなし**なのに payload が渡していない → `23502 not-null violation`。②`onConflict: 'client_id,invoice_month'` を指定しているが、本番の `invoices` に **UNIQUE(client_id, invoice_month) が存在しない** → `42P10 no unique constraint matching`。本番の `invoices` は**0件**で、UI経由で一度も成功していない可能性が高い。**対応: payload に `total_amount_ex_tax` を追加し、UNIQUE制約を新規マイグレーションで追加する**（制約追加は本番DB作り直しの前にやるか後にやるか要判断） |
+| ✅ 完了 2026-07-28 | `expense_records` のNOT NULL違反（`category` ＋ `amount`） | **2026-07-28修正・検証済み。`category` だけでなく `amount` も未指定だった（報告は1列だが実際は2列）。** 既存19行の慣例に合わせ `category=expense_type` / `amount=amount_actual` で統一。以下は発見時の記録: 2026-07-27発見。`category` は **NOT NULL・DEFAULTなし**だが、`driver/dashboard/actions.ts` と `voice-actions.ts` の INSERT がこの列を渡していない。現本番の19件は seed スクリプト経由で入っているため露見していない。**新DBでは立替金登録が `23502` で失敗する。** 対応: INSERT側で `category` を渡すか、列にDEFAULTを付ける |
+| ✅ 完了 2026-07-28 | `web/src/types/supabase.ts` が古い | **2026-07-28に `npx supabase gen types typescript --linked` で再生成済み**（1242行→1325行、`notification_logs.client_id` 追加・`contractor_id` のNULL許容を反映、`tsc --noEmit` エラー0）。以下は発見時の記録: 2026-07-27発見。`notification_logs` の型定義に `client_id` が無く、`contractor_id` が**非NULL必須**として定義されている（実スキーマはNULL許容）。荷主向けアラートを実装する際に型が邪魔になる。`generate_typescript_types` で再生成すること |
 | 🟡 中 | テナント分離 F0 実装 | **計画書を全面改訂: `docs/superpowers/plans/2026-07-27-tenant-isolation-phase0.md`**（旧`2026-06-27-...md`は廃止・参照禁止）。改訂理由は自社マスタ実装との衝突。**Task 0(事前調査)は実施済み**、正準テナントUUID = `00000000-0000-0000-0000-0000000000a1` に確定。方式は「`tenants`テーブル新設 → 全テーブルが `tenants(id)` を FK 参照」。B社導入前まで。⚠️着手前に **Task 5B**（`tenant_id`をDEFAULT依存で渡していないINSERTの修正）を必ず済ませること。⚠️現状の本番ユーザーは`user_metadata.tenant_id='local-dev'`で運用中。F0実装時はこのアカウントもUUID移行対象 |
 | ✅ 完了 2026-07-01〜02深夜 | APIキー/トークンのローテーション | 2026-07-01セッションでチャットに各種キー露出（Cloudflare token/Supabase/Gemini/Resend）。深夜作業で日付を跨ぎつつ全キー再発行・差し替え済み（ユーザー確認）。Supabase側は「Legacy API Keys（旧来のanon/service_roleキー）」の再発行で手こずった |
 | ✅ 完了 2026-07-27 | 自動デプロイ再設定 | **CLOUDFLARE_API_TOKEN を再発行してGitHub secretへ入れ直し、復旧を確認**（run `30262909199` success、Worker更新 `2026-07-27T11:43:02Z`）。以降 `web/**` を含む main への push で自動デプロイされる。以下は経緯: **GitHub Actions方式で実装・push済み**（`.github/workflows/deploy.yml`、コミット`b8069eb`）。main push（`web/**`変更時）で `npm run deploy` をCI実行。GitHub secrets 4つ登録済み（NEXT_PUBLIC_SUPABASE_URL/ANON_KEY・CLOUDFLARE_API_TOKEN・CLOUDFLARE_ACCOUNT_ID）。**初回実行はビルド全成功→デプロイ段でCloudflare認証失敗**（`Invalid access token [code:9109]`）。**残作業＝CLOUDFLARE_API_TOKENの再発行と入れ直しのみ**。手順：Cloudflare My Profile→API Tokens→Create Token→テンプレ「Edit Cloudflare Workers」で発行→GitHubの同名secretを編集で上書き→`gh workflow run deploy.yml`（またはActionsタブのRun workflow）で再実行。ビルド側（Node24・NEXT_PUBLIC焼き込み）は検証済みで問題なし |
@@ -1339,6 +1339,41 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-07-28（Claude Code セッション・本番DB方針の再検討／不具合4件修正）
+
+**前半は本番DB作り直しの再検討、後半は不具合修正。前半の結論として「新DB作成は後回し」に方針転換した。**
+
+**A. 本番DB作り直しのタイミングを「F0実装後・完成一歩手前」に変更（ボス判断）**
+
+7/27時点では「今すぐ作る」前提だったが、ボスの「まだテスト中で変更があるのでは？」という指摘から再検討し、**後回しが正しい**と結論。決定的な理由は**F0（`tenants`テーブル）が未実装**である点 — 今作ると古い形（`tenant_id='local-dev'`）で作ることになり、「最初から正しいテナント形で作れる」という新DBの最大の利点が消える。加えてテスト中にDBを2つに増やすと変更の二重反映が必要になり、7/27に直した不整合を再生産する。
+
+この検討の過程で確認した事実（すべてSupabase API・公式ドキュメントで裏取り済み）:
+- **Supabaseプロジェクトは現在1個だけ**（`unsou-system`）。localhost の開発環境も本番と同じDBに繋がっている（`web/.env.local`）。デモデータが本番に入っている原因はこれ。
+- **プランは組織単位**。組織をProにすると配下の全プロジェクトがPro扱い。→「本番だけPro・テストはFree」には組織を分ける必要がある。
+- ただし**プロジェクトの組織間移動は公式機能としてある**（要件: 移動元組織のオーナー＋移動先組織のメンバー、SupabaseのGitHub連携・ログドレイン未設定。HIBIKIは要件を満たす）。**組織の選択は不可逆判断ではない。**
+- Free枠は**1組織あたりアクティブ2プロジェクト**。停止中は枠を消費せず、別の無料組織を作れば無料のまま増やせる（「3個目から有料必須」ではない）。
+- **2個目のプロジェクトはバックアップにならない**（プロジェクト間の自動複製機能が無い）。Free=バックアップ無し（公式推奨は `supabase db dump`）、Pro=日次7日分が標準。PITRは別$100/月。
+- **Proで1組織に2プロジェクト置くと$35/月**（$25 + Compute $10×2 − credit $10）。本番組織を1プロジェクトに留めれば$25/月。
+- **「会社ごとにDBを分ける」方式は却下。** 接続先が `NEXT_PUBLIC_SUPABASE_URL` のビルド時焼き込みのため社数だけデプロイが必要になり、既存の `tenant_id` 実装（ソース23ファイル・RLSポリシー14マイグレーション）が活きない。1社増ごとに$10/月＋運用作業。現行のRLSマルチテナント設計を維持する。
+- 現行DBの「掃除」も技術的には可能（`clear-demo-data.mjs` に加え、不変トリガーを一時的に外せば承認履歴付きの支払通知書も消せる。トリガーのマイグレーションは `DROP TRIGGER IF EXISTS`→`CREATE TRIGGER` の形なので確実に元に戻せる）。ただし**掃除してもDBは1個のままでテスト環境は得られず**、Freeはバックアップが無いため失敗時に戻せない。新DB案は現行に一切触らない点が安全。
+
+**B. 不具合修正4件（すべて修正・検証済み。マイグレーション本番適用済み）**
+
+7/27の報告では3件だったが、着手時の実地調査で**invoices 周りは実際には4件**、`expense_records` も**1列ではなく2列**の欠落だった。根本原因は共通で、**両テーブルに「旧列セット」と「新列セット」が併存し、コードは新列にしか書かないのに旧列が NOT NULL・DEFAULT なしで残っていた**こと。
+
+| # | ファイル | 内容 |
+|---|---|---|
+| 1 | `_actions/billing-actions.ts` | upsert に `target_month` / `total_amount_ex_tax` / `total_tax` を追加（3列とも NOT NULL・DEFAULTなし → `23502`）。値は新列と必ず同じにすること |
+| 2 | `supabase/migrations/20260728070404_invoices_unique_client_month.sql` | `UNIQUE(client_id, invoice_month)` を追加（無いまま `onConflict` 指定 → `42P10`）。適用時0行のため安全。`DO`ブロックでガード済み |
+| 3 | `_actions/pdfActions.ts` | **新発見。** 検索キーを `target_month` → `invoice_month` に統一。書き込み側は `invoice_month` なので**永久に見つからず**、`?? ` フォールバックで「承認された請求額ではない、その場で再計算した金額」のPDFがエラー無しで出ていた |
+| 4 | `driver/dashboard/actions.ts` / `_actions/voice-actions.ts` | **`category` に加え `amount` も未指定だった。** 既存19行の慣例（`category=expense_type` / `amount=amount_actual`、不一致0件）に合わせて統一 |
+
+加えて `web/src/types/supabase.ts` を `npx supabase gen types typescript --linked` で再生成（1242→1325行）。
+
+**検証方法（本番DBに残さないロールバックテスト）**: DOブロック内で修正後の列構成のINSERTを実行し、最後に意図的に例外を出して全体をロールバックさせた。結果 `VERIFY_OK` に到達＝両方のINSERTが成功。逆に修正前の列構成では `ERROR 23502: null value in column "target_month"` で失敗することも確認（＝診断が正しかった裏取り）。**この時 `42P10` ではなく `23502` まで進んだことが、UNIQUE制約が正しく効いている証拠でもある。** 実行後の件数は `invoices` 0行・`expense_records` 19行で変化なし、テスト残留0件。
+
+⚠️**MCP経由の `apply_migration` はバージョンを自動採番する**（今回もローカル `20260728000000` に対し本番は `20260728070404`）。適用後に `npx supabase migration list --linked` で採番結果を確認し、ファイル名をリネームする運用を今回も実施済み。
 
 #### 2026-07-27（Claude Code セッション・自動デプロイ復旧／本番バグ2件修正／F0計画改訂）
 
