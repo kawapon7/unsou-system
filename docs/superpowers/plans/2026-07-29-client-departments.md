@@ -94,8 +94,8 @@ git switch -c feat/client-departments
 | # | 経路 | 画面 | 操作 |
 |---|---|---|---|
 | 1 | `finalizeInvoice` | `/admin/billing` | 請求確定を実行 |
-| 2 | `saveClientScanResult`（1回目） | `/admin/sales?tab=scan` | 請求書をスキャンして保存 |
-| 2' | `saveClientScanResult`（2回目） | `/admin/sales?tab=scan` | **同一荷主・同一月**でもう一度保存（B-2 の確認） |
+| 2 | `saveClientScanResult`（1回目） | `/admin/scan` | 請求書をスキャンして保存 |
+| 2' | `saveClientScanResult`（2回目） | `/admin/scan` | **同一荷主・同一月**でもう一度保存（B-2 の確認） |
 | 4 | `commitManualInvoice` | `/admin/sales` | 手動で請求書を作成して確定（B-1 の確認） |
 
 エラーが出た場合は `read_console_messages` と `preview_logs` でエラーコード（`23502` / `23505` / `42P10` など）を採取する。
@@ -553,7 +553,23 @@ import { writeInvoice } from '@/utils/invoice-writer'
     if (error || !id) return { data: null, error: error ?? '請求書の保存に失敗しました' }
 ```
 
-⚠️ `params.finalAmount` が税込か税抜かを実装時にコード上で確認すること。税込なら上記のとおり（`subtotal` に税込を入れると旧列 `total_amount_ex_tax` にも税込が入る点に注意）。**税抜・税額が別途取れるならそちらを渡す。** 判断がつかない場合は実装を止めてボスに確認する。
+⚠️ **`params.finalAmount` は税込である**（Task 1 のベースライン取得で画面プレビューにより確認済み。
+税抜 ¥10,000 → 消費税 +¥1,000 → 経過措置 −¥220 → 最終請求額 ¥10,780）。
+
+**そのため上記コードのままでは誤りになる。** `subtotal` に税込額が入り、旧列 `total_amount_ex_tax`
+（税抜であるべき列）に税込額が書かれてしまう。
+
+`computeManualInvoicePreview` の戻り値には税抜合計・消費税額も含まれているため、
+`commitManualInvoice` の引数にそれらを追加し、以下のように渡すこと:
+
+```ts
+      subtotal:     params.subtotalExTax,   // 税抜合計（新規に引数へ追加する）
+      taxAmount:    params.taxAmount,       // 消費税額（新規に引数へ追加する）
+      totalAmount:  params.finalAmount,     // 税込（経過措置差引後）
+```
+
+呼び出し元 `web/src/app/admin/sales/ManualInvoiceTab.tsx:238` の `commitManualInvoice({...})` にも
+同じ 2 つを追加する（`preview` から取れる）。
 
 - [ ] **Step 4: 元の insert / update ブロックが残っていないことを確認する**
 
@@ -720,7 +736,7 @@ cd web && npx tsc --noEmit && npx vitest run && npx eslint src/app/_actions/scan
 
 - [ ] **Step 5: ローカルで実地確認**
 
-`/admin/sales?tab=scan` で請求書をスキャンして保存し、成功することを確認する。
+`/admin/scan` で請求書をスキャンして保存し、成功することを確認する。
 **同一荷主・同一月で 2 回目を保存しても失敗しない**ことを確認する（B-2 解消）。
 
 - [ ] **Step 6: コミット**
@@ -820,7 +836,7 @@ WHERE conname = 'invoices_client_id_invoice_month_key';
 制約を張り替えた直後が最も危険なので、**Task 4・5・6 で確認した 4 経路をもう一度すべて実行する。**
 
 - [ ] `/admin/billing` 請求確定
-- [ ] `/admin/sales?tab=scan` スキャン保存
+- [ ] `/admin/scan` スキャン保存
 - [ ] `/admin/sales` 請求書発行
 - [ ] `/admin/sales` 手動請求書確定
 
