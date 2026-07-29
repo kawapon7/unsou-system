@@ -80,17 +80,23 @@ export async function saveClientScanResult(
   const invoiceMonth = `${params.invoiceDate.slice(0, 7)}-01`
   const service = createServiceClient()
 
+  // ⚠️ target_month / total_amount_ex_tax / total_tax は旧列だが NOT NULL・DEFAULT なし。
+  //    渡さないと 23502 not-null violation で insert が必ず失敗する（billing-actions.ts と同じ罠）。
+  //    値は新列（invoice_month / total_tax_excluded / consumption_tax）と必ず同じにすること。
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: record, error: insertErr } = await (service as any)
     .from('invoices')
     .insert({
-      client_id:          params.clientId,
-      invoice_month:      invoiceMonth,
-      total_tax_excluded: params.subtotal,
-      consumption_tax:    params.taxAmount,
-      total_amount:       params.subtotal + params.taxAmount,
-      status:             'draft',
-      tenant_id:          tenantId,
+      client_id:           params.clientId,
+      invoice_month:       invoiceMonth,
+      target_month:        invoiceMonth,
+      total_amount_ex_tax: params.subtotal,
+      total_tax:           params.taxAmount,
+      total_tax_excluded:  params.subtotal,
+      consumption_tax:     params.taxAmount,
+      total_amount:        params.subtotal + params.taxAmount,
+      status:              'draft',
+      tenant_id:           tenantId,
     })
     .select('id')
     .single() as { data: Record<string, unknown> | null; error: { message: string } | null }

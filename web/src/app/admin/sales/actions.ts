@@ -416,17 +416,23 @@ export async function upsertInvoice(
     return { data: { id: existing.id }, error: null }
   }
 
+  // ⚠️ target_month / total_amount_ex_tax / total_tax は旧列だが NOT NULL・DEFAULT なし。
+  //    渡さないと 23502 not-null violation で insert が必ず失敗する（billing-actions.ts と同じ罠）。
+  //    値は新列（invoice_month / total_tax_excluded / consumption_tax）と必ず同じにすること。
   const { data, error } = await supabase
     .from('invoices')
     .insert({
-      client_id:          clientId,
-      invoice_month:      toDbMonth(yearMonth),
-      total_tax_excluded: preview.netTotal,
-      consumption_tax:    preview.taxTotal,
-      total_amount:       preview.grandTotal,
-      due_date:           preview.dueDate,
-      status:             'issued',
-      issued_at:          new Date().toISOString(),
+      client_id:           clientId,
+      invoice_month:       toDbMonth(yearMonth),
+      target_month:        toDbMonth(yearMonth),
+      total_amount_ex_tax: preview.netTotal,
+      total_tax:           preview.taxTotal,
+      total_tax_excluded:  preview.netTotal,
+      consumption_tax:     preview.taxTotal,
+      total_amount:        preview.grandTotal,
+      due_date:            preview.dueDate,
+      status:              'issued',
+      issued_at:           new Date().toISOString(),
     })
     .select('id')
     .single()
