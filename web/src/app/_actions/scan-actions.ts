@@ -4,6 +4,7 @@ import { createClient }        from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireOwner }        from '@/utils/auth'
 import { getCurrentTenantId }  from '@/utils/tenant'
+import { writeInvoice }        from '@/utils/invoice-writer'
 
 type ActionResult<T = void> =
   | { data: T;    error: null   }
@@ -77,35 +78,32 @@ export async function saveClientScanResult(
   const __owner = await requireOwner()
   if (!__owner.ok) return { data: null, error: __owner.error }
 
-  const invoiceMonth = `${params.invoiceDate.slice(0, 7)}-01`
   const service = createServiceClient()
 
-  // ⚠️ target_month / total_amount_ex_tax / total_tax は旧列だが NOT NULL・DEFAULT なし。
-  //    渡さないと 23502 not-null violation で insert が必ず失敗する（billing-actions.ts と同じ罠）。
-  //    値は新列（invoice_month / total_tax_excluded / consumption_tax）と必ず同じにすること。
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: record, error: insertErr } = await (service as any)
-    .from('invoices')
-    .insert({
-      client_id:           params.clientId,
-      invoice_month:       invoiceMonth,
-      target_month:        invoiceMonth,
-      total_amount_ex_tax: params.subtotal,
-      total_tax:           params.taxAmount,
-      total_tax_excluded:  params.subtotal,
-      consumption_tax:     params.taxAmount,
-      total_amount:        params.subtotal + params.taxAmount,
-      status:              'draft',
-      tenant_id:           tenantId,
-    })
-    .select('id')
-    .single() as { data: Record<string, unknown> | null; error: { message: string } | null }
+  // ⚠️ 従来は素の insert だったため、同一荷主・同一月の 2 枚目をスキャンすると
+  //    23505 duplicate key で失敗していた（B-2）。
+  //    2026-07-28 に UNIQUE(client_id, invoice_month) を追加したことで顕在化した。
+  //    共通ライタの SELECT→UPDATE/INSERT へ移行して解消する。
+  // ⚠️ 挙動の変更: 同一荷主・同一月の 2 枚目は 1 枚目を「上書き」する。
+  //    スキャンは 1 荷主 1 月 1 枚が前提であるという判断に基づく。
+  const { id, error: writeErr } = await writeInvoice(service, {
+    clientId:     params.clientId,
+    departmentId: null,          // Task 11 で部署対応を入れる
+    yearMonth:    params.invoiceDate.slice(0, 7),
+    subtotal:     params.subtotal,
+    taxAmount:    params.taxAmount,
+    totalAmount:  params.subtotal + params.taxAmount,
+    status:       'draft',
+    dueDate:      null,
+    issuedAt:     null,
+    tenantId:     tenantId,
+  })
 
-  if (insertErr || !record) {
-    return { data: null, error: insertErr?.message ?? '保存に失敗しました' }
+  if (writeErr || !id) {
+    return { data: null, error: writeErr ?? '保存に失敗しました' }
   }
 
-  return { data: { id: record['id'] as string }, error: null }
+  return { data: { id }, error: null }
 }
 
 // ── AI解析結果をwork_recordsへ確定保存 ───────────────────
