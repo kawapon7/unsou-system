@@ -512,7 +512,20 @@ git commit -m "feat(billing): invoices 書き込みの共通ライタを追加�
 
 ---
 
-### Task 4: `admin/sales/actions.ts` の 2 経路を共通ライタへ移行（B-1・B-3 解消）
+### Task 4: `admin/sales/actions.ts` の 2 経路を共通ライタへ移行（B-1・B-3 解消）🔶 コード完了 2026-07-30（コミット `36728e8`）／**実地確認は未実施**
+
+> **実施結果（実測）:** `tsc --noEmit` 0件 / `vitest run` **24 passed**（全3ファイル）/ `eslint` **新規エラー0件**（既存5件のみ＝`createServiceClient() as any` 2箇所・`(r: any)` 1箇所・ManualInvoiceTab の既存2件）。
+>
+> **計画書から意図的に変更・追加した点:**
+> 1. **`upsertInvoice` に `tenantId` が無かったので `getCurrentTenantId()` を追加した**（計画書 Step 2 の ⚠️ どおり）。従来この経路は `tenant_id` を渡さず DEFAULT に依存していた。
+> 2. **`commitManualInvoice` の引数に `subtotalExTax` / `taxAmount` を追加**し、呼び出し元 `ManualInvoiceTab.tsx` も修正（計画書 Step 3 の ⚠️ どおり。`finalAmount` は税込なので旧列 `total_amount_ex_tax` に税込額が入るのを防いだ）。
+> 3. **Step 4 の grep の期待値は不正確だった。** 「`insert(`/`update(` を伴う行が無いこと」とあるが、実際には次の2つが残る（どちらも正しい）:
+>    - `updateInvoiceStatus` の `.update({ status })` — **status のみを id 指定で更新**する入金ステータス更新。必須列に触れないため 23502 は起こり得ず、共通ライタでは「金額を渡さず status だけ変える」を表現できない（金額の再取得が必要になり、かえって危険）。**意図的に残した。**
+>    - `commitManualInvoice` の else 側 `payment_notices` への `insert` — `invoices` ではないため本計画の対象外。
+>
+> **⚠️ 別件として発見（本計画では未対応）:** `updateInvoiceStatus` は `.eq('id', invoiceId)` のみで **`tenant_id` フィルタが無い**。`requireOwner()` は通るが、テナントが複数になった時点でテナント跨ぎの更新が可能になる。B社オンボーディング前に潰す必要がある。
+>
+> **未検証:** 画面からの実地確認（Step 6）。ローカルは `ALLOW_DEV_AUTH_BYPASS=false` でログインが必要であり、パスワード入力はアシスタントが行えないため。**ボス判断により Task 5・6 完了後に4経路まとめて実施することにした（2026-07-30）。**
 
 **Files:**
 - Modify: `web/src/app/admin/sales/actions.ts`（`upsertInvoice` 周辺 396-441行、`commitManualInvoice` 周辺 713-750行）
@@ -521,7 +534,7 @@ git commit -m "feat(billing): invoices 書き込みの共通ライタを追加�
 - Consumes: `writeInvoice` / `InvoiceWritePayload`（Task 3）
 - Produces: 変更なし（両関数の外部シグネチャは維持する）
 
-- [ ] **Step 1: import を追加する**
+- [x] **Step 1: import を追加する**
 
 `web/src/app/admin/sales/actions.ts` の import 群に追加:
 
@@ -529,7 +542,7 @@ git commit -m "feat(billing): invoices 書き込みの共通ライタを追加�
 import { writeInvoice } from '@/utils/invoice-writer'
 ```
 
-- [ ] **Step 2: `upsertInvoice` の SELECT→UPDATE/INSERT を置き換える**
+- [x] **Step 2: `upsertInvoice` の SELECT→UPDATE/INSERT を置き換える**
 
 396-441行（`const { data: existing } = await supabase.from('invoices')` から関数末尾の `return { data: { id: data.id }, error: null }` まで）を以下で置き換える:
 
@@ -553,7 +566,7 @@ import { writeInvoice } from '@/utils/invoice-writer'
 
 ⚠️ この関数のスコープに `tenantId` が無い場合は、関数冒頭で `const tenantId = await getCurrentTenantId()` を取得すること。
 
-- [ ] **Step 3: `commitManualInvoice` の insert を置き換える（B-1・B-3 の修正）**
+- [x] **Step 3: `commitManualInvoice` の insert を置き換える（B-1・B-3 の修正）**
 
 737-748行の `.from('invoices').insert({...})` ブロックを以下で置き換える:
 
@@ -596,7 +609,7 @@ import { writeInvoice } from '@/utils/invoice-writer'
 呼び出し元 `web/src/app/admin/sales/ManualInvoiceTab.tsx:238` の `commitManualInvoice({...})` にも
 同じ 2 つを追加する（`preview` から取れる）。
 
-- [ ] **Step 4: 元の insert / update ブロックが残っていないことを確認する**
+- [x] **Step 4: 元の insert / update ブロックが残っていないことを確認する**
 
 ```bash
 cd /Users/kawasakiatsushi/developer/unsou-system && grep -n "from('invoices')" web/src/app/admin/sales/actions.ts
@@ -604,7 +617,7 @@ cd /Users/kawasakiatsushi/developer/unsou-system && grep -n "from('invoices')" w
 
 期待: **SELECT 系のみが残る**（147行・329行・398行付近の読み取り）。`insert(` / `update(` を伴う行が無いこと。
 
-- [ ] **Step 5: 型チェックとテスト**
+- [x] **Step 5: 型チェックとテスト**
 
 ```bash
 cd web && npx tsc --noEmit && npx vitest run
@@ -622,7 +635,7 @@ cd web && npx tsc --noEmit && npx vitest run
 
 `read_console_messages` と `preview_logs` でエラーが出ていないことを確認する。
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add web/src/app/admin/sales/actions.ts
@@ -631,7 +644,14 @@ git commit -m "fix(billing): 手動請求書確定の必須列欠落と重複エ
 
 ---
 
-### Task 5: `_actions/billing-actions.ts` を共通ライタへ移行（ロック判定は残す）
+### Task 5: `_actions/billing-actions.ts` を共通ライタへ移行（ロック判定は残す）🔶 コード完了 2026-07-30（コミット `cf55276`）／**実地確認は未実施**
+
+> **実施結果（実測）:** `tsc --noEmit` 0件 / `vitest run` 24 passed / `eslint` **新規エラー0件**（既存3件のみ＝`finalizePaymentNotice` 内の `as any` 3箇所。変更前と同一行）。
+> `tenantId` は既に関数スコープ内（91行）にあったため追加不要だった。ロック判定（104-122行）は無変更。
+>
+> **意図的な挙動変更（1件）:** 従来の upsert は `issued_at` に触れなかったため、開発者アンロックでの再確定時に `status='draft'` なのに `issued_at` が残るという矛盾状態になっていた。共通ライタは `issuedAt: null` を渡すためクリアされる。draft に戻すのと整合する方向なので採用した。
+>
+> **未検証:** 画面からの実地確認（Step 5）。とくに**ロック判定が生きていること**（issued の請求書に再確定して開発者アンロックを要求して停止する）は自動テストで代替できていない。4経路の一括検証で必ず確認する。
 
 **Files:**
 - Modify: `web/src/app/_actions/billing-actions.ts`（`finalizeInvoice` 内 149-170行）
@@ -640,17 +660,17 @@ git commit -m "fix(billing): 手動請求書確定の必須列欠落と重複エ
 - Consumes: `writeInvoice`（Task 3）
 - Produces: 変更なし
 
-- [ ] **Step 1: import を追加する**
+- [x] **Step 1: import を追加する**
 
 ```ts
 import { writeInvoice } from '@/utils/invoice-writer'
 ```
 
-- [ ] **Step 2: ロック判定（113-122行）に手を触れないことを確認する**
+- [x] **Step 2: ロック判定（113-122行）に手を触れないことを確認する**
 
 `status` が `issued` / `paid` の請求書を上書きしようとしたとき停止し、開発者アンロックを要求する処理がある。**この判定は業務ロジックであり、そのまま残す。** 共通ライタは渡された内容をそのまま書くだけで、ロックを守らない。
 
-- [ ] **Step 3: upsert を置き換える（149-170行）**
+- [x] **Step 3: upsert を置き換える（149-170行）**
 
 ```ts
   // ⚠️ 従来は onConflict: 'client_id,invoice_month' の upsert だった。
@@ -680,7 +700,7 @@ import { writeInvoice } from '@/utils/invoice-writer'
 
 ⚠️ `tenantId` がこの関数のスコープに無い場合は `getCurrentTenantId()` で取得する。従来この経路は `tenant_id` を渡しておらず DEFAULT に依存していた。
 
-- [ ] **Step 4: 型チェックとテスト**
+- [x] **Step 4: 型チェックとテスト**
 
 ```bash
 cd web && npx tsc --noEmit && npx vitest run
@@ -694,7 +714,7 @@ cd web && npx tsc --noEmit && npx vitest run
 
 **加えてロック判定が生きていることを確認する:** 一度確定して `issued` にした請求書に対してもう一度確定を実行し、**開発者アンロックを要求して停止する**ことを確認する。ここが素通りしたら Step 2 の判定が壊れている。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add web/src/app/_actions/billing-actions.ts
@@ -703,7 +723,15 @@ git commit -m "refactor(billing): finalizeInvoice を共通ライタへ移行（
 
 ---
 
-### Task 6: `_actions/scan-actions.ts` を共通ライタへ移行（B-2 解消）
+### Task 6: `_actions/scan-actions.ts` を共通ライタへ移行（B-2 解消）🔶 コード完了 2026-07-30（コミット `6127294`）／**実地確認は未実施**
+
+> **実施結果（実測）:** `tsc --noEmit` 0件 / `vitest run` 24 passed / `eslint src/app/_actions/scan-actions.ts` **0件**（Step 3 の `(service as any)` と `eslint-disable-next-line` を削除できたため）。
+> 使わなくなった `invoiceMonth` 変数も削除済み（未使用変数の警告は出ていない）。
+>
+> **未検証:** 画面からの実地確認（Step 5）。とくに**同一荷主・同一月の2枚目が1枚目を上書きする**という挙動変更の妥当性は、実データで一度見ておく必要がある。
+>
+> **✅ Task 7 の前提条件は充足済み（機械確認）:** `grep -rn "onConflict" src/app/_actions/ src/app/admin/ | grep -i invoice` → **0件**。
+> なお最初は Task 5 で書いたコメント文に `onConflict` の語が含まれて grep に引っかかったため、**将来のセッションが誤って手戻りしないようコメント文言から該当語を外した**（`cf55276` の内容）。
 
 **Files:**
 - Modify: `web/src/app/_actions/scan-actions.ts`（`saveClientScanResult` 内 83-106行）
@@ -712,13 +740,13 @@ git commit -m "refactor(billing): finalizeInvoice を共通ライタへ移行（
 - Consumes: `writeInvoice`（Task 3）
 - Produces: 変更なし
 
-- [ ] **Step 1: import を追加する**
+- [x] **Step 1: import を追加する**
 
 ```ts
 import { writeInvoice } from '@/utils/invoice-writer'
 ```
 
-- [ ] **Step 2: insert を置き換える（83-106行）**
+- [x] **Step 2: insert を置き換える（83-106行）**
 
 ```ts
   // ⚠️ 従来は素の insert だったため、同一荷主・同一月の 2 枚目をスキャンすると
@@ -747,11 +775,11 @@ import { writeInvoice } from '@/utils/invoice-writer'
 
 ⚠️ **挙動の変更点を認識すること。** 従来は毎回新しい行を作ろうとしていた（が制約で失敗した）。移行後は同一荷主・同一月の 2 枚目が **1 枚目を上書き**する。スキャンは 1 荷主 1 月 1 枚が前提であるという判断に基づく。**この前提が誤っている場合は実装を止めてボスに確認する**（複数枚を別行として残す必要があるなら、設計から見直しが必要）。
 
-- [ ] **Step 3: `as any` キャストの eslint-disable が不要になったら削除する**
+- [x] **Step 3: `as any` キャストの eslint-disable が不要になったら削除する**
 
 元コードには `// eslint-disable-next-line @typescript-eslint/no-explicit-any` と `(service as any)` があった。共通ライタ側でキャストを持つため、この経路では不要になる。残っていたら削除する。
 
-- [ ] **Step 4: 型チェック・テスト・リント**
+- [x] **Step 4: 型チェック・テスト・リント**
 
 ```bash
 cd web && npx tsc --noEmit && npx vitest run && npx eslint src/app/_actions/scan-actions.ts
@@ -764,7 +792,7 @@ cd web && npx tsc --noEmit && npx vitest run && npx eslint src/app/_actions/scan
 `/admin/scan` で請求書をスキャンして保存し、成功することを確認する。
 **同一荷主・同一月で 2 回目を保存しても失敗しない**ことを確認する（B-2 解消）。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add web/src/app/_actions/scan-actions.ts
@@ -776,6 +804,12 @@ git commit -m "fix(scan): 同一荷主・同一月の2枚目スキャンが失�
 ### Task 7: 一意性制約の張り替え（本計画で最も慎重を要する）
 
 **⚠️ 前提条件: Task 4・5・6 がすべて完了し、`onConflict` を使う書き込みが 1 つも残っていないこと。**
+
+> **🚧 2026-07-30 時点の状態: Task 7 にはまだ着手してはならない。**
+> Task 4・5・6 は**コードは完了しているが実地確認が未実施**（3タスクとも Step 5/6 の画面確認が未消化）。
+> 制約を張り替えた後に不具合が出ると「今回の張り替えで壊れたのか、4・5・6 の移行が元から壊れていたのか」を切り分けられなくなる。
+> **順序: ①4経路の実地確認 → ②本番デプロイ → ③Task 7。**
+> なお Step 1 の grep 自体は既に 0 件（Task 6 の実施結果を参照）。
 
 **Files:**
 - Create: `supabase/migrations/20260729000001_invoices_unique_with_department.sql`
