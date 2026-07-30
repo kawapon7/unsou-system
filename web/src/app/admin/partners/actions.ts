@@ -13,6 +13,9 @@ type ClientUpdate = Database['public']['Tables']['clients']['Update']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
 type ContractorInsert = Database['public']['Tables']['contractors']['Insert']
 type ContractorUpdate = Database['public']['Tables']['contractors']['Update']
+type ClientDepartmentRow = Database['public']['Tables']['client_departments']['Row']
+type ClientDepartmentInsert = Database['public']['Tables']['client_departments']['Insert']
+type ClientDepartmentUpdate = Database['public']['Tables']['client_departments']['Update']
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -159,4 +162,101 @@ export async function updateContractor(id: string, payload: ContractorUpdate): P
     .single()
   if (error) return { data: null, error: error.message }
   return { data: decryptBankFields(data), error: null }
+}
+
+// ── Client Departments（取引先の部署） ──────────────────────
+
+export async function fetchClientDepartments(
+  clientId: string,
+): Promise<ActionResult<ClientDepartmentRow[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('client_departments')
+    .select('*')
+    .eq('client_id', clientId)
+    .eq('tenant_id', tenantId)
+    .order('sort_order', { ascending: true })
+    .order('created_at', { ascending: true })
+  if (error) return { data: null, error: translateDbError(error.message) }
+  return { data: data ?? [], error: null }
+}
+
+export async function createClientDepartment(
+  payload: ClientDepartmentInsert,
+): Promise<ActionResult<ClientDepartmentRow>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
+  const supabase = createServiceClient()
+  // ⚠️ tenant_id は text。呼び出し側の値を信用せず必ずサーバ側で上書きする
+  const { data, error } = await supabase
+    .from('client_departments')
+    .insert({ ...payload, tenant_id: tenantId })
+    .select()
+    .single()
+  if (error) return { data: null, error: translateDbError(error.message) }
+  return { data, error: null }
+}
+
+export async function updateClientDepartment(
+  id: string,
+  payload: ClientDepartmentUpdate,
+): Promise<ActionResult<ClientDepartmentRow>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
+  const supabase = createServiceClient()
+  // tenant_id / client_id はクライアントから変更させない
+  const { tenant_id: _t, client_id: _c, ...safe } = payload
+  const { data, error } = await supabase
+    .from('client_departments')
+    .update(safe)
+    .eq('id', id)
+    .eq('tenant_id', tenantId)
+    .select()
+    .single()
+  if (error) return { data: null, error: translateDbError(error.message) }
+  return { data, error: null }
+}
+
+export async function deleteClientDepartment(id: string): Promise<ActionResult<null>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
+  const supabase = createServiceClient()
+  // ⚠️ invoices.department_id は ON DELETE RESTRICT。
+  //    確定済み請求書がぶら下がっている部署は削除できず、
+  //    translateDbError が「他のデータから参照されているため削除できません」を返す。
+  const { error } = await supabase
+    .from('client_departments')
+    .delete()
+    .eq('id', id)
+    .eq('tenant_id', tenantId)
+  if (error) return { data: null, error: translateDbError(error.message) }
+  return { data: null, error: null }
+}
+
+/**
+ * 部署が未割当の案件件数を返す。
+ * use_departments = true の荷主でこれが 0 より大きいと、
+ * その案件は「どの請求書にも入らない」＝売上が漏れる状態になる。
+ */
+export async function countUnassignedProjects(
+  clientId: string,
+): Promise<ActionResult<number>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
+  const supabase = createServiceClient()
+  const { count, error } = await supabase
+    .from('projects')
+    .select('id', { count: 'exact', head: true })
+    .eq('client_id', clientId)
+    .eq('tenant_id', tenantId)
+    .is('department_id', null) // ⚠️ .eq(..., null) は動かない。必ず .is() を使う
+  if (error) return { data: null, error: translateDbError(error.message) }
+  return { data: count ?? 0, error: null }
 }
