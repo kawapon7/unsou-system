@@ -265,9 +265,21 @@ git commit -m "feat(db): client_departments テーブルと department_id 列を
 
 ---
 
-### Task 3: 共通ライタ `invoice-writer.ts`（TDD）
+### Task 3: 共通ライタ `invoice-writer.ts`（TDD）✅ 完了 2026-07-30（コミット `33d591a`）
 
 `invoices` への書き込みを 1 箇所に集約する。金額の計算は各呼び出し側に残し、この関数は「必須列を埋めて書く」ことだけに責任を持つ。
+
+> **実施結果（実測）:** 計画の SQL/TS から変更なしで実装。`vitest run src/utils/invoice-writer.test.ts` → **8 passed**、`tsc --noEmit` → 0件、`eslint src/utils/invoice-writer.ts` → 0件。
+> Step 2 の失敗確認も想定どおり（`Cannot find module './invoice-writer'`）。
+>
+> **B-1 の裏付け（型定義で確認済み）:** 再生成後の `web/src/types/supabase.ts` の `invoices.Insert` において
+> `target_month` / `total_amount_ex_tax` / `total_tax` は **`?` なし＝必須**、
+> 一方 `invoice_month` / `total_tax_excluded` / `consumption_tax` は `?` 付き（DEFAULT あり）。
+> 旧列だけが必須という非対称が 23502 の原因であることがスキーマ上で確定した。
+> `department_id` / `updated_at` 列も存在を確認済み（ライタが書く列はすべて実在する）。
+>
+> **未検証:** DBに実際に書く `writeInvoice` はテスト対象外（純粋関数 `buildInvoiceRow` のみテスト）。
+> 実書き込みの確認は Task 4・5・6 の実地確認で行う。
 
 **Files:**
 - Create: `web/src/utils/invoice-writer.ts`
@@ -280,7 +292,7 @@ git commit -m "feat(db): client_departments テーブルと department_id 列を
   - `function buildInvoiceRow(p: InvoiceWritePayload): Record<string, unknown>` — 純粋関数
   - `async function writeInvoice(service, payload: InvoiceWritePayload): Promise<{ id: string | null; error: string | null }>`
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 Create `web/src/utils/invoice-writer.test.ts`:
 
@@ -352,7 +364,7 @@ describe('buildInvoiceRow', () => {
 })
 ```
 
-- [ ] **Step 2: テストが失敗することを確認する**
+- [x] **Step 2: テストが失敗することを確認する**
 
 ```bash
 cd web && npx vitest run src/utils/invoice-writer.test.ts
@@ -360,7 +372,7 @@ cd web && npx vitest run src/utils/invoice-writer.test.ts
 
 期待: FAIL（`Failed to resolve import "./invoice-writer"`）
 
-- [ ] **Step 3: 実装する**
+- [x] **Step 3: 実装する**
 
 Create `web/src/utils/invoice-writer.ts`:
 
@@ -475,7 +487,7 @@ export async function writeInvoice(
 }
 ```
 
-- [ ] **Step 4: テストが通ることを確認する**
+- [x] **Step 4: テストが通ることを確認する**
 
 ```bash
 cd web && npx vitest run src/utils/invoice-writer.test.ts
@@ -483,7 +495,7 @@ cd web && npx vitest run src/utils/invoice-writer.test.ts
 
 期待: 8 tests passed
 
-- [ ] **Step 5: 型チェックとリント**
+- [x] **Step 5: 型チェックとリント**
 
 ```bash
 cd web && npx tsc --noEmit && npx eslint src/utils/invoice-writer.ts
@@ -491,7 +503,7 @@ cd web && npx tsc --noEmit && npx eslint src/utils/invoice-writer.ts
 
 期待: どちらもエラー 0 件
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add web/src/utils/invoice-writer.ts web/src/utils/invoice-writer.test.ts
