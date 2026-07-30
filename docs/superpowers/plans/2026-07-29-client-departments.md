@@ -910,7 +910,7 @@ git commit -m "feat(db): invoices の一意性を荷主×部署×月へ張り替
 
 ---
 
-### Task 8: 部署の CRUD Server Actions
+### Task 8: 部署の CRUD Server Actions ✅ 完了 2026-07-30（コミット `eb47545`）
 
 **Files:**
 - Modify: `web/src/app/admin/partners/actions.ts`（末尾に追加）
@@ -924,7 +924,7 @@ git commit -m "feat(db): invoices の一意性を荷主×部署×月へ張り替
   - `deleteClientDepartment(id: string): Promise<ActionResult<null>>`
   - `countUnassignedProjects(clientId: string): Promise<ActionResult<number>>`
 
-- [ ] **Step 1: 型エイリアスを追加する**
+- [x] **Step 1: 型エイリアスを追加する**
 
 `web/src/app/admin/partners/actions.ts` の型定義群（10-15行付近）に追加:
 
@@ -934,7 +934,7 @@ type ClientDepartmentInsert = Database['public']['Tables']['client_departments']
 type ClientDepartmentUpdate = Database['public']['Tables']['client_departments']['Update']
 ```
 
-- [ ] **Step 2: CRUD を追加する**
+- [x] **Step 2: CRUD を追加する**
 
 ファイル末尾に追加:
 
@@ -1037,7 +1037,7 @@ export async function countUnassignedProjects(
 }
 ```
 
-- [ ] **Step 3: `'use server'` の制約に違反していないことを確認する**
+- [x] **Step 3: `'use server'` の制約に違反していないことを確認する**
 
 このファイルは `'use server'` である。**追加したのが全て `async function` の export であることを確認する。** 型エイリアスは `type` なので実行時 export されず問題ない。
 
@@ -1047,7 +1047,7 @@ cd /Users/kawasakiatsushi/developer/unsou-system && grep -n "^export" web/src/ap
 
 期待: 出力が空
 
-- [ ] **Step 4: 型チェックとリント**
+- [x] **Step 4: 型チェックとリント**
 
 ```bash
 cd web && npx tsc --noEmit && npx eslint src/app/admin/partners/actions.ts
@@ -1055,7 +1055,7 @@ cd web && npx tsc --noEmit && npx eslint src/app/admin/partners/actions.ts
 
 期待: どちらもエラー 0 件
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add web/src/app/admin/partners/actions.ts

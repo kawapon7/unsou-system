@@ -1307,7 +1307,7 @@ web/
 | ✅ 完了 2026-07-27 | 支払通知書の生成が本番で失敗する不具合を修正 | 独立した2件（`d87bccb`）。①`project_payees`/`invoices`/`payment_notices` に `tenant_id` 列が無いのにコードが要求（`a7d937d`で列追加マイグレーション作り忘れ）→ マイグレーション`20260727000000`で追加。②`payment_notices.status` に `invoices` 側の語彙 `'issued'` が混入しCHECK制約違反（`b15134a`が混入元）→ `'unapproved'` へ修正。**7月上旬から本番で壊れており、UI経由で一度も実行されていなかったため露見していなかった。**実地確認済み（生成が通り「承認待ち」表示、DBに `status='unapproved'` の行が3件増加） |
 | ✅ 完了 2026-07-28 | 自社情報の登録（PDF fail-closed解除） | **ボスが登録済み（`companies` 1件・`tenant_id='local-dev'`・更新 2026-07-27 11:53 UTC）。fail-closed の必須2項目（会社名・`invoice_reg_number`）とも充足 → PDF生成の停止条件は解除済み。** 口座4項目（`bank_name`/`bank_branch`/`account_number`/`account_holder`）は暗号化保存され、**本番 `ENCRYPTION_KEY` で4項目とも復号成功を実測**（`decryptBankFieldValue` の「（復号エラー）」表示にはならない）。`account_type` は仕様どおり平文。以下は経緯: 自社マスタ本番反映により自社情報未登録だと請求書・支払通知書PDFが出せない状態だった。入力欄の文字色が薄く判読しにくい問題は修正・デプロイ済み（`7f4968b`） |
 | ✅ 完了 2026-07-29 | 請求書生成のUI経由での実地確認 | 実地確認で「確定」ボタンが `null value in column "target_month"` で失敗、新たなバグを発見。**真因＝請求書確定処理が3箇所に分裂実装されており、7/28修正（`7f5ba66`）は`billing-actions.ts`の`finalizeInvoice`にしか入っていなかった。** 実際に画面が呼ぶのは`admin/sales/actions.ts`の`upsertInvoice`（別実装、insert文に`target_month`等の旧列が欠落）。同じ欠陥が`scan-actions.ts`のAIスキャン保存にも存在したため合わせて修正（`1ec2dc5`）。デプロイ後に再実行し、`invoices`に1行増加・`target_month`正常値・金額¥147,950（画面表示と一致）を確認して完了。**未使用の重複ファイル`pdfActions.ts`の整理は別タスクとして未着手のまま残っている。** |
-| 🔄 進行中 | **取引先の部署分割対応＋請求書書き込み一本化** | ブランチ `feat/client-departments`。全13タスク中 **Task 1〜3 完了・Task 4〜6 はコード完了だが実地確認が未実施（2026-07-30 時点）**。計画書 `docs/superpowers/plans/2026-07-29-client-departments.md`／設計書 `docs/superpowers/specs/2026-07-29-client-departments-design.md`。**次にやること＝請求書4経路の実地確認（ボスがログインして操作）**。⚠️Task 7（UNIQUE制約の張り替え）は Task 4・5・6 の本番デプロイ後にのみ実行。⚠️UI自動操作が効かないため Task 4 以降の画面検証は別手段が必要（§5-4 の 2026-07-29〜30） |
+| 🔄 進行中 | **取引先の部署分割対応＋請求書書き込み一本化** | ブランチ `feat/client-departments`。全13タスク中 **Task 1〜3・Task 8 完了／Task 4〜6 はコード完了だが実地確認が未実施（2026-07-30 時点）**。計画書 `docs/superpowers/plans/2026-07-29-client-departments.md`／設計書 `docs/superpowers/specs/2026-07-29-client-departments-design.md`。**次にやること＝請求書4経路の実地確認（ボスがログインして操作）**。⚠️Task 7（UNIQUE制約の張り替え）は Task 4・5・6 の本番デプロイ後にのみ実行。⚠️UI自動操作が効かないため Task 4 以降の画面検証は別手段が必要（§5-4 の 2026-07-29〜30） |
 | 🟢 低 | 既存ダミーデータの削除 | 委託先7・案件10（【テスト】印）が残存し【デモ】データと混在。本番DBへの`DELETE`はハーネスにブロックされるため、SupabaseダッシュボードのSQL Editorでボスが実行する必要がある |
 | 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認・Resend通知メール実送受信確認はすべて完了（2026-07-23）。以降はフィールドテスト運用フィードバック待ち |
 | 🟢 低 | B社マルチテナントオンボーディング | テナント分離F0実装完了後 |
@@ -1398,6 +1398,14 @@ UI 自動操作が効かなかったため、スキーマとコードの突き�
 7. 手動請求書の金額が正しいこと（**税抜合計と税込額が別の列に入っているか**。旧列 `total_amount_ex_tax` に税込額が入っていないか）
 
 ⚠️ **Task 7（UNIQUE制約の張り替え）は上記の実地確認と本番デプロイが終わった後にのみ実行する。**制約を削除した瞬間に旧 upsert が `42P10` で壊れる、かつ張り替え後に不具合が出ると「張り替えで壊れたのか移行が元から壊れていたのか」を切り分けられなくなるため。
+
+**✅ Task 8（部署CRUD Server Actions）完了 2026-07-30（コミット `eb47545`）**
+Task 7 が実地確認待ちでブロックされているため、依存関係上ブロックされていない Task 8 を先行実施した（Task 8 は Task 2 から直接分岐し、Task 4〜7 に非依存）。
+- `web/src/app/admin/partners/actions.ts` 末尾に 5 関数を追加: `fetchClientDepartments` / `createClientDepartment` / `updateClientDepartment` / `deleteClientDepartment` / `countUnassignedProjects`
+- 全関数が `requireOwner()` → `getCurrentTenantId()` → `createServiceClient()` の既存パターン。`tenant_id` は必ずサーバ側で上書きし、update では `tenant_id` / `client_id` を payload から除外する
+- `countUnassignedProjects` は `.is('department_id', null)` を使う（`.eq(..., null)` は PostgREST で動かない）
+- **実測:** `tsc --noEmit` 0件 / `eslint` エラー0件（warning 3件＝未使用の `createClient` は既存分、`_t`/`_c` は意図的な分割代入の除外）／`'use server'` の非async export 0件
+- ⚠️ **未検証:** 画面からの呼び出しは Task 9（荷主マスタ画面）で初めて発生するため、実行時の動作は未確認
 
 ⚠️ **別件として発見（未対応）:** `updateInvoiceStatus`（`admin/sales/actions.ts`）は `.eq('id', invoiceId)` のみで **`tenant_id` フィルタが無い**。`requireOwner()` は通るため権限は守られるが、テナントが複数になった時点でテナント跨ぎの入金ステータス更新が可能になる。**B社オンボーディング前に潰すこと。**
 
