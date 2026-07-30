@@ -5,6 +5,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { calculateInvoiceTax, type TaxItem } from '@/utils/billing/taxCalculator'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+import { writeInvoice } from '@/utils/invoice-writer'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -146,28 +147,27 @@ async function finalizeInvoice(
 
   const newTotalAmount = result.finalAmount
 
-  const { error: upsertErr } = await service
-    .from('invoices')
-    .upsert(
-      {
-        client_id:           clientId,
-        invoice_month:       invoiceMonthDate,
-        // ⚠️ target_month / total_amount_ex_tax / total_tax は旧列だが NOT NULL・DEFAULT なし。
-        //    渡さないと 23502 not-null violation で upsert が必ず失敗する（2026-07-28まで実際に失敗していた）。
-        //    値は新列（invoice_month / total_tax_excluded / consumption_tax）と必ず同じにすること。
-        target_month:        invoiceMonthDate,
-        total_amount_ex_tax: result.subtotal,
-        total_tax:           result.taxAmount,
-        total_tax_excluded:  result.subtotal,
-        consumption_tax:     result.taxAmount,
-        total_amount:        newTotalAmount,
-        due_date:            dueDate.toISOString().slice(0, 10),
-        status:              'draft',
-      },
-      { onConflict: 'client_id,invoice_month' },
-    )
+  // ⚠️ 従来は upsert で競合キーに (client_id, invoice_month) を指定していた。
+  //    Task 7 で一意性を部分ユニークインデックス 2 本に張り替えると競合対象を指定できないため、
+  //    共通ライタの SELECT→UPDATE/INSERT へ移行する。
+  //    ⚠️ 確定済み（issued/paid）のロック判定は上部（104-122行）に残してある。
+  //       共通ライタはロックを守らない。
+  // ⚠️ 共通ライタは yearMonth（'YYYY-MM'）を受け取る。
+  //    invoiceMonthDate（'YYYY-MM-01'）を渡すと形式チェックで例外になる。
+  const { error: writeErr } = await writeInvoice(service, {
+    clientId:     clientId,
+    departmentId: null,          // Task 11 で部署対応を入れる
+    yearMonth:    yearMonth,
+    subtotal:     result.subtotal,
+    taxAmount:    result.taxAmount,
+    totalAmount:  newTotalAmount,
+    status:       'draft',
+    dueDate:      dueDate.toISOString().slice(0, 10),
+    issuedAt:     null,
+    tenantId:     tenantId,
+  })
 
-  if (upsertErr) return { data: null, error: upsertErr.message }
+  if (writeErr) return { data: null, error: writeErr }
 
   return { data: undefined, error: null }
 }
