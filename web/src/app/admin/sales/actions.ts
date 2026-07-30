@@ -5,6 +5,7 @@ import type { Database } from '@/types/supabase'
 import { calcInvoiceTax } from '@/lib/invoice'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+import { writeInvoice } from '@/utils/invoice-writer'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 
@@ -386,6 +387,9 @@ export async function upsertInvoice(
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
+  // ⚠️ 従来この経路は tenant_id を渡さず DEFAULT 'local-dev' に依存していた。
+  //    共通ライタは tenant_id を必須で書き、既存行の検索にもテナントを掛ける。
+  const tenantId = await getCurrentTenantId()
 
   const previewRes = await computeInvoicePreview(clientId, yearMonth)
   if (previewRes.error || !previewRes.data) {
@@ -393,52 +397,23 @@ export async function upsertInvoice(
   }
   const preview = previewRes.data
 
-  const { data: existing } = await supabase
-    .from('invoices')
-    .select('id')
-    .eq('client_id', clientId)
-    .eq('invoice_month', toDbMonth(yearMonth))
-    .maybeSingle()
+  // ⚠️ 旧列（target_month / total_amount_ex_tax / total_tax）の充足は共通ライタが担う。
+  //    ここで個別に insert / update を書き直すと、3回続いた 23502 の再発源が復活する。
+  const { id, error } = await writeInvoice(supabase, {
+    clientId:     clientId,
+    departmentId: null,          // Task 11 で部署対応を入れる
+    yearMonth:    yearMonth,
+    subtotal:     preview.netTotal,
+    taxAmount:    preview.taxTotal,
+    totalAmount:  preview.grandTotal,
+    status:       'issued',
+    dueDate:      preview.dueDate,
+    issuedAt:     new Date().toISOString(),
+    tenantId:     tenantId,
+  })
 
-  if (existing) {
-    const { error } = await supabase
-      .from('invoices')
-      .update({
-        total_tax_excluded: preview.netTotal,
-        consumption_tax:    preview.taxTotal,
-        total_amount:       preview.grandTotal,
-        due_date:           preview.dueDate,
-        status:             'issued',
-        issued_at:          new Date().toISOString(),
-      })
-      .eq('id', existing.id)
-    if (error) return { data: null, error: error.message }
-    return { data: { id: existing.id }, error: null }
-  }
-
-  // ⚠️ target_month / total_amount_ex_tax / total_tax は旧列だが NOT NULL・DEFAULT なし。
-  //    渡さないと 23502 not-null violation で insert が必ず失敗する（billing-actions.ts と同じ罠）。
-  //    値は新列（invoice_month / total_tax_excluded / consumption_tax）と必ず同じにすること。
-  const { data, error } = await supabase
-    .from('invoices')
-    .insert({
-      client_id:           clientId,
-      invoice_month:       toDbMonth(yearMonth),
-      target_month:        toDbMonth(yearMonth),
-      total_amount_ex_tax: preview.netTotal,
-      total_tax:           preview.taxTotal,
-      total_tax_excluded:  preview.netTotal,
-      consumption_tax:     preview.taxTotal,
-      total_amount:        preview.grandTotal,
-      due_date:            preview.dueDate,
-      status:              'issued',
-      issued_at:           new Date().toISOString(),
-    })
-    .select('id')
-    .single()
-
-  if (error) return { data: null, error: error.message }
-  return { data: { id: data.id }, error: null }
+  if (error || !id) return { data: null, error: error ?? '請求書の保存に失敗しました' }
+  return { data: { id }, error: null }
 }
 
 // ── 入金ステータス更新 ────────────────────────────────────
@@ -716,7 +691,12 @@ export async function commitManualInvoice(params: {
   clientId?:     string
   contractorId?: string
   mode:          'in' | 'out'
-  finalAmount:   number
+  // ⚠️ finalAmount は税込・経過措置差引後の最終請求額。
+  //    税抜合計と消費税額は別物なので、旧列 total_amount_ex_tax（税抜であるべき列）へ
+  //    finalAmount を流し込まないよう、呼び出し側から3つとも受け取る。
+  subtotalExTax: number   // 税抜合計（preview.subtotal）
+  taxAmount:     number   // 消費税額（preview.taxAmount）
+  finalAmount:   number   // 税込・経過措置差引後（preview.finalAmount）
 }): Promise<ActionResult<{ id: string }>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
@@ -734,21 +714,25 @@ export async function commitManualInvoice(params: {
     if (!params.clientId)
       return { data: null, error: '荷主を選択してください' }
 
-    const { data, error } = await db
-      .from('invoices')
-      .insert({
-        client_id:      params.clientId,
-        invoice_month:  noticeMonth,
-        status:         'draft',
-        total_amount:   params.finalAmount,
-        tenant_id:      tenantId,
-        updated_at:     new Date().toISOString(),
-      })
-      .select('id')
-      .single()
+    // ⚠️ 2026-07-29 まで target_month / total_amount_ex_tax / total_tax が未指定で、
+    //    23502 not-null violation により必ず失敗していた（B-1）。
+    //    また素の insert だったため、同一荷主・同一月の 2 回目が 23505 で失敗した（B-3）。
+    //    共通ライタへ移行して両方を解消する。
+    const { id, error } = await writeInvoice(db, {
+      clientId:     params.clientId,
+      departmentId: null,          // Task 11 で部署対応を入れる
+      yearMonth:    params.yearMonth,
+      subtotal:     params.subtotalExTax,   // 税抜合計
+      taxAmount:    params.taxAmount,       // 消費税額
+      totalAmount:  params.finalAmount,     // 税込（経過措置差引後）
+      status:       'draft',
+      dueDate:      null,
+      issuedAt:     null,
+      tenantId:     tenantId,
+    })
 
-    if (error || !data) return { data: null, error: error?.message ?? '登録に失敗しました' }
-    return { data: { id: data.id }, error: null }
+    if (error || !id) return { data: null, error: error ?? '請求書の保存に失敗しました' }
+    return { data: { id }, error: null }
   } else {
     // 支払請求書（アウト）→ payment_notices テーブルへ insert
     if (!params.contractorId)
