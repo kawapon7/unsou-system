@@ -1307,6 +1307,7 @@ web/
 | ✅ 完了 2026-07-27 | 支払通知書の生成が本番で失敗する不具合を修正 | 独立した2件（`d87bccb`）。①`project_payees`/`invoices`/`payment_notices` に `tenant_id` 列が無いのにコードが要求（`a7d937d`で列追加マイグレーション作り忘れ）→ マイグレーション`20260727000000`で追加。②`payment_notices.status` に `invoices` 側の語彙 `'issued'` が混入しCHECK制約違反（`b15134a`が混入元）→ `'unapproved'` へ修正。**7月上旬から本番で壊れており、UI経由で一度も実行されていなかったため露見していなかった。**実地確認済み（生成が通り「承認待ち」表示、DBに `status='unapproved'` の行が3件増加） |
 | ✅ 完了 2026-07-28 | 自社情報の登録（PDF fail-closed解除） | **ボスが登録済み（`companies` 1件・`tenant_id='local-dev'`・更新 2026-07-27 11:53 UTC）。fail-closed の必須2項目（会社名・`invoice_reg_number`）とも充足 → PDF生成の停止条件は解除済み。** 口座4項目（`bank_name`/`bank_branch`/`account_number`/`account_holder`）は暗号化保存され、**本番 `ENCRYPTION_KEY` で4項目とも復号成功を実測**（`decryptBankFieldValue` の「（復号エラー）」表示にはならない）。`account_type` は仕様どおり平文。以下は経緯: 自社マスタ本番反映により自社情報未登録だと請求書・支払通知書PDFが出せない状態だった。入力欄の文字色が薄く判読しにくい問題は修正・デプロイ済み（`7f4968b`） |
 | ✅ 完了 2026-07-29 | 請求書生成のUI経由での実地確認 | 実地確認で「確定」ボタンが `null value in column "target_month"` で失敗、新たなバグを発見。**真因＝請求書確定処理が3箇所に分裂実装されており、7/28修正（`7f5ba66`）は`billing-actions.ts`の`finalizeInvoice`にしか入っていなかった。** 実際に画面が呼ぶのは`admin/sales/actions.ts`の`upsertInvoice`（別実装、insert文に`target_month`等の旧列が欠落）。同じ欠陥が`scan-actions.ts`のAIスキャン保存にも存在したため合わせて修正（`1ec2dc5`）。デプロイ後に再実行し、`invoices`に1行増加・`target_month`正常値・金額¥147,950（画面表示と一致）を確認して完了。**未使用の重複ファイル`pdfActions.ts`の整理は別タスクとして未着手のまま残っている。** |
+| 🔄 進行中 | **取引先の部署分割対応＋請求書書き込み一本化** | ブランチ `feat/client-departments`。全13タスク中 **Task 1・2 完了（2026-07-30 時点）**。計画書 `docs/superpowers/plans/2026-07-29-client-departments.md`／設計書 `docs/superpowers/specs/2026-07-29-client-departments-design.md`。次は Task 3（共通ライタ `invoice-writer.ts`・TDD）。⚠️Task 7（UNIQUE制約の張り替え）は Task 4・5・6 の本番デプロイ後にのみ実行。⚠️UI自動操作が効かないため Task 4 以降の画面検証は別手段が必要（§5-4 の 2026-07-29〜30） |
 | 🟢 低 | 既存ダミーデータの削除 | 委託先7・案件10（【テスト】印）が残存し【デモ】データと混在。本番DBへの`DELETE`はハーネスにブロックされるため、SupabaseダッシュボードのSQL Editorでボスが実行する必要がある |
 | 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認・Resend通知メール実送受信確認はすべて完了（2026-07-23）。以降はフィールドテスト運用フィードバック待ち |
 | 🟢 低 | B社マルチテナントオンボーディング | テナント分離F0実装完了後 |
@@ -1340,6 +1341,34 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-07-29〜30（Claude Code セッション・取引先の部署分割対応／請求書書き込み一本化）
+
+**ブランチ `feat/client-departments` で進行中。設計書・計画書は `docs/superpowers/` 配下。**
+
+- **設計書** `docs/superpowers/specs/2026-07-29-client-departments-design.md`（`c23d970`）
+- **実装計画** `docs/superpowers/plans/2026-07-29-client-departments.md`（`f752912`）— 全13タスク
+
+**背景:** 取引先（株式会社エス.アール.シー）が同一会社でありながら部署ごとに請求書を分けることを求めている。部署ごとに違うのは担当者・連絡先のみで、締め日・支払サイト・振込先口座・インボイス番号・税区分は会社共通（ボス確認済み）。同時に、`invoices` への書き込みが **4経路に分裂**している問題（7/29 の `target_month` 欠落バグの真因）を1つの共通ライタへ集約する。
+
+**✅ Task 1: ベースライン取得（2026-07-29・`e511e78`）**
+UI 自動操作が効かなかったため、スキーマとコードの突き合わせによる論理的確定に切り替えた。結果、**バグ2件を「必ずこうなる」レベルで確定**:
+- **B-1** `commitManualInvoice`（`/admin/sales`）は必須列 `target_month`・`total_amount_ex_tax`・`total_tax` の**3つすべてが欠落** → `23502` で**必ず失敗**する
+- **B-2** `saveClientScanResult`（`/admin/scan`）は素の `insert` のため、同一荷主・同一月の**2枚目が必ず `23505`**
+- `upsertInvoice` のみ実測で成功（本番 `invoices` は1件＝7/29の検証分）
+- ⚠️ **申し送り: `computer` ツールのクリック／タイプがこのアプリに届かない**（`form_input` は動く）。Task 4 以降の画面検証は「ボスが手で操作」「`preview_logs` で間接確認」等に切り替える必要がある
+
+**✅ Task 2: マイグレーション適用（2026-07-30・`a521442`）**
+`supabase/migrations/20260730123144_add_client_departments.sql` を本番DBへ適用。**追加のみ・既存データの書き換えなし。**
+- 新設 `client_departments`（`client_id` / `name` / `contact_name` / `email` / `phone` / `sort_order` / `tenant_id` / `created_at`）
+- 追加列 `clients.use_departments`(bool, default false) / `projects.department_id`(ON DELETE SET NULL) / `invoices.department_id`(ON DELETE RESTRICT)
+- 実測確認: テーブル1・列3すべて存在、**`tenant_id` は `text`**（7/26 の uuid 事故の再発なし）、RLS 有効・ポリシー0件、`tsc --noEmit` エラー0
+- ⚠️ **計画書の SQL から1点を意図的に変更した。** 計画書にあった `CREATE POLICY "service role full access" ... FOR ALL USING (true) WITH CHECK (true)` は **`TO` 指定が無く `public`（anon/authenticated）に開いてしまう**ため採用しなかった。2026-06-27 の P0 改修（`20260627000000_rls_tighten_5tables.sql`）で全廃した緩いポリシーと同型。service_role は RLS を常にバイパスするため service 用ポリシーは不要で、**正しい形は「RLS 有効化＋ポリシー0件（deny-by-default）」**。新規テーブルを追加する際は常にこの形にすること
+- ⚠️ MCP の `apply_migration` はバージョンを自動採番する（`20260730123144` になった）。ローカルのファイル名を採番結果に合わせてリネーム済み（マイグレーションと本番スキーマの1:1一致を維持）
+
+**⏭️ 次: Task 3 — 共通ライタ `web/src/utils/invoice-writer.ts`（TDD）**
+`invoices` への書き込みを1関数へ集約する。B-1（`23502`）と B-3（2回目の `23505`）を同時に解消する本体で、Task 4・5・6 の前提。
+⚠️ **Task 7（UNIQUE制約の張り替え）は Task 4・5・6 が完了し本番デプロイされた後にのみ実行する。**制約を削除した瞬間に `finalizeInvoice` の `onConflict` upsert が `42P10` で壊れるため。
 
 #### 2026-07-28（Claude Code セッション・本番DB方針の再検討／不具合4件修正）
 

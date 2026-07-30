@@ -47,7 +47,10 @@ Task 13（実地検証・引き継ぎ更新）※ 全タスク完了後
 
 ---
 
-### Task 1: ベースライン取得（実装前の必須作業・コード変更なし）
+### Task 1: ベースライン取得（実装前の必須作業・コード変更なし）✅ 完了 2026-07-29（コミット `e511e78`）
+
+> **実施結果:** UI 自動操作が効かなかったため、**スキーマとコードの突き合わせによる論理的確定**に切り替えた（設計書 §12 参照）。B-1（`commitManualInvoice` の必須列3つ欠落 → `23502`）と B-2（`saveClientScanResult` の2枚目 → `23505`）を確定。
+> **⚠️ 申し送り: UI 自動操作（`computer` のクリック／タイプ）がこのアプリに届かない。** Task 4 以降の画面検証は別手段が必要（設計書 §12-4）。
 
 2026-07-28 時点で本番の `invoices` は **0件**だった。これらの経路の多くは本番でまだ一度も成功していない可能性がある。改修後に不具合が出たとき「今回壊したのか、元から壊れていたのか」を判別できないと原因究明に時間を溶かす。
 
@@ -58,13 +61,13 @@ Task 13（実地検証・引き継ぎ更新）※ 全タスク完了後
 - Consumes: なし
 - Produces: §12 に埋まったベースライン記録。Task 4・5・6 の完了判定の比較対象になる
 
-- [ ] **Step 1: 作業ブランチを作る**
+- [x] **Step 1: 作業ブランチを作る**
 
 ```bash
 git switch -c feat/client-departments
 ```
 
-- [ ] **Step 2: ローカル開発サーバを起動する**
+- [x] **Step 2: ローカル開発サーバを起動する**
 
 `.claude/launch.json` が無ければ以下の内容で作成する。
 
@@ -87,7 +90,7 @@ git switch -c feat/client-departments
 ⚠️ `.claude/launch.json` の `runtimeArgs` は `web/` ディレクトリで実行される必要がある。
 `npm run dev` がリポジトリルートで失敗する場合は `"runtimeArgs": ["--prefix", "web", "run", "dev"]` に変更する。
 
-- [ ] **Step 3: 4経路をそれぞれ画面から実行し、結果を記録する**
+- [x] **Step 3: 4経路をそれぞれ画面から実行し、結果を記録する**
 
 現状のコードのまま、以下を順に実行する。**成功・失敗のどちらでも構わない。結果を正確に記録することが目的。**
 
@@ -100,11 +103,11 @@ git switch -c feat/client-departments
 
 エラーが出た場合は `read_console_messages` と `preview_logs` でエラーコード（`23502` / `23505` / `42P10` など）を採取する。
 
-- [ ] **Step 4: 設計書 §12 の表を埋める**
+- [x] **Step 4: 設計書 §12 の表を埋める**
 
 `docs/superpowers/specs/2026-07-29-client-departments-design.md` の §12「ベースライン記録」の表に、実行日・結果（成功/失敗）・エラーコードを記入する。
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add docs/superpowers/specs/2026-07-29-client-departments-design.md
@@ -113,9 +116,19 @@ git commit -m "docs: 請求書書き込み4経路のベースラインを記録"
 
 ---
 
-### Task 2: マイグレーション（テーブル・列の追加のみ）
+### Task 2: マイグレーション（テーブル・列の追加のみ）✅ 完了 2026-07-30（コミット `a521442`）
 
 追加のみで既存データを変更しない。制約の張り替えは Task 7 で行う。
+
+> **実施結果（実測）:** 本番DB `hbpnhbsmsuhjyrohpluu` へ適用済み。テーブル1・列3すべて存在、`client_departments.tenant_id` は **`text`**、RLS 有効・ポリシー **0件**。型再生成後 `tsc --noEmit` エラー0。
+> 適用ファイルは `supabase/migrations/20260730123144_add_client_departments.sql`（MCP の自動採番に合わせてリネーム済み）。
+>
+> **⚠️ 下記 Step 1 の SQL から意図的に変更した点（1件）:** 計画時に書いた
+> `CREATE POLICY "service role full access" ON public.client_departments FOR ALL USING (true) WITH CHECK (true);`
+> は **採用しなかった**。`TO` 指定が無いため `public`（anon / authenticated）に開いてしまい、
+> `20260627000000_rls_tighten_5tables.sql` で全廃した緩いポリシーと同型になるため。
+> service_role は RLS を常にバイパスするので service 用ポリシーは不要。
+> **正しい形は「RLS 有効化＋ポリシー0件（deny-by-default）」。** 以降のタスクでもこの形を守ること。
 
 **Files:**
 - Create: `supabase/migrations/20260729000000_add_client_departments.sql`
@@ -125,7 +138,7 @@ git commit -m "docs: 請求書書き込み4経路のベースラインを記録"
 - Consumes: なし
 - Produces: テーブル `client_departments`、列 `clients.use_departments` / `projects.department_id` / `invoices.department_id`。TypeScript 型 `Database['public']['Tables']['client_departments']['Row' | 'Insert' | 'Update']`
 
-- [ ] **Step 1: マイグレーションファイルを作る**
+- [x] **Step 1: マイグレーションファイルを作る**
 
 ```sql
 -- 取引先の部署分割対応。
@@ -199,7 +212,7 @@ CREATE INDEX IF NOT EXISTS invoices_department_id_idx
   ON public.invoices (department_id);
 ```
 
-- [ ] **Step 2: 本番DBへ適用する（ボス確認必須）**
+- [x] **Step 2: 本番DBへ適用する（ボス確認必須）**
 
 ⚠️ **本プロジェクトのDBは本番1つのみで、開発と共用している。適用前に必ずボスの確認を取る。**
 
@@ -207,7 +220,7 @@ CREATE INDEX IF NOT EXISTS invoices_department_id_idx
 
 ⚠️ **MCP 経由の適用はバージョン番号を自動採番する。** 適用後、ローカルのファイル名を採番結果に合わせてリネームすること（HANDOVER §5-2 の 2026-07-27 参照。これを怠るとマイグレーションと本番スキーマの 1:1 一致が崩れる）。
 
-- [ ] **Step 3: 適用結果を確認する**
+- [x] **Step 3: 適用結果を確認する**
 
 `execute_sql` で以下を実行し、4つとも存在することを確認する。
 
@@ -229,13 +242,13 @@ SELECT
 
 **`tenant_type` が `uuid` になっていたら即座に修正する。** これを見逃すと保存が本番で必ず失敗する。
 
-- [ ] **Step 4: TypeScript 型を再生成する**
+- [x] **Step 4: TypeScript 型を再生成する**
 
 ```bash
 cd web && npx supabase gen types typescript --linked > src/types/supabase.ts
 ```
 
-- [ ] **Step 5: 型チェックが通ることを確認する**
+- [x] **Step 5: 型チェックが通ることを確認する**
 
 ```bash
 cd web && npx tsc --noEmit
@@ -243,7 +256,7 @@ cd web && npx tsc --noEmit
 
 期待: エラー 0 件
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add supabase/migrations/ web/src/types/supabase.ts
