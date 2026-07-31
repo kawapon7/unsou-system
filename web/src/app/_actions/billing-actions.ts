@@ -6,6 +6,7 @@ import { calculateInvoiceTax, type TaxItem } from '@/utils/billing/taxCalculator
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
 import { writeInvoice } from '@/utils/invoice-writer'
+import { invoiceLockError } from '@/utils/invoice-lock'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -103,24 +104,21 @@ async function finalizeInvoice(
   }
 
   // 既存請求書のロックチェック（issued / paid は変更禁止）
+  // ⚠️ 判定は utils/invoice-lock.ts に集約した。upsertInvoice（請求書プレビュータブの再確定）と
+  //    同じ関数を共有する。片方だけに砦がある状態が 2026-07-31 の上書き事故を生んだ。
+  // ⚠️ tenant を掛けるのは共通ライタが既存行を探す条件と揃えるため（ズレると別行を掴む）。
   const invoiceMonthDate = monthStartStr(yearMonth)
   const { data: existing } = await service
     .from('invoices')
-    .select('id, status, total_amount')
+    .select('status')
     .eq('client_id', clientId)
     .eq('invoice_month', invoiceMonthDate)
+    .eq('tenant_id', tenantId)
     .maybeSingle()
 
-  const isLocked = existing && (existing.status === 'issued' || existing.status === 'paid')
-  if (isLocked) {
-    if (!opts.isDeveloperUnlock || !opts.unlockReason) {
-      return {
-        data: null,
-        error: `請求書はすでに「${existing.status}」状態のため変更できません。開発者アンロックが必要です。`,
-      }
-    }
-    // invoices は approval_history に FK がないため監査ログは記録しない
-  }
+  const lockErr = invoiceLockError(existing, opts)
+  // invoices は approval_history に FK がないため、アンロック時も監査ログは記録しない
+  if (lockErr) return { data: null, error: lockErr }
 
   // 締め日ベースの対象期間
   const { from, to } = closingRange(yearMonth, client.closing_day)

@@ -6,6 +6,7 @@ import { calcInvoiceTax } from '@/lib/invoice'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
 import { writeInvoice } from '@/utils/invoice-writer'
+import { invoiceLockError } from '@/utils/invoice-lock'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 
@@ -390,6 +391,21 @@ export async function upsertInvoice(
   // ⚠️ 従来この経路は tenant_id を渡さず DEFAULT 'local-dev' に依存していた。
   //    共通ライタは tenant_id を必須で書き、既存行の検索にもテナントを掛ける。
   const tenantId = await getCurrentTenantId()
+
+  // ⚠️ 確定済み（issued/paid）の上書き防止。共通ライタはロックを守らないため、書く前にここで止める。
+  //    2026-07-31、この判定が無かったため「請求書プレビュー」タブの再確定が
+  //    issued の請求書を無警告で上書きした（税抜 134,500 → 130,510）。
+  //    解除は「確定・ロック」タブの強制アンロック経由のみ。
+  const { data: existing } = await supabase
+    .from('invoices')
+    .select('status')
+    .eq('client_id', clientId)
+    .eq('invoice_month', toDbMonth(yearMonth))
+    .eq('tenant_id', tenantId)
+    .maybeSingle()
+
+  const lockErr = invoiceLockError(existing)
+  if (lockErr) return { data: null, error: lockErr }
 
   const previewRes = await computeInvoicePreview(clientId, yearMonth)
   if (previewRes.error || !previewRes.data) {
