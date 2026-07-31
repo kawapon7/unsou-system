@@ -1206,7 +1206,13 @@ function InvoiceGenerateTabWithSections({ yearMonth }: { yearMonth: string }) {
         ))}
       </div>
 
-      {section === 'invoice'  && <InvoiceGenerateTab  yearMonth={yearMonth} />}
+      {/* ⚠️ key に yearMonth を渡して月が変わったらタブごと作り直す。
+          InvoiceGenerateTab の targetMonth は useState(yearMonth) で初回しか初期化されず、
+          サイドバーで月を移動しても追従しないうえ前月のプレビューが残るため、
+          「サイドバーは7月・メイン画面は6月」という読み違えを招く状態が作れてしまう。
+          effect で個別に setState すると cascading render を招く（react-hooks/set-state-in-effect）ので、
+          React の作法どおり key によるリセットで state をまとめて捨てる。 */}
+      {section === 'invoice'  && <InvoiceGenerateTab  key={yearMonth} yearMonth={yearMonth} />}
       {section === 'finalize' && <FinalizeTab          yearMonth={yearMonth} />}
       {section === 'spot'     && <SpotGuardrailTab />}
       {section === 'manual'   && <ManualInvoiceTab     yearMonth={yearMonth} />}
