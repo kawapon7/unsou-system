@@ -101,6 +101,13 @@ function SalesListTab({ yearMonth }: { yearMonth: string }) {
   const [rows, setRows]         = useState<SalesListRow[]>([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
+  const router                  = useRouter()
+  const pathname                = usePathname()
+
+  // 荷主名クリックで請求書プレビューへ。タブは URL 駆動、サブセクションの既定が
+  // 'invoice'（請求書プレビュー）なので tab と client を渡すだけで目的の画面に着地する。
+  const openInvoicePreview = (clientId: string) =>
+    router.replace(`${pathname}?tab=generate&client=${encodeURIComponent(clientId)}`)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -188,7 +195,16 @@ function SalesListTab({ yearMonth }: { yearMonth: string }) {
             <tbody className="divide-y divide-zinc-100">
               {rows.map(r => (
                 <tr key={r.clientId} className="hover:bg-zinc-50">
-                  <Td bold>{r.companyName}</Td>
+                  <Td bold>
+                    <button
+                      type="button"
+                      onClick={() => openInvoicePreview(r.clientId)}
+                      className="text-left text-blue-700 underline decoration-blue-200 underline-offset-2 hover:decoration-blue-500 transition"
+                      title="請求書プレビューを開く"
+                    >
+                      {r.companyName}
+                    </button>
+                  </Td>
                   <Td>
                     <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
                       {TAX_TYPE_LABEL[r.taxType] ?? r.taxType}
@@ -342,11 +358,15 @@ function InvoicePreviewCard({
 // ── 画面②：請求書生成 ────────────────────────────────────
 
 function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
+  // 売上一覧で荷主名をクリックして飛んできた場合、その荷主が ?client= で渡ってくる
+  const initialClientId = useSearchParams().get('client') ?? ''
+
   const [clientOptions, setClientOptions] = useState<{ id: string; company_name: string }[]>([])
-  const [selectedClientId, setSelectedClientId] = useState('')
+  const [selectedClientId, setSelectedClientId] = useState(initialClientId)
   const [targetMonth, setTargetMonth]           = useState(yearMonth)
   const [preview, setPreview]                   = useState<InvoicePreview | null>(null)
-  const [loadingPreview, setLoadingPreview]     = useState(false)
+  // 自動プレビューが走る場合は最初から計算中にしておく（effect 内で同期 setState しないため）
+  const [loadingPreview, setLoadingPreview]     = useState(Boolean(initialClientId))
   const [confirming, setConfirming]             = useState(false)
   const [message, setMessage]                   = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
@@ -355,6 +375,21 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
       if (!res.error) setClientOptions(res.data ?? [])
     })
   }, [])
+
+  // 売上一覧から飛んできたときだけプレビューを自動実行する。
+  // ⚠️ setState を effect 内で同期的に呼ぶと cascading render になる（react-hooks/set-state-in-effect）。
+  //    状態更新は必ず await 後だけに置き、loading の初期値は useState 側で立てておくこと。
+  useEffect(() => {
+    if (!initialClientId) return
+    let cancelled = false
+    computeInvoicePreview(initialClientId, yearMonth).then(res => {
+      if (cancelled) return
+      if (res.error) setMessage({ type: 'err', text: res.error })
+      else setPreview(res.data)
+      setLoadingPreview(false)
+    })
+    return () => { cancelled = true }
+  }, [initialClientId, yearMonth])
 
   const handlePreview = async () => {
     if (!selectedClientId) return
@@ -436,6 +471,15 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
         }`}>
           {message.text}
         </p>
+      )}
+
+      {/* 自動プレビュー中はボタンを押していないため、ボタンのラベル（計算中...）が
+          目に入らない。プレビュー領域自体に計算中を出さないと「移動したのに無反応」に見える。
+          リモートDBへの往復で 0.5〜1秒かかるので、この表示は省略できない。 */}
+      {loadingPreview && !preview && (
+        <div className="rounded-xl border border-zinc-200 bg-white py-16 text-center text-sm text-zinc-400">
+          請求内容を計算中...
+        </div>
       )}
 
       {preview && (
