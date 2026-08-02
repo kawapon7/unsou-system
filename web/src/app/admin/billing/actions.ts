@@ -11,6 +11,7 @@ import {
   type TransitionalPurchase,
 } from '@/utils/transitional-deduction'
 import { parseLocalDate } from '@/utils/closing-period'
+import { fiscalYearRange, fiscalYearLabel } from '@/utils/fiscal-year'
 
 type ClientRow     = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -547,6 +548,112 @@ export async function rejectExpense(
 //    ③基準額が税抜だった（実物の支払明細書は税込基準）
 //    ④率を対象月で決めていた（正しくは稼働日ごと。消基通 11-3-1）
 //    率の正本は utils/transitional-deduction.ts。ここに率表を再び書かないこと。
+
+// ── 委託先ごとの年度累計 ──────────────────────────────────
+
+export type ContractorFiscalTotal = {
+  contractorId:  string
+  /** 労務報酬（税込） */
+  laborTotal:    number
+  /** 立替金（税込） */
+  expenseTotal:  number
+  /** 合計（税込） */
+  total:         number
+}
+
+export type FiscalTotalsResult = {
+  /** 事業年度の表示名（例: '2026年4月〜2027年3月'） */
+  fiscalYearLabel:    string
+  /** 決算月が未設定で暦年にフォールバックしているか */
+  usingCalendarYear:  boolean
+  /**
+   * 事業年度の途中からしか記録が無い場合、最も古い確定済み通知書の月（'YYYY-MM'）。
+   * 年度まるごとを表していないことを画面に添えるために使う。null なら年度頭から記録がある
+   */
+  recordsStartFrom:   string | null
+  totals:             ContractorFiscalTotal[]
+}
+
+/**
+ * 委託先ごとに「この事業年度いくら払ったか」を返す。
+ *
+ * ⚠️ 数えるのは**確定済み（locked）の支払通知書だけ**。未確定の月は含まない。
+ * ⚠️ 労務報酬と立替金を分けて返す。立替金を課税仕入れに含めるかは税理士確認待ちのため、
+ *    どちらの結論でも画面を作り直さずに済むようにしてある。
+ * ⚠️ これは表示用であって、経過措置の1億円上限の判定は行っていない。
+ *    上限は「一の免税事業者等から」＝委託先1社ごとの判定であり、想定規模では届かないため
+ *    実装していない（設計書 2026-08-02 を参照）。
+ */
+export async function fetchContractorFiscalTotals(
+  yearMonth: string,
+): Promise<ActionResult<FiscalTotalsResult>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
+  const supabase = createServiceClient()
+
+  const { data: company } = await supabase
+    .from('companies')
+    .select('fiscal_year_end_month')
+    .eq('tenant_id', tenantId)
+    .maybeSingle()
+
+  const endMonth = (company as { fiscal_year_end_month?: number | null } | null)?.fiscal_year_end_month ?? null
+  const { from, to } = fiscalYearRange(yearMonth, endMonth)
+
+  const { data, error } = await supabase
+    .from('payment_notices')
+    .select('contractor_id, notice_month, labor_tax_excluded, labor_tax, expense_tax_excluded, expense_tax')
+    .eq('tenant_id', tenantId)
+    .eq('locked', true)
+    .gte('notice_month', from)
+    .lte('notice_month', to)
+
+  if (error) return { data: null, error: error.message }
+
+  const map = new Map<string, ContractorFiscalTotal>()
+  let earliest: string | null = null
+
+  type FiscalNoticeRow = {
+    contractor_id:        string | null
+    notice_month:         string
+    labor_tax_excluded:   number | null
+    labor_tax:            number | null
+    expense_tax_excluded: number | null
+    expense_tax:          number | null
+  }
+
+  for (const row of (data ?? []) as unknown as FiscalNoticeRow[]) {
+    const cid = row.contractor_id
+    if (!cid) continue
+
+    const month = String(row.notice_month).slice(0, 7)
+    if (earliest === null || month < earliest) earliest = month
+
+    const labor   = Number(row.labor_tax_excluded ?? 0) + Number(row.labor_tax ?? 0)
+    const expense = Number(row.expense_tax_excluded ?? 0) + Number(row.expense_tax ?? 0)
+
+    const cur = map.get(cid) ?? { contractorId: cid, laborTotal: 0, expenseTotal: 0, total: 0 }
+    cur.laborTotal   += labor
+    cur.expenseTotal += expense
+    cur.total         = cur.laborTotal + cur.expenseTotal
+    map.set(cid, cur)
+  }
+
+  // 年度の頭から記録があるかどうか。無ければ累計は年度まるごとを表していない
+  const fiscalStartMonth = from.slice(0, 7)
+  const recordsStartFrom = earliest !== null && earliest > fiscalStartMonth ? earliest : null
+
+  return {
+    data: {
+      fiscalYearLabel:   fiscalYearLabel(yearMonth, endMonth),
+      usingCalendarYear: endMonth == null,
+      recordsStartFrom,
+      totals: [...map.values()],
+    },
+    error: null,
+  }
+}
 
 export type PaymentNoticeStatus = {
   contractorId:   string

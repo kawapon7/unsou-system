@@ -8,8 +8,10 @@ import {
   fetchPaymentNoticeStatuses,
   generatePaymentNotice,
   generateAllPaymentNotices,
+  fetchContractorFiscalTotals,
   type PaymentRow,
   type PaymentNoticeStatus,
+  type FiscalTotalsResult,
 } from './actions'
 import { finalizeInvoiceAndNotice } from '@/app/_actions/billing-actions'
 
@@ -84,19 +86,23 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
   const [generating, setGenerating] = useState<string | null>(null) // contractorId or 'all'
   const [message,  setMessage]  = useState<{ text: string; ok: boolean } | null>(null)
   const [unlock,   setUnlock]   = useState<UnlockState | null>(null)
+  const [fiscal,   setFiscal]   = useState<FiscalTotalsResult | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
-    const [payRes, stRes] = await Promise.all([
+    const [payRes, stRes, fyRes] = await Promise.all([
       fetchPaymentByContractor(yearMonth),
       fetchPaymentNoticeStatuses(yearMonth),
+      fetchContractorFiscalTotals(yearMonth),
     ])
     if (payRes.error) { setError(payRes.error); setLoading(false); return }
     setRows(payRes.data ?? [])
     const map = new Map<string, PaymentNoticeStatus>()
     for (const s of stRes.data ?? []) map.set(s.contractorId, s)
     setStatuses(map)
+    // 年度累計は補助情報。取得に失敗しても支払一覧そのものは表示する
+    setFiscal(fyRes.data ?? null)
     setLoading(false)
   }, [yearMonth])
 
@@ -233,6 +239,12 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
                 <Th right>消費税額</Th>
                 <Th right>源泉徴収額</Th>
                 <Th right>差引支払額</Th>
+                {/* 年度累計: 確定済みの支払通知書だけを積んだ「この委託先に今年度いくら払ったか」。
+                    労務報酬と立替金を分けて出す（立替金を課税仕入れに含めるかは税理士確認待ちのため、
+                    どちらの結論でも作り直さずに済むようにしてある） */}
+                <Th right>年度累計（労務）</Th>
+                <Th right>年度累計（立替）</Th>
+                <Th right>年度累計（計）</Th>
                 <Th>支払予定日</Th>
                 <Th>通知書</Th>
               </tr>
@@ -243,6 +255,7 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
                 const isLocked = st?.locked ?? false
                 const isBusy   = generating === r.contractorId || allBulkGenerating
                 const nStyle   = st ? (NOTICE_STYLE[st.approvalStatus] ?? NOTICE_STYLE.pending) : null
+                const fy       = fiscal?.totals.find(t => t.contractorId === r.contractorId) ?? null
 
                 return (
                   <tr key={r.contractorId} className="hover:bg-zinc-50">
@@ -266,6 +279,9 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
                         : '—'}
                     </Td>
                     <Td right bold>{yen(st?.totalAmount ?? r.netPayment)}</Td>
+                    <Td right muted={!fy}>{fy ? yen(fy.laborTotal)   : '—'}</Td>
+                    <Td right muted={!fy}>{fy ? yen(fy.expenseTotal) : '—'}</Td>
+                    <Td right muted={!fy}>{fy ? yen(fy.total)        : '—'}</Td>
                     <Td>
                       <span className="tabular-nums text-zinc-600 text-xs">
                         {calcPaymentDate(yearMonth, r.paymentSite)}
@@ -317,6 +333,10 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
                   <span className="text-red-600">{yen(totals.withholding)}</span>
                 </Td>
                 <Td right bold>{yen(totals.net)}</Td>
+                {/* 年度累計は委託先ごとの数字。合計行では出さない */}
+                <td />
+                <td />
+                <td />
                 <td />
                 <td />
               </tr>
@@ -328,6 +348,30 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
       <p className="mt-3 text-xs text-zinc-400">
         ※ 源泉徴収税額は支払運賃の 10.21%（2026年税制準拠）。経過措置控除は免税事業者への支払運賃消費税に適用。
       </p>
+
+      {fiscal && (
+        <div className="mt-1 space-y-1 text-xs text-zinc-400">
+          <p>
+            ※ 年度累計は <span className="text-zinc-500">{fiscal.fiscalYearLabel}</span> の
+            <span className="text-zinc-500">確定済み支払通知書のみ</span>を合計した税込額です（未確定の月は含みません）。
+          </p>
+          {fiscal.usingCalendarYear && (
+            <p className="text-amber-600">
+              ※ 決算月が未設定のため暦年（1月〜12月）で集計しています。
+              「マスタ・設定 → 自社情報」で決算月を設定すると事業年度で集計します。
+            </p>
+          )}
+          {/* ⚠️ 記録が年度の途中からしか無いと、累計は年度まるごとを表していない */}
+          {fiscal.recordsStartFrom && (
+            <p className="text-amber-600">
+              {/* '2026-06' → '2026年6月'。0埋めのままだと「06月」と出て不自然になる */}
+              ※ この年度は {Number(fiscal.recordsStartFrom.slice(0, 4))}年
+              {Number(fiscal.recordsStartFrom.slice(5, 7))}月 からの記録しかありません。
+              年度の初めの取引が記録されていないため、累計は実際より少なく出ています。
+            </p>
+          )}
+        </div>
+      )}
 
       {/* 開発者アンロックモーダル */}
       {unlock && (
