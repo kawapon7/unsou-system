@@ -4,6 +4,14 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireOwner, requireAuth } from '@/utils/auth'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { getCompanyInfo, type CompanyInfo } from '@/utils/company'
+import {
+  calcWorkAmount,
+  buildPriceRuleMap,
+  WORK_RECORD_AMOUNT_COLUMNS,
+  PRICE_RULE_COLUMNS,
+  type PriceRuleRecord,
+  type RawWorkRecord,
+} from '@/utils/work-amount'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -65,9 +73,12 @@ export async function fetchInvoicePdfData(
   const projMap  = new Map(projects.map(p => [p.id, p.project_name]))
   const projIds  = projects.map(p => p.id)
 
+  // ⚠️ 2026-08-02 まで存在しない列 `quantity` / `tax_excluded_sales` を select しており、
+  //    PostgREST が 42703 を返して請求書PDFが「データ取得エラー」で出せなかった。
+  //    数量は piece_count、金額は price_rules から都度計算する。詳細は utils/work-amount.ts。
   const { data: workRows, error: wrErr } = await service
     .from('work_records')
-    .select('work_date, project_id, quantity, tax_excluded_sales')
+    .select(`${WORK_RECORD_AMOUNT_COLUMNS}, work_date`)
     .in('project_id', projIds.length > 0 ? projIds : ['__never__'])
     .gte('work_date', `${yearMonth}-01`)
     .lte('work_date', monthEndDate)
@@ -75,11 +86,24 @@ export async function fetchInvoicePdfData(
 
   if (wrErr) return { data: null, error: wrErr.message }
 
-  const lines: InvoicePdfLine[] = (workRows ?? []).map(r => ({
+  const rawRows = (workRows ?? []) as unknown as (RawWorkRecord & { work_date: string })[]
+
+  // price_rules には tenant_id が無いため、テナント確認済みの案件IDだけを引く
+  let ruleMap = new Map<string, PriceRuleRecord>()
+  if (projIds.length > 0) {
+    const { data: rules, error: ruleErr } = await service
+      .from('price_rules')
+      .select(PRICE_RULE_COLUMNS)
+      .in('project_id', projIds)
+    if (ruleErr) return { data: null, error: ruleErr.message }
+    ruleMap = buildPriceRuleMap(rules as unknown as PriceRuleRecord[])
+  }
+
+  const lines: InvoicePdfLine[] = rawRows.map(r => ({
     workDate:    r.work_date,
     projectName: r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）',
-    quantity:    r.quantity,
-    netAmount:   r.tax_excluded_sales,
+    quantity:    r.piece_count ?? 0,
+    netAmount:   calcWorkAmount(r, r.project_id ? ruleMap.get(r.project_id) : undefined, 'selling'),
   }))
 
   // 確定済み invoice があればその値を優先（taxCalculator.ts との一致を保証）

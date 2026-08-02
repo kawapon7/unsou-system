@@ -7,6 +7,11 @@ import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
 import { writeInvoice } from '@/utils/invoice-writer'
 import { invoiceLockError } from '@/utils/invoice-lock'
+import {
+  calcWorkAmount,
+  type PriceRuleRecord,
+  type RawWorkRecord,
+} from '@/utils/work-amount'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 
@@ -16,54 +21,9 @@ function toDbMonth(yearMonth: string): string {
 }
 
 // ── 単価ルールから売上/支払金額を計算 ────────────────────────
-// work_records は tax_excluded_sales/payment を持たないため、
-// price_rules の calculation_type と各計測値から都度計算する。
-
-type PriceRuleRecord = {
-  project_id: string
-  calculation_type: string
-  selling_price: number | null
-  buying_price:  number | null
-  margin_fixed:  number | null
-}
-
-type RawWorkRecord = {
-  project_id:    string | null
-  piece_count:   number | null
-  start_time:    string | null
-  end_time:      string | null
-  break_minutes: number | null
-}
-
-function calcWorkAmount(
-  r: RawWorkRecord,
-  rule: PriceRuleRecord | undefined,
-  side: 'selling' | 'buying',
-): number {
-  if (!rule) return 0
-  const price = side === 'selling'
-    ? Number(rule.selling_price ?? 0)
-    : Number(rule.buying_price  ?? 0)
-
-  switch (rule.calculation_type) {
-    case 'piece':
-      return (r.piece_count ?? 0) * price
-    case 'hourly': {
-      if (!r.start_time || !r.end_time) return 0
-      const ms    = new Date(r.end_time).getTime() - new Date(r.start_time).getTime()
-      const hours = ms / 3_600_000 - (r.break_minutes ?? 0) / 60
-      return Math.round(hours * price)
-    }
-    case 'fixed':
-      return price
-    case 'hybrid': {
-      const pieceBonus = (r.piece_count ?? 0) * Number(rule.margin_fixed ?? 0)
-      return price + pieceBonus
-    }
-    default:
-      return 0
-  }
-}
+// work_records は金額列を持たないため price_rules から都度計算する。
+// 実装は utils/work-amount.ts に集約した（同じ計算がこのファイルにも重複していたため、
+// 他経路が「存在しない列」を参照したまま取り残されて 3 機能が停止していた）。
 
 // ── 締め日ユーティリティ ──────────────────────────────────
 
@@ -128,6 +88,28 @@ export type InvoicePreview = {
 }
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
+
+// ── invoices 既存行のロック判定用ルックアップ ──────────────
+// upsertInvoice / commitManualInvoice で共有。writeInvoice の検索条件と揃える
+// （department_id は null のとき .is() を使う。.eq(col, null) は PostgREST で動かない）。
+async function fetchExistingInvoiceStatus(
+  supabase: ReturnType<typeof createServiceClient>,
+  params: { clientId: string; departmentId: string | null; yearMonth: string; tenantId: string },
+): Promise<{ status: string | null } | null> {
+  let query = supabase
+    .from('invoices')
+    .select('status')
+    .eq('client_id', params.clientId)
+    .eq('invoice_month', toDbMonth(params.yearMonth))
+    .eq('tenant_id', params.tenantId)
+
+  query = params.departmentId === null
+    ? query.is('department_id', null)
+    : query.eq('department_id', params.departmentId)
+
+  const { data } = await query.maybeSingle()
+  return data
+}
 
 // ── 売上一覧取得 ──────────────────────────────────────────
 // invoices テーブルにある請求書 + work_records はあるが未請求の荷主を合算
@@ -396,13 +378,12 @@ export async function upsertInvoice(
   //    2026-07-31、この判定が無かったため「請求書プレビュー」タブの再確定が
   //    issued の請求書を無警告で上書きした（税抜 134,500 → 130,510）。
   //    解除は「確定・ロック」タブの強制アンロック経由のみ。
-  const { data: existing } = await supabase
-    .from('invoices')
-    .select('status')
-    .eq('client_id', clientId)
-    .eq('invoice_month', toDbMonth(yearMonth))
-    .eq('tenant_id', tenantId)
-    .maybeSingle()
+  const existing = await fetchExistingInvoiceStatus(supabase, {
+    clientId,
+    departmentId: null,          // Task 11 で部署対応を入れる
+    yearMonth,
+    tenantId,
+  })
 
   const lockErr = invoiceLockError(existing)
   if (lockErr) return { data: null, error: lockErr }
@@ -440,11 +421,13 @@ export async function updateInvoiceStatus(
 ): Promise<ActionResult<{ id: string }>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('invoices')
     .update({ status })
     .eq('id', invoiceId)
+    .eq('tenant_id', tenantId)
     .select('id')
     .single()
   if (error) return { data: null, error: error.message }
@@ -734,6 +717,18 @@ export async function commitManualInvoice(params: {
     //    23502 not-null violation により必ず失敗していた（B-1）。
     //    また素の insert だったため、同一荷主・同一月の 2 回目が 23505 で失敗した（B-3）。
     //    共通ライタへ移行して両方を解消する。
+    // ⚠️ 確定済み（issued/paid）の上書き防止。共通ライタはロックを守らないため、書く前にここで止める
+    //    （upsertInvoice / finalizeInvoice と同じ判定。この画面には開発者アンロックUIが無いため
+    //    オプションなしで呼び、fail-closed で止める）。
+    const existing = await fetchExistingInvoiceStatus(db, {
+      clientId:     params.clientId,
+      departmentId: null,          // Task 11 で部署対応を入れる
+      yearMonth:    params.yearMonth,
+      tenantId,
+    })
+    const lockErr = invoiceLockError(existing)
+    if (lockErr) return { data: null, error: lockErr }
+
     const { id, error } = await writeInvoice(db, {
       clientId:     params.clientId,
       departmentId: null,          // Task 11 で部署対応を入れる

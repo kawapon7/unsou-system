@@ -5,6 +5,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireOwner }        from '@/utils/auth'
 import { getCurrentTenantId }  from '@/utils/tenant'
 import { writeInvoice }        from '@/utils/invoice-writer'
+import { invoiceLockError }    from '@/utils/invoice-lock'
 
 type ActionResult<T = void> =
   | { data: T;    error: null   }
@@ -84,12 +85,28 @@ export async function saveClientScanResult(
   //    23505 duplicate key で失敗していた（B-2）。
   //    2026-07-28 に UNIQUE(client_id, invoice_month) を追加したことで顕在化した。
   //    共通ライタの SELECT→UPDATE/INSERT へ移行して解消する。
-  // ⚠️ 挙動の変更: 同一荷主・同一月の 2 枚目は 1 枚目を「上書き」する。
+  // ⚠️ 挙動: 同一荷主・同一月の 2 枚目は 1 枚目を「上書き」する（draft 同士に限る）。
   //    スキャンは 1 荷主 1 月 1 枚が前提であるという判断に基づく。
+  //    ただし issued / paid まで進んだ請求書を無警告で下書きに戻すのは事故なので、
+  //    その場合だけ止める（2026-07-31 の上書き事故と同種のガード）。
+  const yearMonth = params.invoiceDate.slice(0, 7)
+  const monthDate = `${yearMonth}-01`
+  const { data: existing } = await service
+    .from('invoices')
+    .select('status')
+    .eq('client_id', params.clientId)
+    .eq('invoice_month', monthDate)
+    .eq('tenant_id', tenantId)
+    .is('department_id', null)   // Task 11 で部署対応を入れる
+    .maybeSingle()
+
+  const lockErr = invoiceLockError(existing)
+  if (lockErr) return { data: null, error: lockErr }
+
   const { id, error: writeErr } = await writeInvoice(service, {
     clientId:     params.clientId,
     departmentId: null,          // Task 11 で部署対応を入れる
-    yearMonth:    params.invoiceDate.slice(0, 7),
+    yearMonth,
     subtotal:     params.subtotal,
     taxAmount:    params.taxAmount,
     totalAmount:  params.subtotal + params.taxAmount,

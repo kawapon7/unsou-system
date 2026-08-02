@@ -7,6 +7,14 @@ import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
 import { writeInvoice } from '@/utils/invoice-writer'
 import { invoiceLockError } from '@/utils/invoice-lock'
+import {
+  calcWorkAmount,
+  buildPriceRuleMap,
+  WORK_RECORD_AMOUNT_COLUMNS,
+  PRICE_RULE_COLUMNS,
+  type PriceRuleRecord,
+  type RawWorkRecord,
+} from '@/utils/work-amount'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -124,9 +132,13 @@ async function finalizeInvoice(
   const { from, to } = closingRange(yearMonth, client.closing_day)
 
   // 対象 work_records を取得
+  // ⚠️ 2026-08-02 まで存在しない列 `tax_excluded_sales` を select しており、
+  //    PostgREST が 42703 を返してこの関数は常に早期リターンしていた
+  //    （＝「請求書を確定する」が何も書き込まないまま成功したように見えていた）。
+  //    金額は price_rules から都度計算する。詳細は utils/work-amount.ts。
   const { data: workRows, error: wrErr } = await service
     .from('work_records')
-    .select('tax_excluded_sales, work_date, projects!inner( client_id )')
+    .select(`${WORK_RECORD_AMOUNT_COLUMNS}, work_date, projects!inner( client_id )`)
     .eq('projects.client_id', clientId)
     .eq('tenant_id', tenantId)
     .gte('work_date', from.toISOString().slice(0, 10))
@@ -134,9 +146,23 @@ async function finalizeInvoice(
 
   if (wrErr) return { data: null, error: wrErr.message }
 
+  const rawRows = (workRows ?? []) as unknown as RawWorkRecord[]
+
+  // price_rules には tenant_id が無いため、テナント確認済みの案件IDだけを引く
+  const projectIds = [...new Set(rawRows.map(r => r.project_id).filter((id): id is string => !!id))]
+  let ruleMap = new Map<string, PriceRuleRecord>()
+  if (projectIds.length > 0) {
+    const { data: rules, error: ruleErr } = await service
+      .from('price_rules')
+      .select(PRICE_RULE_COLUMNS)
+      .in('project_id', projectIds)
+    if (ruleErr) return { data: null, error: ruleErr.message }
+    ruleMap = buildPriceRuleMap(rules as unknown as PriceRuleRecord[])
+  }
+
   const isTaxable = client.tax_type !== 'exempt'
-  const items: TaxItem[] = (workRows ?? []).map((r) => ({
-    amount: (r as Record<string, unknown> & { tax_excluded_sales: number }).tax_excluded_sales,
+  const items: TaxItem[] = rawRows.map((r) => ({
+    amount: calcWorkAmount(r, r.project_id ? ruleMap.get(r.project_id) : undefined, 'selling'),
     isTaxable,
   }))
 
