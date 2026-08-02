@@ -1307,7 +1307,7 @@ web/
 | ✅ 完了 2026-07-27 | 支払通知書の生成が本番で失敗する不具合を修正 | 独立した2件（`d87bccb`）。①`project_payees`/`invoices`/`payment_notices` に `tenant_id` 列が無いのにコードが要求（`a7d937d`で列追加マイグレーション作り忘れ）→ マイグレーション`20260727000000`で追加。②`payment_notices.status` に `invoices` 側の語彙 `'issued'` が混入しCHECK制約違反（`b15134a`が混入元）→ `'unapproved'` へ修正。**7月上旬から本番で壊れており、UI経由で一度も実行されていなかったため露見していなかった。**実地確認済み（生成が通り「承認待ち」表示、DBに `status='unapproved'` の行が3件増加） |
 | ✅ 完了 2026-07-28 | 自社情報の登録（PDF fail-closed解除） | **ボスが登録済み（`companies` 1件・`tenant_id='local-dev'`・更新 2026-07-27 11:53 UTC）。fail-closed の必須2項目（会社名・`invoice_reg_number`）とも充足 → PDF生成の停止条件は解除済み。** 口座4項目（`bank_name`/`bank_branch`/`account_number`/`account_holder`）は暗号化保存され、**本番 `ENCRYPTION_KEY` で4項目とも復号成功を実測**（`decryptBankFieldValue` の「（復号エラー）」表示にはならない）。`account_type` は仕様どおり平文。以下は経緯: 自社マスタ本番反映により自社情報未登録だと請求書・支払通知書PDFが出せない状態だった。入力欄の文字色が薄く判読しにくい問題は修正・デプロイ済み（`7f4968b`） |
 | ✅ 完了 2026-07-29 | 請求書生成のUI経由での実地確認 | 実地確認で「確定」ボタンが `null value in column "target_month"` で失敗、新たなバグを発見。**真因＝請求書確定処理が3箇所に分裂実装されており、7/28修正（`7f5ba66`）は`billing-actions.ts`の`finalizeInvoice`にしか入っていなかった。** 実際に画面が呼ぶのは`admin/sales/actions.ts`の`upsertInvoice`（別実装、insert文に`target_month`等の旧列が欠落）。同じ欠陥が`scan-actions.ts`のAIスキャン保存にも存在したため合わせて修正（`1ec2dc5`）。デプロイ後に再実行し、`invoices`に1行増加・`target_month`正常値・金額¥147,950（画面表示と一致）を確認して完了。**未使用の重複ファイル`pdfActions.ts`の整理は別タスクとして未着手のまま残っている。** |
-| 🔴 高 | **存在しない列の参照で停止していた3機能**（2026-08-02発見） | 請求書確定・請求書PDFは**修正済み・画面実測OK・コミット済み（`7284b89`）**。⚠️**スポット昇格（`project-actions.ts` の `spot_generic_id`）は未修正**。置き換え先（`is_off_master` / `off_master_job_name` / `raw_spot_text`）を決める設計判断が要る。現在データ0件のため実害は出ていないが、**エラーを表示した直後に「異常なし ✅」と出す fail-open** なので放置は危険。詳細は §5-4 の 2026-08-02 |
+| ✅ 完了 2026-08-02 | **存在しない列の参照で停止していた機能（3件と思われていたが実際は6件）** | 請求書確定・請求書PDF は `7284b89` で修正済み。残っていたスポット昇格に加え、**同型の欠陥が新たに3件見つかり全部直した**（`pdf-actions.ts` の支払通知書PDF＝`quantity`/`tax_excluded_payment`、`scan-actions.ts` のAIスキャン保存＝`tax_excluded_payment`/`memo`、`admin/sales/actions.ts` の支払通知書一覧＝`contractors.tax_type`）。fail-open も2箇所つぶした。再発防止に `utils/phantom-columns.test.ts` を新設（ソース全走査）。詳細は §5-4 の 2026-08-02 その5 |
 | ✅ 完了 2026-08-02 | 集計期間を締め日ベースへ統一・「確定・ロック」の issued 化 | ボス判断2件を実装。`utils/closing-period.ts` を新設して重複3箇所を1本化、請求書PDF・売上一覧を暦月から締め日ベースへ。`finalizeInvoice` が `issued` を書くようになり**タブ名どおりロックが効くようになった**。JST開発機だけ月末が1日ずれるTZバグも同時に修正。実測（DB書き込み・20日締め荷主のPDF明細が6/21〜7/20範囲）済み。詳細は §5-4 の 2026-08-02 その2 |
 | ✅ 完了 2026-08-02 | **経過措置の率の改訂（論点A）** | 期限2026年10月1日に対応完了。`utils/transitional-deduction.ts` を率の唯一の正本として新設し、旧3実装は中身を委譲（`@deprecated`）。一次情報（国税庁 令和8年度税制改正特集）で率を裏取り済み。画面で 9月=2% / 10月=3% の切り替わりを実測。⚠️控除限度額（年間税込1億円超は対象外）は未実装 — 1社あたり年間1億円規模になったら要対応。詳細は §5-4 の 2026-08-02 その3 |
 | ✅ 完了 2026-08-02 | **支払通知書の経過措置を稼働日ごとの率へ（4本目の重複を廃止）** | `admin/billing/actions.ts` の `calcDeductionRate` に4つの誤り（基準額が税抜／2026年10月以降が5%のまま／**2029年10月以降が0**／率を対象月で判定）。⏰**2026年9月21日〜10月20日の締め期間**で2%と3%が混在するため間に合わせた。`closingRange` の5本目の重複と、`generatePaymentNotice` が内訳列・`total_amount` を保存していなかった件も同時に修正。コミット `3cee257`。詳細は §5-4 の 2026-08-02 その4 |
@@ -1348,6 +1348,49 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-08-02 その5（存在しない列の参照 — 残り1件を直しに行って、新たに3件見つかった）
+
+**着手時のタスクは「スポット昇格の未修正1件」だった。実際には同型の欠陥が合計4経路残っていた。**
+
+| 場所 | 参照していた実在しない列 | 停止していた機能 | 見つかり方 |
+|---|---|---|---|
+| `project-actions.ts:43` | `spot_generic_id` ほか | スポット昇格 | 既知（前回の積み残し） |
+| `pdf-actions.ts:217` | `quantity` / `tax_excluded_payment` | **支払通知書PDF**（`データ取得エラー`） | ガードテストを書くため全走査して発見 |
+| `scan-actions.ts:157` | `tax_excluded_payment` / `memo` | **AIスキャンの保存**（INSERT が必ず失敗） | 同上 |
+| `admin/sales/actions.ts:497` | `contractors.tax_type`（正しくは `tax_category`） | **支払通知書の確定ロック一覧が丸ごと空** | 画面検証中に「対象データがありません」を疑って発見 |
+
+**設計判断（スポット昇格の置き換え先）— 書き込み側のコードで決まっていた**
+突発案件を作っているのは `workRecordActions.ts` の `is_off_master:true` / `off_master_job_name` / `project_id:null`。よって
+- 検知条件 = `is_off_master = true AND project_id IS NULL`
+- グループキー = `off_master_job_name`（無ければ `raw_spot_text`、それも無ければ記録1件ごとに独立）
+- 昇格の UPDATE は**キー文字列で引き直さず、一覧が返した `recordIds` で `.in('id', ...)`**（同名の別グループや無名の記録を巻き込まないため）。`tenant_id` と `project_id IS NULL` の条件は残す
+- 昇格時に `is_off_master` を false に降ろす。`off_master_job_name` は履歴として残す
+- **金額は表示しない。** 未紐付け＝`project_id` が null ＝ `price_rules` が引けないので算出不能。¥0 と出すと「売上ゼロの案件」に見えるため、文言で「昇格後に確定」と明示した
+
+**fail-open を2箇所つぶした（今回いちばん重要な変更）**
+1. スポット昇格タブ: エラー表示の直後に「未紐付けのスポット案件はありません ✅」を出していた
+2. `FinalizeTab`: `if (!noticeRes.error) setNoticeRows(...)` で**エラーを握り潰し**、表が「対象データがありません」に見えていた。`contractors.tax_type` の 42703 はこれで4週間以上隠れていた
+
+**再発防止: `web/src/utils/phantom-columns.test.ts` を新設**
+`src` 配下の .ts/.tsx を全走査し、`tax_excluded_sales` / `tax_excluded_payment` / `spot_generic_id` がコード中に現れたらテストを落とす（コメントは除外＝注意書きは書ける）。除外は生成物 `types/supabase.ts`、ガード側の `work-amount.test.ts`、および `pdfActions.ts`（**ここだけは列ではなく metadata(jsonb) のキー名**として同じ文字列を使っており列参照ではない）。
+⚠️ `quantity` と `memo` はガード対象に**入れていない** — 請求明細の数量など正当な用途で広く使われる語のため、機械判定にすると誤検知だらけになる。
+
+**実測**
+- `tsc --noEmit` 0件 ／ `vitest run` **94 passed**（61→94）／ `eslint` は変更前後とも **13 problems (11 errors, 2 warnings) で完全一致**（`git stash` 比較・新規指摘ゼロ）
+- **画面（Chrome拡張・dev サーバー再起動後）**:
+  - スポット昇格タブ = エラー赤帯なしで「未紐付けのスポット案件はありません ✅」（＝クエリが 42703 を返さず通った証拠）
+  - 支払通知書の確定ロック一覧 = **「対象データがありません」→ 9行表示**に変わった
+  - 支払通知書PDF（【デモ】渡辺 健二 2026-07）= **明細6行つきで表示**。数量は piece_count、金額は price_rules から算出
+- ⚠️ **HMR が誤診を招く。** 編集直後は `ReferenceError: calcWorkAmount is not defined` のような stale module エラーが出るが実体は無い。**画面検証の前に dev サーバーを再起動すること**
+
+**⚠️ 未検証・未対応で残したもの**
+1. **スポット昇格の「昇格実行」は未検証。** 突発案件データが本番に0件で、検証のために本番DBへ書き込むのを避けた。読み取り経路（一覧）は上記のとおり通っている
+2. **AIスキャン保存の INSERT は未検証**（列名を実スキーマと照合しただけ）。実行には本番DBへの書き込みが要るため見送り。金額は元から `metadata['scan::subtotal']` に入るので情報は失われない
+3. **支払通知書PDFの明細合計と小計が食い違う。** 実測で明細合計 ¥34,155 に対し「労務報酬 小計 ¥96,000」。`payment_notices` の保存値を優先するため。請求書PDFで既知の同型問題（2026-08-02 その1 の4番）と同じ
+4. **支払通知書PDFの「経過措置控除（20%減額）」がベタ書き。** 実際の控除は 2%（¥1,920 = 96,000 × 2%）で、画面の「現在フェーズ: 2%」と食い違って見える。率をベタ書きしない方針（`utils/transitional-deduction.ts` が正本）に反しているので要修正
+5. **一覧の「インボイス区分」に生値 `exempt` がそのまま出ている行がある**（【デモ】中村 勝／吉田 まさお）。ラベル変換の抜け
+6. **【デモ】小林 誠司 が「インボイス登録済」なのに経過措置控除 ▲¥23,775 が付いている。** 保存済み `payment_notices` の値をそのまま表示しているためで、旧 `calcDeductionRate`（2026-08-02 その4 で修正済み）が書いた古い値と思われる。再生成すれば解消するはず（未確認）
 
 #### 2026-08-02 その4（支払通知書の経過措置を稼働日ごとの率へ・委託先ごとの年度累計を追加）
 

@@ -154,8 +154,10 @@ export async function saveScanResult(
     .insert({
       contractor_id:        params.contractorId,
       work_date:            params.invoiceDate,
-      tax_excluded_payment: params.subtotal,
-      memo:                 `[AI SCAN] ${params.issuerName}`,
+      // ⚠️ `tax_excluded_payment` と `memo` は work_records に存在しない列で、
+      //    この INSERT は 42703 で必ず失敗していた（2026-08-02 修正）。
+      //    金額は metadata['scan::subtotal'] に入るため情報は失われない。備考列は `note`。
+      note:                 `[AI SCAN] ${params.issuerName}`,
       tenant_id:            tenantId,
       metadata: {
         'scan::issuer_name':   params.issuerName,

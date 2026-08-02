@@ -213,8 +213,11 @@ export async function fetchPaymentNoticePdfData(
       .eq('contractor_id', contractorId)
       .eq('notice_month', from)
       .maybeSingle(),
+    // ⚠️ 存在しない列 `quantity` / `tax_excluded_payment` を select していたため、
+    //    PostgREST が 42703 を返して支払通知書PDFが出せなかった（2026-08-02 修正）。
+    //    数量は piece_count、金額は price_rules から都度計算する。詳細は utils/work-amount.ts。
     service.from('work_records')
-      .select('work_date, project_id, quantity, tax_excluded_payment')
+      .select(`${WORK_RECORD_AMOUNT_COLUMNS}, work_date`)
       .eq('contractor_id', contractorId)
       .gte('work_date', from).lte('work_date', to)
       .order('work_date'),
@@ -232,11 +235,29 @@ export async function fetchPaymentNoticePdfData(
   const notice     = noticeRes.data
   const projMap    = new Map((projectsRes.data ?? []).map(p => [p.id, p.project_name]))
 
-  const laborLines: LaborPdfLine[] = (workRes.data ?? []).map(r => ({
+  const laborRows = (workRes.data ?? []) as unknown as (RawWorkRecord & { work_date: string })[]
+
+  // price_rules には tenant_id が無いため、実際に出てきた案件IDだけを引く
+  // （work_records は contractor_id で絞ってあり、その委託先のテナントは上で確認済み）
+  const laborProjIds = Array.from(
+    new Set(laborRows.map(r => r.project_id).filter((id): id is string => !!id)),
+  )
+  let payRuleMap = new Map<string, PriceRuleRecord>()
+  if (laborProjIds.length > 0) {
+    const { data: rules, error: ruleErr } = await service
+      .from('price_rules')
+      .select(PRICE_RULE_COLUMNS)
+      .in('project_id', laborProjIds)
+    if (ruleErr) return { data: null, error: ruleErr.message }
+    payRuleMap = buildPriceRuleMap(rules as unknown as PriceRuleRecord[])
+  }
+
+  const laborLines: LaborPdfLine[] = laborRows.map(r => ({
     workDate:    r.work_date,
     projectName: r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）',
-    quantity:    r.quantity,
-    netAmount:   r.tax_excluded_payment,
+    quantity:    r.piece_count ?? 0,
+    // 支払通知書は「買値」side。請求書（selling）と取り違えないこと
+    netAmount:   calcWorkAmount(r, r.project_id ? payRuleMap.get(r.project_id) : undefined, 'buying'),
   }))
 
   const expenseLines: ExpensePdfLine[] = (expenseRes.data ?? []).map(r => ({

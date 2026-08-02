@@ -646,6 +646,7 @@ type PdfTarget =
 function FinalizeTab({ yearMonth }: { yearMonth: string }) {
   const [invoiceRows,   setInvoiceRows]   = useState<SalesListRow[]>([])
   const [noticeRows,    setNoticeRows]    = useState<PaymentNoticeSummaryRow[]>([])
+  const [loadError,     setLoadError]     = useState<string | null>(null)
   const [loading,       setLoading]       = useState(true)
   const [processing,    setProcessing]    = useState<string | null>(null)
   const [toast,         setToast]         = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -665,6 +666,9 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
       fetchSalesList(yearMonth),
       fetchPaymentNoticeSummary(yearMonth),
     ])
+    // ⚠️ fail-open 厳禁: 取得エラーを握り潰すと、表が「対象データがありません」に見えてしまう。
+    //    実際に `contractors.tax_type`（存在しない列）の 42703 がこれで隠れていた（2026-08-02）
+    setLoadError(invRes.error ?? noticeRes.error ?? null)
     if (!invRes.error)    setInvoiceRows(invRes.data ?? [])
     if (!noticeRes.error) setNoticeRows(noticeRes.data ?? [])
     setLoading(false)
@@ -721,6 +725,17 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
   return (
     <div className="space-y-8">
       {toast && <Toast msg={toast} onClose={() => setToast(null)} />}
+
+      {/* 取得に失敗したら必ず表に出す。空表と区別がつかないと異常が正常に見える */}
+      {loadError && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          <p className="font-semibold mb-1">データを取得できませんでした</p>
+          <p className="text-red-600">{loadError}</p>
+          <p className="mt-2 text-xs text-red-500">
+            下の表が空でも「対象が無い」とは限りません。復旧後に開き直してください。
+          </p>
+        </div>
+      )}
 
       {/* ── 請求書確定セクション ─────────────────────────── */}
       <section>
@@ -978,7 +993,7 @@ function SpotGuardrailTab() {
   // 荷主オプション
   const [clientOpts, setClientOpts] = useState<{ id: string; company_name: string }[]>([])
 
-  // インラインフォームの開閉：key = spotGenericId
+  // インラインフォームの開閉：key = SpotGroup.groupKey
   const [openForm, setOpenForm] = useState<Record<string, boolean>>({})
   const [forms, setForms] = useState<Record<string, PromoteForm>>({})
   const [promoting, setPromoting] = useState<Record<string, boolean>>({})
@@ -1005,11 +1020,12 @@ function SpotGuardrailTab() {
     }
   }, [toast])
 
-  function toggleForm(id: string) {
+  function toggleForm(spot: SpotGroup) {
+    const id = spot.groupKey
     setOpenForm(prev => ({ ...prev, [id]: !prev[id] }))
     setForms(prev => ({
       ...prev,
-      [id]: prev[id] ?? { clientId: '', projectName: id, saleAmount: '', buyAmount: '', unitType: 'per_trip' },
+      [id]: prev[id] ?? { clientId: '', projectName: spot.jobName ?? '', saleAmount: '', buyAmount: '', unitType: 'per_trip' },
     }))
   }
 
@@ -1018,21 +1034,21 @@ function SpotGuardrailTab() {
   }
 
   async function handlePromote(spot: SpotGroup) {
-    const form = forms[spot.spotGenericId]
+    const form = forms[spot.groupKey]
     if (!form?.clientId || !form.projectName || !form.saleAmount || !form.buyAmount) {
       setToast({ message: '荷主・案件名・売値・買値は必須です', type: 'error' })
       return
     }
-    setPromoting(prev => ({ ...prev, [spot.spotGenericId]: true }))
+    setPromoting(prev => ({ ...prev, [spot.groupKey]: true }))
     const res = await promoteSpotToOfficialProject({
-      spotGenericId: spot.spotGenericId,
+      recordIds:     spot.recordIds,
       clientId:      form.clientId,
       projectName:   form.projectName,
       saleAmount:    Number(form.saleAmount),
       buyAmount:     Number(form.buyAmount),
       unitType:      form.unitType,
     })
-    setPromoting(prev => ({ ...prev, [spot.spotGenericId]: false }))
+    setPromoting(prev => ({ ...prev, [spot.groupKey]: false }))
 
     if (res.error) {
       setToast({ message: res.error, type: 'error' })
@@ -1041,7 +1057,7 @@ function SpotGuardrailTab() {
         message: `「${form.projectName}」として昇格完了（${res.data?.updatedCount ?? 0}件の記録を紐付け）`,
         type: 'success',
       })
-      setOpenForm(prev => ({ ...prev, [spot.spotGenericId]: false }))
+      setOpenForm(prev => ({ ...prev, [spot.groupKey]: false }))
       await load()
     }
   }
@@ -1055,12 +1071,18 @@ function SpotGuardrailTab() {
         </p>
       </div>
 
-      {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>
-      )}
-
+      {/* ⚠️ fail-open 厳禁: 取得に失敗したときは「ありません ✅」を絶対に出さない。
+          異常を正常に見せる壊れ方になるため、エラー時はここで打ち切る（2026-08-02 修正） */}
       {loading ? (
         <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
+      ) : error ? (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          <p className="font-semibold mb-1">スポット案件を確認できませんでした</p>
+          <p className="text-red-600">{error}</p>
+          <p className="mt-2 text-xs text-red-500">
+            未紐付けの案件が「無い」とは判断できません。復旧後にもう一度開いてください。
+          </p>
+        </div>
       ) : spots.length === 0 ? (
         <div className="py-20 text-center rounded-xl border border-dashed border-zinc-200 bg-white">
           <p className="text-zinc-400 text-sm">未紐付けのスポット案件はありません ✅</p>
@@ -1068,13 +1090,13 @@ function SpotGuardrailTab() {
       ) : (
         <div className="space-y-4">
           {spots.map(spot => {
-            const isOpen     = !!openForm[spot.spotGenericId]
-            const form       = forms[spot.spotGenericId] ?? { clientId: '', projectName: spot.spotGenericId, saleAmount: '', buyAmount: '', unitType: 'per_trip' }
-            const isPromoting = !!promoting[spot.spotGenericId]
+            const isOpen     = !!openForm[spot.groupKey]
+            const form       = forms[spot.groupKey] ?? { clientId: '', projectName: spot.jobName ?? '', saleAmount: '', buyAmount: '', unitType: 'per_trip' }
+            const isPromoting = !!promoting[spot.groupKey]
             const canSubmit  = form.clientId && form.projectName && form.saleAmount && form.buyAmount
 
             return (
-              <div key={spot.spotGenericId} className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
+              <div key={spot.groupKey} className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
                 {/* 概要行 */}
                 <div className="flex items-start justify-between gap-4 px-5 py-4">
                   <div className="min-w-0 flex-1">
@@ -1082,20 +1104,23 @@ function SpotGuardrailTab() {
                       <span className="inline-block rounded-full bg-amber-200 text-amber-800 text-xs font-semibold px-2 py-0.5">
                         未紐付け
                       </span>
-                      <code className="text-sm font-mono text-zinc-700 truncate">{spot.spotGenericId}</code>
+                      <span className="text-sm font-medium text-zinc-800 truncate">
+                        {spot.jobName ?? '（案件名の入力なし）'}
+                      </span>
                     </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
                       <span>{spot.recordCount}件の記録</span>
                       <span>{spot.earliestDate} 〜 {spot.latestDate}</span>
                       <span>担当: {spot.contractorNames.join('、') || '—'}</span>
                     </div>
-                    <div className="flex gap-4 mt-1.5 text-xs font-medium">
-                      <span className="text-zinc-600">売上合計 <span className="text-zinc-900">{yen(spot.totalSales)}</span></span>
-                      <span className="text-zinc-600">支払合計 <span className="text-zinc-900">{yen(spot.totalPayment)}</span></span>
+                    {/* 金額は出さない: 未紐付け＝単価（price_rules）が無く算出できない。
+                        ¥0 と表示すると「売上ゼロの案件」に見えるため文言で明示する */}
+                    <div className="mt-1.5 text-xs text-zinc-500">
+                      金額は未算出（単価が未登録のため、昇格後に確定します）
                     </div>
                   </div>
                   <button
-                    onClick={() => toggleForm(spot.spotGenericId)}
+                    onClick={() => toggleForm(spot)}
                     className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition ${
                       isOpen
                         ? 'bg-zinc-200 text-zinc-700 hover:bg-zinc-300'
@@ -1116,7 +1141,7 @@ function SpotGuardrailTab() {
                         <label className="block text-xs font-medium text-zinc-600 mb-1">荷主 <span className="text-red-500">*</span></label>
                         <select
                           value={form.clientId}
-                          onChange={e => updateForm(spot.spotGenericId, { clientId: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { clientId: e.target.value })}
                           className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         >
                           <option value="">選択してください</option>
@@ -1131,7 +1156,7 @@ function SpotGuardrailTab() {
                         <input
                           type="text"
                           value={form.projectName}
-                          onChange={e => updateForm(spot.spotGenericId, { projectName: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { projectName: e.target.value })}
                           placeholder="例：○○倉庫→△△港 定期便"
                           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         />
@@ -1143,7 +1168,7 @@ function SpotGuardrailTab() {
                           type="number"
                           min={0}
                           value={form.saleAmount}
-                          onChange={e => updateForm(spot.spotGenericId, { saleAmount: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { saleAmount: e.target.value })}
                           placeholder="30000"
                           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         />
@@ -1155,7 +1180,7 @@ function SpotGuardrailTab() {
                           type="number"
                           min={0}
                           value={form.buyAmount}
-                          onChange={e => updateForm(spot.spotGenericId, { buyAmount: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { buyAmount: e.target.value })}
                           placeholder="25000"
                           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         />
@@ -1165,7 +1190,7 @@ function SpotGuardrailTab() {
                         <label className="block text-xs font-medium text-zinc-600 mb-1">計算方式</label>
                         <select
                           value={form.unitType}
-                          onChange={e => updateForm(spot.spotGenericId, { unitType: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { unitType: e.target.value })}
                           className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         >
                           {UNIT_TYPE_OPTIONS.map(o => (

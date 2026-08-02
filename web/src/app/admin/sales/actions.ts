@@ -494,7 +494,9 @@ export async function fetchPaymentNoticeSummary(
   const [contractorsRes, workRes, expenseRes, noticesRes] = await Promise.all([
     supabase
       .from('contractors')
-      .select('id, name, invoice_registration_type, tax_type')
+      // ⚠️ `tax_type` は contractors に存在しない列。正しくは `tax_category`。
+      //    参照していた間は 42703 でこの一覧が丸ごと空になっていた（2026-08-02 修正）。
+      .select('id, name, invoice_registration_type, tax_category')
       .eq('tenant_id', tenantId)
       .order('name'),
     supabase
@@ -591,7 +593,9 @@ export async function fetchPaymentNoticeSummary(
 
     // 未確定 → ライブ計算で表示
     const isRegistered  = contractor.invoice_registration_type === 'registered'
-    const isLaborTaxable = (contractor.tax_type ?? 'exclusive') !== 'exempt'
+    // 免税の表現ゆれ（'exempt' / '免税' / 'non_taxable'）に合わせる。pdfActions.ts と同判定
+    const taxCategory = contractor.tax_category ?? 'exclusive'
+    const isLaborTaxable = taxCategory !== 'exempt' && taxCategory !== '免税' && taxCategory !== 'non_taxable'
     const deductionRate = getTransitionDeductionRate(targetDate)
 
     const laborNet  = work?.laborNet ?? 0
