@@ -91,7 +91,7 @@ export async function saveClientScanResult(
   //    その場合だけ止める（2026-07-31 の上書き事故と同種のガード）。
   const yearMonth = params.invoiceDate.slice(0, 7)
   const monthDate = `${yearMonth}-01`
-  const { data: existing } = await service
+  const { data: existing, error: existErr } = await service
     .from('invoices')
     .select('status')
     .eq('client_id', params.clientId)
@@ -99,6 +99,11 @@ export async function saveClientScanResult(
     .eq('tenant_id', tenantId)
     .is('department_id', null)   // Task 11 で部署対応を入れる
     .maybeSingle()
+
+  // ⚠️ fail-open 厳禁: エラーを握り潰すと issued/paid の請求書を無警告で下書きに戻してしまう
+  if (existErr) {
+    return { data: null, error: `既存請求書の確認に失敗しました: ${existErr.message}` }
+  }
 
   const lockErr = invoiceLockError(existing)
   if (lockErr) return { data: null, error: lockErr }

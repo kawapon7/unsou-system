@@ -267,7 +267,8 @@ export async function computePaymentNoticeAmounts(
   // sourceContractorId → (projectId → rate → WorkBucket)
   const sourceWorkCounts = new Map<string, Map<string, Map<number, WorkBucket>>>()
   for (const [sourceId, sourceProjectIds] of sourceContractorProjects) {
-    const { data: srcData } = await supabase
+    // ⚠️ エラーを握り潰すと再委託分の稼働がゼロ扱いになり、支払額が黙って過少になる
+    const { data: srcData, error: srcErr } = await supabase
       .from('work_records')
       .select('project_id, work_date, piece_count')
       .eq('contractor_id', sourceId)
@@ -275,6 +276,7 @@ export async function computePaymentNoticeAmounts(
       .gte('work_date', fromStr)
       .lte('work_date', toStr)
       .in('project_id', Array.from(sourceProjectIds))
+    if (srcErr) return { data: null, error: srcErr.message }
     const counts = new Map<string, Map<number, WorkBucket>>()
     for (const w of (srcData ?? []) as any[]) {
       const pid    = w.project_id as string

@@ -105,13 +105,23 @@ async function finalizeInvoice(
   //    同じ関数を共有する。片方だけに砦がある状態が 2026-07-31 の上書き事故を生んだ。
   // ⚠️ tenant を掛けるのは共通ライタが既存行を探す条件と揃えるため（ズレると別行を掴む）。
   const invoiceMonthDate = monthStartStr(yearMonth)
-  const { data: existing } = await service
+  // ⚠️ 検索条件は writeInvoice が既存行を探す条件と必ず揃えること。
+  //    ズレると「別の行のロックを見て、違う行に書く」ことになる。
+  //    department_id を落としていると、Task 11 で部署ごとの行が増えた瞬間に
+  //    maybeSingle() が複数行でエラーになり、下の fail-closed で止まる（黙って通さない）。
+  const { data: existing, error: existErr } = await service
     .from('invoices')
     .select('status')
     .eq('client_id', clientId)
     .eq('invoice_month', invoiceMonthDate)
     .eq('tenant_id', tenantId)
+    .is('department_id', null)   // Task 11 で部署対応を入れる
     .maybeSingle()
+
+  // ⚠️ fail-open 厳禁: エラーを握り潰すと確定済み請求書がロックをすり抜けて上書きされる
+  if (existErr) {
+    return { data: null, error: `既存請求書の確認に失敗しました: ${existErr.message}` }
+  }
 
   const lockErr = invoiceLockError(existing, opts)
   // invoices は approval_history に FK がないため、アンロック時も監査ログは記録しない
@@ -421,18 +431,18 @@ export async function proxyApprovePaymentNotice(
   const tenantId = await getCurrentTenantId()
   const service  = createServiceClient()
 
-  // テナント越えの操作を防ぐため、委託先経由でテナントを確認する
-  // ⚠️ payment_notices に tenant_id 列は無い。contractors を必ず経由すること
+  // テナント越えの操作を防ぐ。payment_notices 自身が tenant_id を持つのでそれで絞る
+  // （以前ここに「payment_notices に tenant_id 列は無い」と誤ったコメントを書いていた。
+  //   列は実在する。条件を足す前に必ず information_schema で列を確認すること）
   const { data: notice, error: fetchErr } = await (service as any)
     .from('payment_notices')
-    .select('id, contractor_id, approval_status, contractors!inner(tenant_id)')
+    .select('id, contractor_id, approval_status')
     .eq('id', params.noticeId)
+    .eq('tenant_id', tenantId)
     .maybeSingle()
 
-  if (fetchErr || !notice) return { data: null, error: '対象の支払通知書が見つかりません' }
-  if (notice.contractors?.tenant_id !== tenantId) {
-    return { data: null, error: '対象の支払通知書が見つかりません' }
-  }
+  if (fetchErr) return { data: null, error: `支払通知書の取得に失敗しました: ${fetchErr.message}` }
+  if (!notice)  return { data: null, error: '対象の支払通知書が見つかりません' }
 
   // 本人が既にアプリで承認済みなら、格下げになるので拒否する。
   // （no_response からの格上げは認める＝あとから連絡がついたケース）

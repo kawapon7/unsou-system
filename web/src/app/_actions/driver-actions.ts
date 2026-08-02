@@ -161,7 +161,9 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
       status:          'locked',
       approval_status: 'approved',
       locked:          true,
-      locked_at:       new Date().toISOString(),  // 承認確定時刻を記録（監査用）
+      // ⚠️ locked_at は上書きしない。代理承認や未応答確定で既に立っている
+      //    「最初に確定した時刻」を消してしまうため（監査証跡の後退）。
+      //    本人がいつ承認したかは approval_history 側の記録で追う。
     })
     .eq('id', noticeId)
     .eq('contractor_id', contractorId)

@@ -83,7 +83,7 @@ type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 async function fetchExistingInvoiceStatus(
   supabase: ReturnType<typeof createServiceClient>,
   params: { clientId: string; departmentId: string | null; yearMonth: string; tenantId: string },
-): Promise<{ status: string | null } | null> {
+): Promise<{ data: { status: string | null } | null; error: string | null }> {
   let query = supabase
     .from('invoices')
     .select('status')
@@ -95,8 +95,12 @@ async function fetchExistingInvoiceStatus(
     ? query.is('department_id', null)
     : query.eq('department_id', params.departmentId)
 
-  const { data } = await query.maybeSingle()
-  return data
+  const { data, error } = await query.maybeSingle()
+  // ⚠️ fail-open 厳禁: エラーを握り潰すと「既存なし」と読めてしまい、
+  //    確定済み(issued/paid)の請求書がロックをすり抜けて上書きされる。
+  //    ロックは砦なので、確認できなかったときは通さない（2026-08-02）。
+  if (error) return { data: null, error: `既存請求書の確認に失敗しました: ${error.message}` }
+  return { data, error: null }
 }
 
 // ── 売上一覧取得 ──────────────────────────────────────────
@@ -393,7 +397,8 @@ export async function upsertInvoice(
     tenantId,
   })
 
-  const lockErr = invoiceLockError(existing)
+  if (existing.error) return { data: null, error: existing.error }
+  const lockErr = invoiceLockError(existing.data)
   if (lockErr) return { data: null, error: lockErr }
 
   const previewRes = await computeInvoicePreview(clientId, yearMonth)
@@ -743,7 +748,8 @@ export async function commitManualInvoice(params: {
       yearMonth:    params.yearMonth,
       tenantId,
     })
-    const lockErr = invoiceLockError(existing)
+    if (existing.error) return { data: null, error: existing.error }
+    const lockErr = invoiceLockError(existing.data)
     if (lockErr) return { data: null, error: lockErr }
 
     const { id, error } = await writeInvoice(db, {
