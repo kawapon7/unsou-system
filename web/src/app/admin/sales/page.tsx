@@ -15,6 +15,7 @@ import {
   type PaymentNoticeSummaryRow,
 } from './actions'
 import { finalizeInvoiceAndNotice } from '@/app/_actions/billing-actions'
+import { getDeductionRate } from '@/utils/transitional-deduction'
 import {
   fetchUnassignedSpots,
   promoteSpotToOfficialProject,
@@ -924,7 +925,10 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
           </table>
         </div>
         <p className="mt-2 text-xs text-zinc-400">
-          ※ 経過措置控除: インボイス未登録業者への支払額から差し引く金額（現在フェーズ: 2%）
+          {/* ⚠️ 率をベタ書きしない。2026-10-01 に 2% → 3% へ切り替わるため、
+              ベタ書きすると画面だけ古い率を表示し続ける。正本から算出する。 */}
+          ※ 経過措置控除: インボイス未登録業者への支払額から差し引く金額（現在フェーズ:{' '}
+          {(getDeductionRate(new Date(`${yearMonth}-01T00:00:00`)) * 100).toFixed(0)}%）
         </p>
       </section>
 

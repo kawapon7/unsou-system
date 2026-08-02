@@ -3,6 +3,8 @@
  * 仕様書 3-5「消費税・インボイス計算ロジック」準拠
  */
 
+import { getDeductionRate } from './transitional-deduction'
+
 export type InvoiceCategory = 'registered' | 'unregistered' | 'exempt'
 
 export interface TaxLineItem {
@@ -26,15 +28,13 @@ export interface TaxSummary {
 /**
  * 取引日から経過措置の控除不可割合（差し引き率）を自動判定する
  * 仕様書 3-5「インボイス未登録業者への支払い計算」準拠
+ *
+ * @deprecated 率の正本は utils/transitional-deduction.ts。新しい経路ではそちらを直接使う。
+ *   ⚠️ この関数は互換のために残している。以前は独自の率表を持っており、
+ *      同じ判定が3ファイルに重複して3本とも古いまま放置されていた（2026-08-02に統合）。
  */
 export function getTransitionalDeductionRate(transactionDate: Date): number {
-  const d = transactionDate
-  // ～2026年9月30日：差し引き率2%（消費税10% × 控除不可20%）
-  if (d <= new Date('2026-09-30')) return 0.02
-  // 2026年10月1日～2029年9月30日：差し引き率5%（消費税10% × 控除不可50%）
-  if (d <= new Date('2029-09-30')) return 0.05
-  // 2029年10月1日～：差し引き率10%（消費税10% × 控除不可100%）
-  return 0.10
+  return getDeductionRate(transactionDate)
 }
 
 /**

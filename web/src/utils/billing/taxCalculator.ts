@@ -5,6 +5,8 @@
  * 明細行ごとの丸めは行わず、カテゴリ別の合計値に対して一括で Math.round する。
  */
 
+import { getDeductionRate } from '../transitional-deduction'
+
 export interface TaxItem {
   amount: number    // 税抜き金額
   isTaxable: boolean
@@ -22,25 +24,20 @@ export interface TaxCalculationResult {
 
 // ── 経過措置差し引き率判定 ────────────────────────────────────
 
-const TRANSITIONAL_PHASE_1_END = new Date('2026-09-30T23:59:59')
-const TRANSITIONAL_PHASE_2_END = new Date('2029-09-30T23:59:59')
-
 /**
  * 取引日に対応する経過措置差し引き率を返す。
  * isRegistered=true の場合は常に 0。
  *
- * フェーズ1 (〜2026/9/30): 控除不可20% → 差し引き率2%
- * フェーズ2 (〜2029/9/30): 控除不可50% → 差し引き率5%
- * 完全不可  (2029/10/1〜): 控除不可100% → 差し引き率10%
+ * @deprecated 率の正本は utils/transitional-deduction.ts。新しい経路ではそちらを直接使う。
+ *   ⚠️ この関数は互換のために残している。以前は独自の率表（2%→5%→10%）を持っており、
+ *      令和8年度改正で新設された 70%控除（差し引き3%）の区分が欠けていた。
+ *      同じ判定が3ファイルに重複して3本とも古いまま放置されていた（2026-08-02に統合）。
  */
 export function getTransitionalDeductionRate(
   isRegistered: boolean,
   targetDate: Date,
 ): number {
-  if (isRegistered) return 0
-  if (targetDate <= TRANSITIONAL_PHASE_1_END) return 0.02
-  if (targetDate <= TRANSITIONAL_PHASE_2_END) return 0.05
-  return 0.10
+  return getDeductionRate(targetDate, isRegistered)
 }
 
 // ── メイン計算関数 ────────────────────────────────────────────
