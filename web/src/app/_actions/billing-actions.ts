@@ -16,6 +16,8 @@ import {
   type RawWorkRecord,
 } from '@/utils/work-amount'
 import { closingRange, computeDueDate, parseLocalDate } from '@/utils/closing-period'
+import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
+import { getDeductionRate } from '@/utils/transitional-deduction'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -284,16 +286,20 @@ async function finalizePaymentNotice(
     expenseTax         += Number(e.amount_actual ?? 0) - Number(e.amount_tax_excluded ?? 0)
   }
 
-  const calcDeductionRate = (it: string, ym: string) => {
-    if (it === '適格') return 0
-    const [y, m] = ym.split('-').map(Number)
-    const v = y * 100 + m
-    if (v >= 202310 && v <= 202609) return 0.2
-    if (v >= 202610 && v <= 202909) return 0.5
-    return 0
-  }
-  const deductionRate = calcDeductionRate(invoiceType, yearMonth)
-  const deduction     = Math.floor(laborTax * deductionRate)
+  // ⚠️ ここには経過措置の率表の**5本目の複製**があり、4つとも誤っていた（2026-08-02 修正）:
+  //    ①令和8年度改正の 3% 区分が無く 2029年10月以降は 0 を返していた
+  //    ②`=== '適格'` 直書きのため `registered` の委託先を未登録扱いにして控除していた
+  //    ③基準額が税抜の消費税額（laborTax）だった
+  //    ④端数が切り捨て（他経路は四捨五入）
+  //    率の正本は utils/transitional-deduction.ts。ここで率表を再び書かないこと。
+  // ⚠️ 未対応: 率は本来「稼働日ごと」に判定する（消基通 11-3-1）が、この関数は
+  //    稼働日を保持しない集計をしているため対象期間末の率で一括判定している。
+  //    2026-09-21〜10-20 のような率が混在する締め期間では admin/billing/actions.ts の
+  //    generatePaymentNotice と結果が食い違う。集計方式ごと一本化する別タスクが必要。
+  const isRegisteredContractor = isQualifiedInvoiceIssuer(invoiceType)
+  const [dedY, dedM] = yearMonth.split('-').map(Number)
+  const deductionRate = getDeductionRate(new Date(dedY, dedM, 0), isRegisteredContractor)
+  const deduction     = Math.round((laborTaxExcluded + laborTax) * deductionRate)
 
   const totalAmount = laborTaxExcluded + laborTax + expenseTaxExcluded + expenseTax - deduction
 

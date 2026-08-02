@@ -13,6 +13,7 @@ import {
   type RawWorkRecord,
 } from '@/utils/work-amount'
 import { closingRange, computeDueDate, isWithinRange, formatLocalDate } from '@/utils/closing-period'
+import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 
@@ -592,7 +593,8 @@ export async function fetchPaymentNoticeSummary(
     }
 
     // 未確定 → ライブ計算で表示
-    const isRegistered  = contractor.invoice_registration_type === 'registered'
+    // ⚠️ 表記ゆれ（registered / 適格）があるため正本の判定を使う。直書きに戻さないこと
+    const isRegistered  = isQualifiedInvoiceIssuer(contractor.invoice_registration_type)
     // 免税の表現ゆれ（'exempt' / '免税' / 'non_taxable'）に合わせる。pdfActions.ts と同判定
     const taxCategory = contractor.tax_category ?? 'exclusive'
     const isLaborTaxable = taxCategory !== 'exempt' && taxCategory !== '免税' && taxCategory !== 'non_taxable'
@@ -797,7 +799,7 @@ export async function fetchContractorOptions(): Promise<
     data: (data ?? []).map((r: any) => ({
       id:           r.id,
       name:         r.name,
-      isRegistered: r.invoice_registration_type === 'registered' || r.invoice_registration_type === '適格',
+      isRegistered: isQualifiedInvoiceIssuer(r.invoice_registration_type),
     })),
     error: null,
   }

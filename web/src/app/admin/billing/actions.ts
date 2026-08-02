@@ -12,6 +12,7 @@ import {
 } from '@/utils/transitional-deduction'
 import { parseLocalDate } from '@/utils/closing-period'
 import { fiscalYearRange, fiscalYearLabel } from '@/utils/fiscal-year'
+import { isQualifiedInvoiceIssuer, normalizeInvoiceRegistration } from '@/utils/invoice-registration'
 
 type ClientRow     = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -423,7 +424,7 @@ export async function fetchPaymentByContractor(
     //    ③率は対象月ではなく**稼働日ごと**に判定する（消基通 11-3-1）
     const deductionTax   = calcTransitionalDeduction(
       buildTaxIncludedPurchases(a.netByDate, a.taxType),
-      a.invoiceType === '適格',
+      isQualifiedInvoiceIssuer(a.invoiceType),
     ).deduction
     const withholdingTax = a.withholdingTaxFlag ? calcWithholding(a.buyAmountNet) : 0
 
@@ -847,7 +848,8 @@ export async function generatePaymentNotice(
   // 経過措置控除（免税・未登録のみ）
   // ⚠️ 2026-08-02 に 3 点修正: ①率は正本 utils/transitional-deduction.ts から取る
   //    ②基準額を税抜(laborTax)から税込へ ③率は対象月でなく稼働日ごとに判定（消基通 11-3-1）
-  const isRegisteredContractor = contractor.invoice_registration_type === '適格'
+  // ⚠️ '適格' 直書きだと `registered` の委託先を未登録扱いにして控除していた（2026-08-02 修正）
+  const isRegisteredContractor = isQualifiedInvoiceIssuer(contractor.invoice_registration_type)
   const deductionResult = calcTransitionalDeduction(
     buildTaxIncludedPurchases(netByDate, contractor.tax_category),
     isRegisteredContractor,
@@ -860,8 +862,9 @@ export async function generatePaymentNotice(
   const deductionRate = deductionBase > 0 ? deduction / deductionBase : 0
 
   // invoice_registration_type 別に集計列へ振り分け
-  const isRegistered = contractor.invoice_registration_type === '適格'
-  const isExempt     = contractor.invoice_registration_type === '免税'
+  const registrationStatus = normalizeInvoiceRegistration(contractor.invoice_registration_type)
+  const isRegistered = registrationStatus === 'registered'
+  const isExempt     = registrationStatus === 'exempt'
 
   const subtotalRegistered    = isRegistered ? laborTaxExcluded : 0
   const taxRegistered         = isRegistered ? laborTax : 0

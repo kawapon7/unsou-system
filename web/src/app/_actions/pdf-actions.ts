@@ -13,6 +13,8 @@ import {
   type RawWorkRecord,
 } from '@/utils/work-amount'
 import { closingRange, computeDueDate } from '@/utils/closing-period'
+import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
+import { getDeductionRate } from '@/utils/transitional-deduction'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -282,7 +284,18 @@ export async function fetchPaymentNoticePdfData(
   const expenseNet  = Math.max(0, totalEx - laborNet)
   const expenseTax  = Math.max(0, totalTax - laborTax)
   const deduction   = n ? Number(n.total_deduction ?? 0) : 0
-  const deductionRate = laborTax > 0 ? Math.round((deduction / laborTax) * 100) / 100 : 0
+  // ⚠️ 以前は `deduction / laborTax` を率としていたため「20%」と表示され、画面の
+  //    「現在フェーズ 2%」と食い違っていた（消費税額に対する割合を出していたのが原因）。
+  // ⚠️ `payment_notices.deduction_rate` は**単位が混在**していて使えない。
+  //    実データに `2.0000`（パーセント）と `0.0200`（小数）が両方入っている（書き込み経路が
+  //    複数あった名残）。そのまま率として使うと 200% と表示される。
+  //    表示は制度上の率が唯一確かなので、正本から対象月の率を引く。
+  // ⚠️ 締め期間が率の切り替わり（2026-10-01 など）をまたぐ月は単一の率が存在しない。
+  //    その場合ここは期間末の率を表示する（金額は保存済みの差し引き額が正）。
+  const deductionRate = getDeductionRate(
+    new Date(y, m, 0),
+    isQualifiedInvoiceIssuer(contractor.invoice_registration_type),
+  )
   const totalAmount = totalEx + totalTax - deduction
 
   // ⚠️ fail-closed: 自社情報が未登録なら支払通知書も発行しない（請求書と同じ方針）
@@ -293,7 +306,7 @@ export async function fetchPaymentNoticePdfData(
     data: {
       company:             companyRes.data,
       contractorName:      contractor.name,
-      invoiceRegistration: contractor.invoice_registration_type === 'registered' ? 'registered' : 'unregistered',
+      invoiceRegistration: isQualifiedInvoiceIssuer(contractor.invoice_registration_type) ? 'registered' : 'unregistered',
       noticeMonth:         `${y}年${m}月分`,
       issueDate:           new Date().toISOString().slice(0, 10),
       laborLines,

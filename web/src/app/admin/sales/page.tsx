@@ -27,6 +27,7 @@ import { ScanTab }               from './ScanTab'
 import { EmergencyImportTab }    from './EmergencyImportTab'
 import { ManualInvoiceTab }      from './ManualInvoiceTab'
 import { VoiceButton }           from '@/components/voice/VoiceButton'
+import { invoiceRegistrationLabel } from '@/utils/invoice-registration'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -619,11 +620,6 @@ const NOTICE_STATUS_META: Record<string, { label: string; cls: string }> = {
   locked:   { label: 'ロック済', cls: 'bg-red-50 text-red-700' },
 }
 
-const INVOICE_TYPE_LABEL: Record<string, string> = {
-  registered:   'インボイス登録済',
-  unregistered: '未登録（経過措置）',
-}
-
 function Toast({ msg, onClose }: { msg: { type: 'ok' | 'err'; text: string }; onClose: () => void }) {
   return (
     <div
@@ -867,7 +863,7 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
                     <Td bold>{r.name}</Td>
                     <Td>
                       <span className="text-xs text-zinc-500">
-                        {INVOICE_TYPE_LABEL[r.invoiceType] ?? r.invoiceType}
+                        {invoiceRegistrationLabel(r.invoiceType)}
                       </span>
                     </Td>
                     <Td right>{yen(r.laborNet)}</Td>
