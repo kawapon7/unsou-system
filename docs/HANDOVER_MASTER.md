@@ -1349,6 +1349,58 @@ web/
 
 ### 5-4. 直近の作業履歴（新しい順）
 
+#### 2026-08-02 その7（支払通知書の金額算出を一本化・単価の素値を足していた4経路を修正・実地検証）
+
+**ボス判断で「既存データはすべてダミーなので検証と修正を実行」。本番DBへの書き込みを伴う検証を実施した。**
+
+**🔴 最大の発見: 単価の素値を足していた（個数を掛け忘れていた）経路が4つあった**
+
+`price_rules.buying_price` / `selling_price` を稼働1件につき1回足すだけで、`piece_count` も `calculation_type` も無視していた。
+実データ: 委託先「渡辺 健二」2026-07 は `calculation_type='piece'` / 単価165円 / 個数合計207 →
+**正しくは 207 × 165 = ¥34,155 なのに、¥990（6件×165）や ¥96,000（古い保存値）が出ていた。**
+
+| 経路 | 症状 |
+|---|---|
+| `admin/billing/actions.ts` `generatePaymentNotice`（payee ルール未設定案件のフォールバック） | 支払通知書の労務報酬が過少 |
+| `admin/billing/actions.ts` `fetchPaymentByContractor` | 支払管理一覧の支払運賃が **¥990** |
+| `admin/billing/actions.ts` `fetchBillingByClient` | 荷主別の売上が過少（売値側の同型） |
+| `_actions/billing-actions.ts` `finalizePaymentNotice` | 確定ロックが書く金額が過少 |
+
+金額の正本は `utils/work-amount.ts` の `calcWorkAmount`。**4経路すべてこれを通す形に統一した。**
+
+**支払通知書の金額算出を `web/src/utils/payment-notice-calc.ts` に集約**
+`generatePaymentNotice`（生成）と `finalizePaymentNotice`（確定ロック）が別々に同じ計算を持ち、Bが劣化コピーになっていた。
+Bは①暦月固定（Aは締め日ベース）②`project_payees` の per_piece/per_unit 非対応 ③調整金の概念なし ④経過措置が月末一括の単一率。
+`computePaymentNoticeAmounts(db, {tenantId, contractorId, yearMonth})` に集約し、A/B とも呼ぶだけにした。
+**Bが書いていなかった14列**（`subtotal_registered` 他の区分別6列・`labor_tax_excluded` 他4列・`deduction_rate`・`deduction`・`adjustment_amount`・`total_amount`）も書くようにした。
+⚠️ Bのロック3段構えと `approval_history` 監査ログ2本は無変更で維持。
+
+**立替金の承認状態のズレも修正**
+支払通知書は `approval_status='approved'` のみ集計するのに、**一覧（`fetchPaymentNoticeSummary`）とPDF明細が未承認まで含めていた。**
+そのため「一覧では立替金 ¥4,000 なのに通知書は ¥0」「PDFの明細に行があるのに小計 ¥0」になっていた。両方に承認済みフィルタを追加。
+（2026年7月の立替金10件はすべて `pending`。通知書側が正しかった）
+
+**✅ 実地検証（本番DBへ書き込み・ダミーデータのため許可済み）**
+
+1. **スポット昇格（合格）**: 突発案件を1件作って画面から昇格 → `is_off_master` が false に降り、`project_id` が新案件 `SP-20260802-9HS5Q` に紐付き、一覧から消えた。案件マスタも `sale_amount`/`buy_amount`/`unit_type`/`tenant_id` とも正しく作られた
+2. **AIスキャン保存（合格・ただし限定的）**: 修正後の INSERT ペイロードを実DBで実行して成功を確認。金額が `metadata['scan::subtotal']` に入ることも確認。⚠️ **画像アップロード→Gemini解析のUI全体は未実行**（請求書画像が必要なため）
+3. **支払通知書の再生成（11件）**: 「全員分を一括生成」を実行。結果:
+   - 渡辺 健二: 労務報酬 **¥96,000 → ¥34,155**（PDF明細の合計と完全一致 ＝ **食い違い問題が解消**）
+   - 小林 誠司（`registered`）: 経過措置控除 **¥23,775 → ¥0**（判定統一の効果）
+   - 石原裕次郎（`適格`）: 控除 ¥0（`=== 'registered'` 判定では控除されていた側）
+   - `deduction_rate` が全件 `0.0200` の小数表記に統一され、**単位混在（`2.0000` と `0.0200`）が解消**
+   - `status` は全件 `unapproved`（承認フローを飛ばしていない）
+4. **支払通知書PDF**: 明細6行の合計 ¥34,155 = 小計。控除 ¥751 = 税込 ¥37,570 × 2%。差引 ¥36,819 まで全て整合
+
+**実測**: `tsc --noEmit` 0件 ／ `vitest run` **100 passed** ／ `eslint` は変更3ファイルで **17 → 13 problems**（減少・新規ゼロ）
+
+**⚠️ 残課題**
+1. **`finalizePaymentNotice` が `status:'approved'` / `approval_status:'approved'` / `locked:false` を書く。** `generatePaymentNotice` は `'unapproved'`/`'pending'` を書き「ここで approved 固定にすると承認フロー（合意証跡）が成立しない」とコメントしている。**意味が真逆で、確定ロックボタンは委託先の承認を経ずに承認済みを作る。**業務判断を伴うため今回は変更せず、コードに ⚠️ コメントを入れるに留めた。**要ボス判断**
+2. **一覧（`fetchPaymentNoticeSummary`）のライブ計算がまだ独自実装。** 期間が暦月固定で、締め日が月末以外の委託先では通知書と食い違う。`computePaymentNoticeAmounts` を呼ぶ形に寄せるのが本筋（今回は立替金の承認フィルタだけ揃えた）
+3. **源泉徴収税が支払通知書に反映されていない**（列自体が無い）。一覧 `fetchPaymentByContractor` だけが差し引くため画面と通知書で金額が食い違う
+4. `payment_notices` の既存行取得に `tenant_id` 条件が無い（A/B とも）。`contractor_id` がテナント一意なら実害なしだが**未確認**
+5. **検証で本番DBに残したデータ**: 案件 `SP-20260802-9HS5Q`（`projects` 1件）／ 突発案件の稼働1件 ／ AI SCAN の稼働1件（`note` が `[AI SCAN] 【検証】発行元テスト`）。消すならSupabaseダッシュボードで実行すること
+
 #### 2026-08-02 その6（インボイス登録区分の判定が3通りに分裂していた — 支払額の誤り）
 
 **その5の画面検証で見つけた表示の粗を追ったら、金額の誤りだった。**

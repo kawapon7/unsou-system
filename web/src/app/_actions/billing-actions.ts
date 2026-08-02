@@ -16,8 +16,10 @@ import {
   type RawWorkRecord,
 } from '@/utils/work-amount'
 import { closingRange, computeDueDate, parseLocalDate } from '@/utils/closing-period'
-import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
-import { getDeductionRate } from '@/utils/transitional-deduction'
+// ⚠️ 支払通知書の金額算出は utils/payment-notice-calc.ts が正本。
+//    以前ここに admin/billing/actions.ts の劣化コピーがあり、同じ委託先・同じ月でも
+//    生成経路と確定経路で金額が食い違っていた（2026-08-02 に一本化）。
+import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -32,12 +34,8 @@ function monthStartStr(yearMonth: string): string {
   return `${yearMonth}-01`
 }
 
-/** '2026-06' → '2026-06-30' (月末日) */
-function monthEndStr(yearMonth: string): string {
-  const [y, m] = yearMonth.split('-').map(Number)
-  const lastDay = new Date(Date.UTC(y, m, 0)).getUTCDate()
-  return `${yearMonth}-${String(lastDay).padStart(2, '0')}`
-}
+// ⚠️ monthEndStr（対象月の末日）はここで支払通知書の集計期間を作るために使っていたが、
+//    正しい期間は委託先ごとの締め期間（closingRange）。共通モジュールが算出するため削除した。
 
 // ⚠️ 締め日ベースの期間算出（closingRange）と支払期日計算はこのファイルにも
 //    admin/sales/actions.ts にも同じものが重複実装されていた。
@@ -191,18 +189,8 @@ async function finalizePaymentNotice(
   opts: { userId: string; isDeveloperUnlock?: boolean; unlockReason?: string },
 ): Promise<ActionResult> {
   const tenantId = await getCurrentTenantId()
-  // 委託先情報取得
-  const { data: contractor, error: ctErr } = await service
-    .from('contractors')
-    .select('id, tax_category, invoice_registration_type')
-    .eq('id', contractorId)
-    .eq('tenant_id', tenantId)
-    .single()
-
-  if (ctErr || !contractor) {
-    return { data: null, error: ctErr?.message ?? '委託先が見つかりません' }
-  }
-
+  // ⚠️ 委託先マスタの取得は共通モジュール側で行う（tenant 確認・存在確認も含む）。
+  //    ここで先に引くと同じクエリが 2 回走るだけなので持たない。
   const noticeMonthDate = monthStartStr(yearMonth)
 
   // ── 3段構えのロックチェック ────────────────────────────────
@@ -239,70 +227,27 @@ async function finalizePaymentNotice(
     })
   }
 
-  // ── データ集計（billing/actions.ts の generatePaymentNotice と同じ方式） ──
-  const from = monthStartStr(yearMonth)
-  const to   = monthEndStr(yearMonth)
-  const contractorRow = contractor as Record<string, unknown>
-  const taxCategory   = String(contractorRow.tax_category ?? 'exclusive')
-  const invoiceType   = String(contractorRow.invoice_registration_type ?? '')
-
-  const { data: workData, error: wrErr } = await service
-    .from('work_records')
-    .select('projects(price_rules(buying_price))')
-    .eq('contractor_id', contractorId)
-    .eq('tenant_id', tenantId)
-    .gte('work_date', from)
-    .lte('work_date', to)
-
-  if (wrErr) return { data: null, error: wrErr.message }
-
-  let laborTaxExcluded = 0
-  for (const w of (workData ?? []) as any[]) {
-    laborTaxExcluded += Number(w.projects?.price_rules?.[0]?.buying_price ?? 0)
-  }
-
-  const calcTax = (amount: number, cat: string) => {
-    if (cat === 'exclusive') return Math.floor(amount * 0.1)
-    if (cat === 'inclusive') return Math.floor(amount - amount / 1.1)
-    return 0
-  }
-  const laborTax = calcTax(laborTaxExcluded, taxCategory)
-
-  const { data: expenseRows, error: exErr } = await service
-    .from('expense_records')
-    .select('amount_actual, amount_tax_excluded, tax_category, expense_date')
-    .eq('contractor_id', contractorId)
-    .eq('tenant_id', tenantId)
-    .eq('approval_status', 'approved')
-    .gte('expense_date', from)
-    .lte('expense_date', to)
-
-  if (exErr) return { data: null, error: exErr.message }
-
-  let expenseTaxExcluded = 0
-  let expenseTax = 0
-  for (const e of (expenseRows ?? []) as any[]) {
-    expenseTaxExcluded += Number(e.amount_tax_excluded ?? 0)
-    expenseTax         += Number(e.amount_actual ?? 0) - Number(e.amount_tax_excluded ?? 0)
-  }
-
-  // ⚠️ ここには経過措置の率表の**5本目の複製**があり、4つとも誤っていた（2026-08-02 修正）:
-  //    ①令和8年度改正の 3% 区分が無く 2029年10月以降は 0 を返していた
-  //    ②`=== '適格'` 直書きのため `registered` の委託先を未登録扱いにして控除していた
-  //    ③基準額が税抜の消費税額（laborTax）だった
-  //    ④端数が切り捨て（他経路は四捨五入）
+  // ── 金額算出は共通モジュールへ集約（utils/payment-notice-calc.ts） ──
+  // ⚠️ ここには admin/billing/actions.ts の劣化コピーがあり、以下 4 点で食い違っていた
+  //    （2026-08-02 に一本化して解消）:
+  //      ①稼働金額が buying_price の単純合算で、個数(piece_count)も
+  //        calculation_type も無視していた（piece 制の委託先で桁が落ちる）
+  //      ②project_payees の単価ルール・調整金・再委託を一切見ていなかった
+  //      ③経過措置の率を対象月末で一括判定していた（正しくは稼働日ごと。消基通 11-3-1）
+  //      ④集計期間が月初〜月末で、委託先ごとの締め日を無視していた
   //    率の正本は utils/transitional-deduction.ts。ここで率表を再び書かないこと。
-  // ⚠️ 未対応: 率は本来「稼働日ごと」に判定する（消基通 11-3-1）が、この関数は
-  //    稼働日を保持しない集計をしているため対象期間末の率で一括判定している。
-  //    2026-09-21〜10-20 のような率が混在する締め期間では admin/billing/actions.ts の
-  //    generatePaymentNotice と結果が食い違う。集計方式ごと一本化する別タスクが必要。
-  const isRegisteredContractor = isQualifiedInvoiceIssuer(invoiceType)
-  const [dedY, dedM] = yearMonth.split('-').map(Number)
-  const deductionRate = getDeductionRate(new Date(dedY, dedM, 0), isRegisteredContractor)
-  const deduction     = Math.round((laborTaxExcluded + laborTax) * deductionRate)
+  const { data: a, error: calcErr } = await computePaymentNoticeAmounts(
+    service,
+    { tenantId, contractorId, yearMonth },
+  )
+  if (calcErr || !a) return { data: null, error: calcErr ?? '支払通知書の金額算出に失敗しました' }
 
-  const totalAmount = laborTaxExcluded + laborTax + expenseTaxExcluded + expenseTax - deduction
-
+  // ⚠️ status / approval_status / locked は A（admin/billing/actions.ts の
+  //    generatePaymentNotice）と意味が食い違っている。A は生成時に status='unapproved' /
+  //    approval_status='pending' で起票し、承認は子分（driver）が行う設計。
+  //    一方ここは確定操作として即 'approved' を書いている。
+  //    どちらが正かは承認フローの業務判断を伴うため、今回の一本化では**変更していない**。
+  //    金額列だけを共通化した。整理は別タスク。
   const { error: upsertErr } = await (service as any)
     .from('payment_notices')
     .upsert(
@@ -311,9 +256,25 @@ async function finalizePaymentNotice(
         notice_month:           noticeMonthDate,
         target_month:           noticeMonthDate,
         status:                 'approved',
-        total_excluding_tax:    laborTaxExcluded + expenseTaxExcluded,
-        total_tax:              laborTax + expenseTax,
-        total_deduction:        deduction,
+        subtotal_registered:    a.subtotalRegistered,
+        tax_registered:         a.taxRegistered,
+        subtotal_unregistered:  a.subtotalUnregistered,
+        tax_unregistered:       a.taxUnregistered,
+        deduction_unregistered: a.deductionUnregistered,
+        subtotal_exempt:        a.subtotalExempt,
+        // ⚠️ 内訳列（labor_* / expense_* / deduction_rate）を書かないと、支払通知書PDFの
+        //    労務内訳が 0 になり、fetchContractorFiscalTotals の年度累計にも乗らない。
+        labor_tax_excluded:     a.laborTaxExcluded,
+        labor_tax:              a.laborTax,
+        expense_tax_excluded:   a.expenseTaxExcluded,
+        expense_tax:            a.expenseTax,
+        deduction_rate:         a.deductionRate,
+        deduction:              a.deduction,
+        adjustment_amount:      a.adjustment,
+        total_excluding_tax:    a.totalExcludingTax,
+        total_tax:              a.totalTax,
+        total_deduction:        a.totalDeduction,
+        total_amount:           a.totalAmount,
         approval_status:        'approved',
         locked:                 false,
       },

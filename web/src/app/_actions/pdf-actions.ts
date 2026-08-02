@@ -223,9 +223,12 @@ export async function fetchPaymentNoticePdfData(
       .eq('contractor_id', contractorId)
       .gte('work_date', from).lte('work_date', to)
       .order('work_date'),
+    // ⚠️ 承認済みだけを載せる。小計は payment_notices の保存値（承認済みのみ集計）を使うため、
+    //    ここで未承認まで明細に出すと「明細に行があるのに小計 0」という文書になる（2026-08-02 修正）。
     service.from('expense_records')
       .select('expense_date, expense_type, amount_tax_excluded, tax_category')
       .eq('contractor_id', contractorId)
+      .eq('approval_status', 'approved')
       .gte('expense_date', from).lte('expense_date', to)
       .order('expense_date'),
     service.from('projects').select('id, project_name'),

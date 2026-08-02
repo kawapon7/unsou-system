@@ -507,10 +507,14 @@ export async function fetchPaymentNoticeSummary(
       .eq('tenant_id', tenantId)
       .gte('work_date', from)
       .lte('work_date', to),
+    // ⚠️ 承認済みだけを集計する。支払通知書の生成（utils/payment-notice-calc.ts）が
+    //    approval_status='approved' で絞っているのに、ここだけ絞っていなかったため
+    //    未承認の立替金まで支払予定に乗り、一覧のほうが過大に出ていた（2026-08-02 修正）。
     supabase
       .from('expense_records')
       .select('contractor_id, amount_tax_excluded, tax_category')
       .eq('tenant_id', tenantId)
+      .eq('approval_status', 'approved')
       .gte('expense_date', from)
       .lte('expense_date', to),
     supabase
