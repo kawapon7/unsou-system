@@ -88,3 +88,41 @@ export function hasBankInfo(company: CompanyInfo): boolean {
   const b = company.bank
   return Boolean(b.bankName && b.bankBranch && b.accountNumber && b.accountHolder)
 }
+
+// ── 支払通知書の「返事を待つ日数」 ────────────────────────────
+//
+// 設計書 §2-3-9 の備考「タイムリミット後は確定ロック」を実装するための設定値。
+// ⚠️ 何日待つかは会社ごとのローカルルール（2026-08-02 ボス判断）。ここでベタ書きしないこと。
+// ⚠️ 起算日は「支払通知書を作った日」（payment_notices.created_at）。
+
+/** 列が無い/行が無いときのフォールバック。DB 側の DEFAULT と必ず揃えること */
+const DEFAULT_RESPONSE_DAYS = 7
+
+export async function getPaymentNoticeResponseDays(
+  tenantId: string,
+): Promise<{ days: number; error: null } | { days: null; error: string }> {
+  const service = createServiceClient()
+  const { data, error } = await service
+    .from('companies')
+    .select('payment_notice_response_days')
+    .eq('tenant_id', tenantId)
+    .maybeSingle()
+
+  // ⚠️ fail-open 厳禁: 取得できなかったときに既定値で通すと、
+  //    「待つ設定にしてあるのに待たずに確定できた」が起こりうる。確認できないなら止める。
+  if (error) return { days: null, error: `自社設定の取得に失敗しました: ${error.message}` }
+
+  // 自社情報が未登録なら DB の DEFAULT と同じ値で運用する（行が無いだけで設定ミスではない）
+  return { days: data?.payment_notice_response_days ?? DEFAULT_RESPONSE_DAYS, error: null }
+}
+
+/**
+ * 「未応答のまま確定」してよい日時を返す。
+ * @param noticeCreatedAt 支払通知書の生成日時（ISO 文字列）。まだ作られていなければ null
+ */
+export function lockableAtFrom(noticeCreatedAt: string | null, responseDays: number): Date | null {
+  if (!noticeCreatedAt) return null
+  const base = new Date(noticeCreatedAt)
+  if (Number.isNaN(base.getTime())) return null
+  return new Date(base.getTime() + responseDays * 24 * 60 * 60 * 1000)
+}

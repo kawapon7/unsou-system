@@ -265,6 +265,7 @@ export type Database = {
           id: string
           invoice_reg_number: string | null
           name: string
+          payment_notice_response_days: number
           phone: string | null
           postal_code: string | null
           tenant_id: string | null
@@ -283,6 +284,7 @@ export type Database = {
           id?: string
           invoice_reg_number?: string | null
           name: string
+          payment_notice_response_days?: number
           phone?: string | null
           postal_code?: string | null
           tenant_id?: string | null
@@ -301,6 +303,7 @@ export type Database = {
           id?: string
           invoice_reg_number?: string | null
           name?: string
+          payment_notice_response_days?: number
           phone?: string | null
           postal_code?: string | null
           tenant_id?: string | null

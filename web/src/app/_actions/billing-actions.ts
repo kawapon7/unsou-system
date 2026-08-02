@@ -4,6 +4,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { calculateInvoiceTax, type TaxItem } from '@/utils/billing/taxCalculator'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { getPaymentNoticeResponseDays, lockableAtFrom } from '@/utils/company'
 import { requireOwner } from '@/utils/auth'
 import { writeInvoice } from '@/utils/invoice-writer'
 import { invoiceLockError } from '@/utils/invoice-lock'
@@ -219,7 +220,7 @@ async function finalizePaymentNotice(
   // 段1: 既存レコードの存在確認
   const { data: existingNotice } = await service
     .from('payment_notices')
-    .select('id, approval_status, locked, total_amount')
+    .select('id, approval_status, locked, total_amount, created_at')
     .eq('contractor_id', contractorId)
     .eq('notice_month', noticeMonthDate)
     .maybeSingle()
@@ -278,10 +279,41 @@ async function finalizePaymentNotice(
   // 口頭確認して親分が代わりに承認する場合は、この関数ではなく
   // proxyApprovePaymentNotice（確認記録の入力が必須）を使うこと。
   const prevApproval = existingNotice?.approval_status
-  const nextApprovalStatus =
-    prevApproval === 'approved' || prevApproval === 'approved_by_proxy'
-      ? prevApproval
-      : 'no_response'
+  const hasAgreement = prevApproval === 'approved' || prevApproval === 'approved_by_proxy'
+  const nextApprovalStatus = hasAgreement ? prevApproval : 'no_response'
+
+  // ⚠️ タイムリミット判定（設計書 §2-3-9 備考「タイムリミット後は確定ロック」）。
+  //    合意が無いまま「未応答」の証跡を立てるには、子分に返事の機会が要る。
+  //    生成直後に確定できると「返事がなかった」が嘘になるため、待機日数を過ぎるまで止める。
+  //    ⚠️ 待機日数は会社ごとの設定（companies.payment_notice_response_days）。
+  //       ここに日数をベタ書きしないこと。
+  //    合意済み（本人承認・代理承認）は待つ理由が無いので即ロックできる。
+  if (!hasAgreement) {
+    const daysRes = await getPaymentNoticeResponseDays(tenantId)
+    if (daysRes.error !== null) return { data: null, error: daysRes.error }
+    const responseDays = daysRes.days
+
+    const lockableAt = lockableAtFrom(existingNotice?.created_at ?? null, responseDays)
+    if (lockableAt === null) {
+      // 通知書がまだ無い＝子分は一度も見ていない。「未応答」とは言えない
+      if (responseDays > 0) {
+        return {
+          data: null,
+          error: '支払通知書がまだ作成されていません。先に「全員分を一括生成」で作成し、'
+            + `本人の返事を ${responseDays} 日待ってから確定してください。`
+            + '急ぐ場合は口頭確認のうえ「代理承認」を使ってください。',
+        }
+      }
+    } else if (Date.now() < lockableAt.getTime()) {
+      const restDays = Math.ceil((lockableAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000))
+      return {
+        data: null,
+        error: `本人の返事を待つ期間中です（あと ${restDays} 日）。`
+          + '期間を過ぎると「未応答のまま確定」できます。'
+          + '急ぐ場合は口頭確認のうえ「代理承認」を使ってください。',
+      }
+    }
+  }
 
   const { error: upsertErr } = await (service as any)
     .from('payment_notices')

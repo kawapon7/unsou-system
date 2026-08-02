@@ -22,12 +22,15 @@ export type CompanyFormValues = {
   account_holder:     string
   /** 決算月（'1'〜'12'）。未設定は空文字。事業年度 = 決算月の翌月1日〜決算月末日 */
   fiscal_year_end_month: string
+  /** 支払通知書を作ってから子分の返事を待つ日数（'0'〜'90'）。0 は待たない運用 */
+  payment_notice_response_days: string
 }
 
 const EMPTY: CompanyFormValues = {
   name: '', invoice_reg_number: '', postal_code: '', address: '', phone: '', email: '',
   bank_name: '', bank_branch: '', account_type: '', account_number: '', account_holder: '',
   fiscal_year_end_month: '',
+  payment_notice_response_days: '7',
 }
 
 /**
@@ -64,6 +67,9 @@ export async function fetchCompanyForEdit(): Promise<ActionResult<CompanyFormVal
       account_holder:     decryptBankFieldValue(data.account_holder),
       fiscal_year_end_month:
         (data as { fiscal_year_end_month?: number | null }).fiscal_year_end_month?.toString() ?? '',
+      payment_notice_response_days:
+        (data as { payment_notice_response_days?: number | null })
+          .payment_notice_response_days?.toString() ?? '7',
     },
     error: null,
   }
@@ -94,6 +100,13 @@ export async function saveCompany(values: CompanyFormValues): Promise<ActionResu
     fiscalYearEndMonth = n
   }
 
+  // 返事の待機日数: 0〜90。⚠️ 空欄を既定値で握りつぶさない（設定したつもりのズレを防ぐ）
+  const daysRaw = values.payment_notice_response_days.trim()
+  const days = Number(daysRaw)
+  if (daysRaw === '' || !Number.isInteger(days) || days < 0 || days > 90) {
+    return { data: null, error: '返事を待つ日数は0〜90の整数で指定してください。' }
+  }
+
   const tenantId = await getCurrentTenantId()
   const service  = createServiceClient()
 
@@ -114,6 +127,7 @@ export async function saveCompany(values: CompanyFormValues): Promise<ActionResu
     email:              values.email.trim(),
     account_type:       values.account_type.trim(),
     fiscal_year_end_month: fiscalYearEndMonth,
+    payment_notice_response_days: days,
     tenant_id:          tenantId,
     updated_at:         new Date().toISOString(),
   }
