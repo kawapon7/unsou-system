@@ -4,6 +4,13 @@ import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+import { closingRange, formatLocalDate } from '@/utils/closing-period'
+import {
+  calcTransitionalDeduction,
+  getDeductionRate,
+  type TransitionalPurchase,
+} from '@/utils/transitional-deduction'
+import { parseLocalDate } from '@/utils/closing-period'
 
 type ClientRow     = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -13,23 +20,12 @@ type ContractorRow = Database['public']['Tables']['contractors']['Row']
 /**
  * 締め日文字列（"20", "25", "月末" 等）と年月から締め期間を算出。
  * 例: yearMonth=2026-06, closingDay=20 → 2026-05-21 〜 2026-06-20
+ *
+ * ⚠️ 実装は utils/closing-period.ts へ集約した（2026-08-02）。
+ *    同じ closingRange がこのファイルを含め 3 箇所に重複していた。
+ *    返り値はローカル日付の 'YYYY-MM-DD' 文字列（date 列とそのまま比較できる）。
+ *    従来の toISOString() 方式は JST の開発機で月末が 1 日前にずれていた。
  */
-function closingRange(yearMonth: string, closingDay: string): { from: Date; to: Date } {
-  const [y, m] = yearMonth.split('-').map(Number)
-
-  const isLastDay = closingDay === '月末' || closingDay === '末日' || closingDay === '99'
-  const day = isLastDay ? 0 : Number(closingDay)
-
-  const toDate = isLastDay
-    ? new Date(y, m, 0)
-    : new Date(y, m - 1, day)
-
-  const fromDate = isLastDay
-    ? new Date(y, m - 1, 1)
-    : new Date(y, m - 2, day + 1)
-
-  return { from: fromDate, to: toDate }
-}
 
 // ── 税額計算 ──────────────────────────────────────────────
 
@@ -37,6 +33,57 @@ function calcTax(amount: number, taxType: string): number {
   if (taxType === 'exclusive') return Math.floor(amount * 0.1)
   if (taxType === 'inclusive') return Math.floor(amount - amount / 1.1)
   return 0
+}
+
+/**
+ * 日付ごとの税抜額から、経過措置の判定に渡す「税込」の課税仕入れリストを作る。
+ *
+ * ⚠️ ここで出す税込額は**経過措置の差し引き額を出すためだけ**に使う。
+ *    日付ごとに消費税を計算して足し合わせるため、支払通知書本体の消費税額
+ *    （税抜合計に対して 1 回だけ算出する）とは数円ずれうる。本体金額には使わないこと。
+ */
+function buildTaxIncludedPurchases(
+  netByDate: Map<string, number>,
+  taxType: string,
+): TransitionalPurchase[] {
+  return [...netByDate.entries()].map(([date, taxExcluded]) => ({
+    date,
+    taxIncludedAmount: taxType === 'inclusive'
+      ? taxExcluded                                  // 単価が税込。そのまま税込額
+      : taxExcluded + calcTax(taxExcluded, taxType), // exclusive は加算、非課税は 0 加算
+  }))
+}
+
+// ── 経過措置の率ごとの稼働バケット ────────────────────────
+// ⚠️ 率は稼働日ごとに決まるため（消基通 11-3-1）、案件別の集計を率でも分ける。
+//    率をキーにするのは、同じ率の日をまとめて 1 回だけ端数処理するため。
+//    sampleDate はその率を代表する日付（calcTransitionalDeduction に渡す）。
+
+type WorkBucket = { count: number; pieceCount: number; buyingPriceSum: number; sampleDate: string }
+
+function bucketsOf<K>(m: Map<K, Map<number, WorkBucket>>, key: K): Map<number, WorkBucket> {
+  const existing = m.get(key)
+  if (existing) return existing
+  const created = new Map<number, WorkBucket>()
+  m.set(key, created)
+  return created
+}
+
+function addToBucket(
+  buckets: Map<number, WorkBucket>,
+  workDate: string,
+  add: { count: number; pieceCount: number; buyingPriceSum: number },
+): void {
+  // 登録状況に関わらず率で分ける。適格なら最終的に差し引き 0 になるだけ
+  const rate = getDeductionRate(parseLocalDate(workDate))
+  const cur  = buckets.get(rate)
+  if (cur) {
+    cur.count          += add.count
+    cur.pieceCount     += add.pieceCount
+    cur.buyingPriceSum += add.buyingPriceSum
+  } else {
+    buckets.set(rate, { ...add, sampleDate: workDate })
+  }
 }
 
 /** 源泉徴収税額（支払運賃の 10.21%、1円未満切り捨て） */
@@ -199,7 +246,7 @@ export async function fetchBillingByClient(
     if (!client) continue
 
     const { from: cFrom, to: cTo } = closingRange(yearMonth, String(client.closing_day))
-    const workDate = new Date(row.work_date)
+    const workDate = row.work_date            // 'YYYY-MM-DD'。文字列比較で足りる
     if (workDate < cFrom || workDate > cTo) continue
 
     const net = row.projects?.price_rules?.[0]?.selling_price ?? 0
@@ -243,11 +290,11 @@ export async function fetchPaymentByContractor(
   // 締め日は委託先ごとに異なるため、取得窓は「前月1日〜当月末日」に広げ、
   // 行ごとに各委託先の closingRange で絞り込む（前月締め分の取りこぼし防止）。
   // clients 側の fetchBillingByClient と同じパターン。
-  const [yy, mm]  = yearMonth.split('-').map(Number)
-  const fetchFrom = new Date(yy, mm - 2, 1)
-  const fetchTo   = new Date(yy, mm, 0)
-  const fromStr = fetchFrom.toISOString().slice(0, 10)
-  const toStr   = fetchTo.toISOString().slice(0, 10)
+  // ⚠️ 従来 toISOString() で日付文字列を作っており、JST の開発機では 1 日前にずれていた
+  //    （本番 Workers は UTC なのでずれない＝開発機と本番で取得範囲が食い違う）。
+  const [yy, mm] = yearMonth.split('-').map(Number)
+  const fromStr  = formatLocalDate(new Date(yy, mm - 2, 1))
+  const toStr    = formatLocalDate(new Date(yy, mm, 0))
 
   const [workResult, payeeResult] = await Promise.all([
     supabase
@@ -301,6 +348,8 @@ export async function fetchPaymentByContractor(
     paymentSite:        number
     projectCount:       number
     buyAmountNet:       number
+    /** 経過措置の率判定用。稼働日ごとの税抜額を保持する（月単位で率を決めると誤る） */
+    netByDate:          Map<string, number>
   }
   const map = new Map<string, PayeeAgg>()
   // 調整金算出用: contractorId → (projectId → { count, pieceCount })
@@ -311,7 +360,7 @@ export async function fetchPaymentByContractor(
     if (!contractor) continue
 
     const { from: ccFrom, to: ccTo } = closingRange(yearMonth, String(contractor.closing_day ?? '月末'))
-    const workDate = new Date(row.work_date)
+    const workDate = row.work_date            // 'YYYY-MM-DD'。文字列比較で足りる
     if (workDate < ccFrom || workDate > ccTo) continue
 
     const projectId = (row as any).project_id as string | null
@@ -338,6 +387,7 @@ export async function fetchPaymentByContractor(
     if (existing) {
       existing.projectCount += 1
       existing.buyAmountNet += net
+      existing.netByDate.set(workDate, (existing.netByDate.get(workDate) ?? 0) + net)
     } else {
       map.set(contractor.id, {
         contractorId:       contractor.id,
@@ -349,6 +399,7 @@ export async function fetchPaymentByContractor(
         paymentSite:        contractor.payment_site,
         projectCount:       1,
         buyAmountNet:       net,
+        netByDate:          new Map([[workDate, net]]),
       })
     }
   }
@@ -364,7 +415,15 @@ export async function fetchPaymentByContractor(
   // ── ② 合計に対して税・経過措置控除・源泉・調整金を1回ずつ算出 ──
   const result: PaymentRow[] = Array.from(map.values()).map(a => {
     const taxAmount      = calcTax(a.buyAmountNet, a.taxType)
-    const deductionTax   = Math.floor(taxAmount * calcDeductionRate(a.invoiceType, yearMonth))
+    // ⚠️ 経過措置の差し引き。2026-08-02 に 3 点を修正した:
+    //    ①率は正本 utils/transitional-deduction.ts から取る（旧 calcDeductionRate は
+    //      令和8年度改正の 3% 区分を持たず、2029年10月以降は 0 を返していた）
+    //    ②基準額を税抜(laborTax)から**税込**へ（実物の支払明細書に合わせる）
+    //    ③率は対象月ではなく**稼働日ごと**に判定する（消基通 11-3-1）
+    const deductionTax   = calcTransitionalDeduction(
+      buildTaxIncludedPurchases(a.netByDate, a.taxType),
+      a.invoiceType === '適格',
+    ).deduction
     const withholdingTax = a.withholdingTaxFlag ? calcWithholding(a.buyAmountNet) : 0
 
     // 調整金: inclusive＋調整有効の payee ルールについて端数補正を加算。
@@ -481,15 +540,13 @@ export async function rejectExpense(
 
 // ── 支払通知書生成 ────────────────────────────────────────
 
-/** インボイス制度経過措置控除率 */
-function calcDeductionRate(invoiceType: string, yearMonth: string): number {
-  if (invoiceType === '適格') return 0
-  const [y, m] = yearMonth.split('-').map(Number)
-  const ym = y * 100 + m
-  if (ym >= 202310 && ym <= 202609) return 0.2
-  if (ym >= 202610 && ym <= 202909) return 0.5
-  return 0
-}
+// ⚠️ 旧 calcDeductionRate はここにあったが 2026-08-02 に廃止した。
+//    ①令和8年度改正で新設された 70%控除（差し引き 3%）の区分を持っていなかった
+//    ②2029年10月以降に 0 を返していた（経過措置が終わって全額控除不可になる時期に
+//      差し引きをやめるという、向きが逆の誤り）
+//    ③基準額が税抜だった（実物の支払明細書は税込基準）
+//    ④率を対象月で決めていた（正しくは稼働日ごと。消基通 11-3-1）
+//    率の正本は utils/transitional-deduction.ts。ここに率表を再び書かないこと。
 
 export type PaymentNoticeStatus = {
   contractorId:   string
@@ -551,9 +608,9 @@ export async function generatePaymentNotice(
   const contractor = c as any
 
   // 締め日は委託先ごとに異なる（fetchPaymentByContractor と同じ closingRange ロジック）
-  const { from, to } = closingRange(yearMonth, String(contractor.closing_day ?? '月末'))
-  const fromStr    = from.toISOString().slice(0, 10)
-  const toStr      = to.toISOString().slice(0, 10)
+  // ⚠️ 従来 toISOString() を挟んでおり JST の開発機で 1 日ずれていた。共通モジュールは
+  //    はじめからローカル日付の 'YYYY-MM-DD' を返すため、そのまま使う。
+  const { from: fromStr, to: toStr } = closingRange(yearMonth, String(contractor.closing_day ?? '月末'))
 
   // project_payees ルール（この委託先の全案件設定）
   const { data: payeeRulesData, error: prErr } = await supabase
@@ -566,25 +623,26 @@ export async function generatePaymentNotice(
   const payeeRules = (payeeRulesData ?? []) as PayeeRule[]
   const payeeRuleMap = new Map(payeeRules.map(r => [r.project_id, r]))
 
-  // 自身の稼働記録（案件別に集計）
+  // 自身の稼働記録（案件別・経過措置の率別に集計）
+  // ⚠️ work_date を取るのは、経過措置の率が稼働日ごとに決まるため（消基通 11-3-1）。
+  //    締め期間が 2026年10月1日をまたぐと、1 枚の通知書に 2% 分と 3% 分が混在する。
   const { data: workData, error: wErr } = await supabase
     .from('work_records')
-    .select('project_id, piece_count, projects(price_rules(buying_price))')
+    .select('project_id, work_date, piece_count, projects(price_rules(buying_price))')
     .eq('contractor_id', contractorId)
     .eq('tenant_id', tenantId)
     .gte('work_date', fromStr)
     .lte('work_date', toStr)
   if (wErr) return { data: null, error: wErr.message }
 
-  // 案件別集計: { count, pieceCount, buyingPriceSum }
-  const projectAgg = new Map<string, { count: number; pieceCount: number; buyingPriceSum: number }>()
+  // 案件別・率別集計: projectId → rate → { count, pieceCount, buyingPriceSum, sampleDate }
+  const projectAgg = new Map<string, Map<number, WorkBucket>>()
   for (const w of (workData ?? []) as any[]) {
     const pid = w.project_id as string | null
     if (!pid) continue
     const buying = Number(w.projects?.price_rules?.[0]?.buying_price ?? 0)
     const pieces = Number(w.piece_count ?? 1)
-    const cur = projectAgg.get(pid) ?? { count: 0, pieceCount: 0, buyingPriceSum: 0 }
-    projectAgg.set(pid, { count: cur.count + 1, pieceCount: cur.pieceCount + pieces, buyingPriceSum: cur.buyingPriceSum + buying })
+    addToBucket(bucketsOf(projectAgg, pid), String(w.work_date), { count: 1, pieceCount: pieces, buyingPriceSum: buying })
   }
 
   // 再委託ケース: work_source_contractor_id が指定されている案件の稼働件数を別途取得
@@ -596,23 +654,22 @@ export async function generatePaymentNotice(
       sourceContractorProjects.set(rule.work_source_contractor_id, set)
     }
   }
-  // sourceContractorId → (projectId → { count, pieceCount })
-  const sourceWorkCounts = new Map<string, Map<string, { count: number; pieceCount: number }>>()
+  // sourceContractorId → (projectId → rate → WorkBucket)
+  const sourceWorkCounts = new Map<string, Map<string, Map<number, WorkBucket>>>()
   for (const [sourceId, projectIds] of sourceContractorProjects) {
     const { data: srcData } = await supabase
       .from('work_records')
-      .select('project_id, piece_count')
+      .select('project_id, work_date, piece_count')
       .eq('contractor_id', sourceId)
       .eq('tenant_id', tenantId)
       .gte('work_date', fromStr)
       .lte('work_date', toStr)
       .in('project_id', Array.from(projectIds))
-    const counts = new Map<string, { count: number; pieceCount: number }>()
+    const counts = new Map<string, Map<number, WorkBucket>>()
     for (const w of (srcData ?? []) as any[]) {
       const pid    = w.project_id as string
       const pieces = Number(w.piece_count ?? 1)
-      const cur    = counts.get(pid) ?? { count: 0, pieceCount: 0 }
-      counts.set(pid, { count: cur.count + 1, pieceCount: cur.pieceCount + pieces })
+      addToBucket(bucketsOf(counts, pid), String(w.work_date), { count: 1, pieceCount: pieces, buyingPriceSum: 0 })
     }
     sourceWorkCounts.set(sourceId, counts)
   }
@@ -624,38 +681,39 @@ export async function generatePaymentNotice(
   let laborTaxExcluded = 0
   let totalAdjustment  = 0
   const coveredProjects = new Set<string>()
+  // 経過措置の判定用: 率を代表する日付 → その率に属する税抜労務報酬
+  const netByDate = new Map<string, number>()
+  const addNet = (sampleDate: string, amount: number) => {
+    netByDate.set(sampleDate, (netByDate.get(sampleDate) ?? 0) + amount)
+  }
 
   for (const rule of payeeRules) {
     if (rule.unit_price === null) continue
     if (rule.payment_type !== 'per_unit' && rule.payment_type !== 'per_piece') continue
 
-    let workCount: number
-    if (rule.payment_type === 'per_piece') {
-      // 個数単価制: piece_count の合計を乗数とする
-      if (rule.work_source_contractor_id) {
-        workCount = sourceWorkCounts.get(rule.work_source_contractor_id)?.get(rule.project_id)?.pieceCount ?? 0
-      } else {
-        workCount = projectAgg.get(rule.project_id)?.pieceCount ?? 0
-      }
-    } else {
-      // per_unit: work_record件数を乗数とする
-      if (rule.work_source_contractor_id) {
-        workCount = sourceWorkCounts.get(rule.work_source_contractor_id)?.get(rule.project_id)?.count ?? 0
-      } else {
-        workCount = projectAgg.get(rule.project_id)?.count ?? 0
-      }
-    }
+    const buckets = rule.work_source_contractor_id
+      ? sourceWorkCounts.get(rule.work_source_contractor_id)?.get(rule.project_id)
+      : projectAgg.get(rule.project_id)
 
-    const { net, adjustment } = calcPayeeAmount(rule, workCount)
-    laborTaxExcluded += net
-    totalAdjustment  += adjustment
+    // ⚠️ 率ごとに calcPayeeAmount を呼ぶ。締め期間が率の境界をまたぐ月は呼び出しが
+    //    2 回になるため、端数処理の回数が増えて従来より最大 1 円ずれうる。
+    //    率が 1 つしかない通常月では従来と完全に同じ結果になる。
+    for (const bucket of (buckets?.values() ?? [])) {
+      const workCount = rule.payment_type === 'per_piece' ? bucket.pieceCount : bucket.count
+      const { net, adjustment } = calcPayeeAmount(rule, workCount)
+      laborTaxExcluded += net
+      totalAdjustment  += adjustment
+      addNet(bucket.sampleDate, net)
+    }
     coveredProjects.add(rule.project_id)
   }
 
   // payee ルール未設定案件: 旧来の buying_price 合算
-  for (const [pid, agg] of projectAgg) {
-    if (!coveredProjects.has(pid)) {
-      laborTaxExcluded += agg.buyingPriceSum
+  for (const [pid, buckets] of projectAgg) {
+    if (coveredProjects.has(pid)) continue
+    for (const bucket of buckets.values()) {
+      laborTaxExcluded += bucket.buyingPriceSum
+      addNet(bucket.sampleDate, bucket.buyingPriceSum)
     }
   }
 
@@ -680,8 +738,19 @@ export async function generatePaymentNotice(
   }
 
   // 経過措置控除（免税・未登録のみ）
-  const deductionRate = calcDeductionRate(contractor.invoice_registration_type, yearMonth)
-  const deduction     = Math.floor(laborTax * deductionRate)
+  // ⚠️ 2026-08-02 に 3 点修正: ①率は正本 utils/transitional-deduction.ts から取る
+  //    ②基準額を税抜(laborTax)から税込へ ③率は対象月でなく稼働日ごとに判定（消基通 11-3-1）
+  const isRegisteredContractor = contractor.invoice_registration_type === '適格'
+  const deductionResult = calcTransitionalDeduction(
+    buildTaxIncludedPurchases(netByDate, contractor.tax_category),
+    isRegisteredContractor,
+  )
+  const deduction = deductionResult.deduction
+  // 保存用の率（payment_notices.deduction_rate）。
+  // ⚠️ 率が混在する月は「単一の正しい％」が存在しない。差し引き額と辻褄が合うよう
+  //    実効率（差し引き額 ÷ 税込合計）を保存する。率が 1 つの通常月はその率と一致する。
+  const deductionBase = deductionResult.breakdown.reduce((s, b) => s + b.taxIncludedAmount, 0)
+  const deductionRate = deductionBase > 0 ? deduction / deductionBase : 0
 
   // invoice_registration_type 別に集計列へ振り分け
   const isRegistered = contractor.invoice_registration_type === '適格'
@@ -741,6 +810,18 @@ export async function generatePaymentNotice(
     total_deduction:        totalDeduction,
     adjustment_amount:      totalAdjustment,
     approval_status:        'pending',
+    // ⚠️ 2026-08-02 追加。この経路は内訳列と total_amount を一切書いておらず、
+    //    生成された支払通知書は DB 上 total_amount=0・内訳すべて 0 のままだった
+    //    （一覧画面は total_excluding_tax + total_tax - total_deduction + adjustment で
+    //     その場で計算し直しており、列の欠落が表面化していなかった）。
+    //    PDF は deduction_rate を印字し、年度累計は labor_*/expense_* を積むため、実値を保存する。
+    labor_tax_excluded:     laborTaxExcluded,
+    labor_tax:              laborTax,
+    deduction_rate:         deductionRate,
+    deduction:              deduction,
+    expense_tax_excluded:   expenseTaxExcluded,
+    expense_tax:            expenseTax,
+    total_amount:           totalAmount,
   }
 
   let noticeId: string

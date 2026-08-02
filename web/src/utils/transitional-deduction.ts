@@ -71,6 +71,68 @@ export function getCreditableRatio(transactionDate: Date): number {
   return ratio
 }
 
+/** 'YYYY-MM-DD' をローカル日付の Date にする（Date.parse の UTC 解釈を避ける） */
+function parseLocalDate(s: string): Date {
+  const [y, m, d] = s.split('-').map(Number)
+  return new Date(y, m - 1, d)
+}
+
+/** 経過措置の対象となる 1 件の課税仕入れ（税込） */
+export type TransitionalPurchase = {
+  /** 課税仕入れを行った日（'YYYY-MM-DD'）。稼働日・支出日であって、支払日ではない */
+  date: string
+  /** その課税仕入れの税込金額 */
+  taxIncludedAmount: number
+}
+
+export type TransitionalDeductionBreakdown = {
+  rate: number
+  taxIncludedAmount: number
+  deduction: number
+}
+
+/**
+ * 経過措置による差し引き額を、**課税仕入れを行った日ごとの率**で算出する。
+ *
+ * ⚠️ 率は「対象月」ではなく「課税仕入れを行った日」で決まる。
+ *    消費税法基本通達 11-3-1: 課税仕入れを行った日とは、資産の譲受け・借受けをした日
+ *    又は**役務の提供を受けた日**をいう。**支払日でも請求日でもない。**
+ *    運送役務なら実際に走った日（work_records.work_date）、立替金なら expense_date。
+ *
+ * ⚠️ 締め日ベースの期間は月をまたぐため、1 枚の支払通知書に複数の率が混在しうる。
+ *    最初に該当するのは 2026-09-21 〜 2026-10-20 の締め期間（20日締め）で、
+ *    9月分が 2%、10月分が 3% になる。月単位で 1 つの率を決めると必ず間違える。
+ *
+ * ⚠️ 端数処理は率のグループごとに 1 回。グループの税込小計を足した額は、
+ *    請求書本体の「税抜合計＋四捨五入した消費税額」と数円ずれうる。
+ *    **この関数の結果は差し引き額の算出にのみ使い、本体金額の計算に使わないこと。**
+ */
+export function calcTransitionalDeduction(
+  items: readonly TransitionalPurchase[],
+  isRegistered = false,
+): { deduction: number; breakdown: TransitionalDeductionBreakdown[] } {
+  if (isRegistered) return { deduction: 0, breakdown: [] }
+
+  const byRate = new Map<number, number>()
+  for (const item of items) {
+    const rate = getDeductionRate(parseLocalDate(item.date))
+    byRate.set(rate, (byRate.get(rate) ?? 0) + item.taxIncludedAmount)
+  }
+
+  const breakdown = [...byRate.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([rate, taxIncludedAmount]) => ({
+      rate,
+      taxIncludedAmount,
+      deduction: Math.round(taxIncludedAmount * rate),
+    }))
+
+  return {
+    deduction: breakdown.reduce((s, b) => s + b.deduction, 0),
+    breakdown,
+  }
+}
+
 /**
  * 取引日に適用される「支払額からの差し引き率」を返す。
  * 差し引き率 = 消費税率 × 控除できない割合。
