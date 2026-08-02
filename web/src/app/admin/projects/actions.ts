@@ -11,6 +11,7 @@ type ProjectInsert = Database['public']['Tables']['projects']['Insert']
 type ProjectUpdate = Database['public']['Tables']['projects']['Update']
 export type ClientRow     = Database['public']['Tables']['clients']['Row']
 export type ContractorRow = Database['public']['Tables']['contractors']['Row']
+type ClientDepartmentRow  = Database['public']['Tables']['client_departments']['Row']
 
 // projects + joined client.company_name + auto-status inputs
 export type ProjectWithRelations = ProjectRow & {
@@ -99,16 +100,32 @@ export async function updateProject(id: string, payload: ProjectUpdate): Promise
 
 // ── Master lookups ─────────────────────────────────────────
 
-export async function fetchClientOptions(): Promise<ActionResult<Pick<ClientRow, 'id' | 'company_name'>[]>> {
+export async function fetchClientOptions(): Promise<ActionResult<Pick<ClientRow, 'id' | 'company_name' | 'use_departments'>[]>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const tenantId = await getCurrentTenantId()
   const supabase = await createClient()
   const { data, error } = await supabase
     .from('clients')
-    .select('id, company_name')
+    .select('id, company_name, use_departments')
     .eq('tenant_id', tenantId)
     .order('company_name')
+  if (error) return { data: null, error: error.message }
+  return { data: data ?? [], error: null }
+}
+
+// テナント内の全部署を一括取得する。
+// ⚠️ 案件ごとに fetchClientDepartments(clientId) を呼ぶと N+1 になるため、
+//    案件一覧の読み込み時はこちらで一度だけ取得して id→name の Map を組む。
+export async function fetchAllClientDepartments(): Promise<ActionResult<Pick<ClientDepartmentRow, 'id' | 'client_id' | 'name'>[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from('client_departments')
+    .select('id, client_id, name')
+    .eq('tenant_id', tenantId)
   if (error) return { data: null, error: error.message }
   return { data: data ?? [], error: null }
 }

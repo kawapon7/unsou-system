@@ -5,6 +5,7 @@ import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import {
   fetchProjects,
   fetchClientOptions,
+  fetchAllClientDepartments,
   fetchContractorOptions,
   createProject,
   updateProject,
@@ -15,11 +16,14 @@ import {
   type ProjectPayee,
   type PayeeUpsertOpts,
 } from './actions'
+import { fetchClientDepartments } from '@/app/admin/partners/actions'
 import type { Database } from '@/types/supabase'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
 type ProjectInsert = Database['public']['Tables']['projects']['Insert']
+type ClientOption = Pick<ClientRow, 'id' | 'company_name' | 'use_departments'>
+type ClientDepartmentRow = Database['public']['Tables']['client_departments']['Row']
 
 // ── ステータス定義（3状態のみ。DBへの書き込みは cancelled 以外しない） ──
 
@@ -60,6 +64,7 @@ type ProjectForm = {
   cancelled:      boolean
   unit_type:      string
   driver_visible: boolean
+  department_id:  string
 }
 
 const defaultForm = (): ProjectForm => ({
@@ -72,6 +77,7 @@ const defaultForm = (): ProjectForm => ({
   cancelled:      false,
   unit_type:      'quantity',
   driver_visible: true,
+  department_id:  '',
 })
 
 // ── 共通 UI ───────────────────────────────────────────────────
@@ -154,10 +160,32 @@ function ProjectFormFields({
 }: {
   form: ProjectForm
   onChange: (f: ProjectForm) => void
-  clients: Pick<ClientRow, 'id' | 'company_name'>[]
+  clients: ClientOption[]
   contractors: Pick<ContractorRow, 'id' | 'name'>[]
 }) {
   const set = (k: keyof ProjectForm, v: string | boolean) => onChange({ ...form, [k]: v })
+
+  const [departments, setDepartments] = useState<ClientDepartmentRow[]>([])
+  const selectedClient = clients.find(c => c.id === form.client_id)
+  const selectedClientUsesDepartments = !!selectedClient?.use_departments
+
+  // ⚠️ 荷主が変わるたびに部署一覧を取り直す。part の CRUD は partners/actions.ts 側の
+  //    fetchClientDepartments を再利用する（読み取りのみ・重複実装しない）。
+  useEffect(() => {
+    // client_id が空のときは何もしない。前の荷主の部署一覧が残っても、
+    // 部署セレクト自体が selectedClientUsesDepartments=false で非表示になるため実害はない。
+    if (!form.client_id) return
+    let cancelled = false
+    fetchClientDepartments(form.client_id).then(res => {
+      if (!cancelled && res.data) setDepartments(res.data)
+    })
+    return () => { cancelled = true }
+  }, [form.client_id])
+
+  // 荷主を切り替えたら選択済み部署をリセットする（旧荷主の部署IDが残ると保存時に不整合になる）
+  function handleClientChange(newClientId: string) {
+    onChange({ ...form, client_id: newClientId, department_id: '' })
+  }
 
   return (
     <>
@@ -171,7 +199,7 @@ function ProjectFormFields({
         </Field>
         <div className="col-span-2">
           <Field label="荷主" required>
-            <select className={selectCls} value={form.client_id} onChange={e => set('client_id', e.target.value)} required>
+            <select className={selectCls} value={form.client_id} onChange={e => handleClientChange(e.target.value)} required>
               <option value="">-- 荷主を選択 --</option>
               {clients.map(c => (
                 <option key={c.id} value={c.id}>{c.company_name}</option>
@@ -179,6 +207,23 @@ function ProjectFormFields({
             </select>
           </Field>
         </div>
+        {selectedClientUsesDepartments && (
+          <div className="col-span-2">
+            <Field label="部署" required>
+              <select
+                className={selectCls}
+                value={form.department_id}
+                onChange={e => set('department_id', e.target.value)}
+                required
+              >
+                <option value="">選択してください</option>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        )}
         <div className="col-span-2">
           <Field label="担当委託先">
             <select className={selectCls} value={form.contractor_id} onChange={e => set('contractor_id', e.target.value)}>
@@ -624,8 +669,9 @@ export default function ProjectsPage() {
   const [rows, setRows]               = useState<ProjectWithRelations[]>([])
   const [loading, setLoading]         = useState(true)
   const [pageError, setPageError]     = useState<string | null>(null)
-  const [clients, setClients]         = useState<Pick<ClientRow, 'id' | 'company_name'>[]>([])
+  const [clients, setClients]         = useState<ClientOption[]>([])
   const [contractors, setContractors] = useState<Pick<ContractorRow, 'id' | 'name'>[]>([])
+  const [allDepartments, setAllDepartments] = useState<Pick<ClientDepartmentRow, 'id' | 'client_id' | 'name'>[]>([])
   const [modalOpen, setModalOpen]     = useState(false)
   const [editTarget, setEditTarget]   = useState<ProjectWithRelations | null>(null)
   const [form, setForm]               = useState<ProjectForm>(defaultForm())
@@ -644,17 +690,24 @@ export default function ProjectsPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const [projRes, clientRes, contractorRes] = await Promise.all([
+    const [projRes, clientRes, contractorRes, deptRes] = await Promise.all([
       fetchProjects(),
       fetchClientOptions(),
       fetchContractorOptions(),
+      fetchAllClientDepartments(),
     ])
     if (projRes.error) setPageError(projRes.error)
     else setRows(projRes.data ?? [])
     if (clientRes.data) setClients(clientRes.data)
     if (contractorRes.data) setContractors(contractorRes.data)
+    if (deptRes.data) setAllDepartments(deptRes.data)
     setLoading(false)
   }, [])
+
+  // 荷主ID→use_departments、部署ID→部署名。一覧描画のたびに引き直さないよう Map 化しておく
+  const clientUsesDepartmentsMap = new Map(clients.map(c => [c.id, c.use_departments]))
+  const clientUsesDepartments = (clientId: string) => clientUsesDepartmentsMap.get(clientId) ?? false
+  const departmentNameMap = new Map(allDepartments.map(d => [d.id, d.name]))
 
   useEffect(() => { load() }, [load])
 
@@ -678,6 +731,7 @@ export default function ProjectsPage() {
       cancelled:      row.status === 'cancelled',
       unit_type:      row.unit_type,
       driver_visible: (row as any).driver_visible ?? true,
+      department_id:  row.department_id ?? '',
     })
     setFormError(null)
     setIsDirty(false)
@@ -693,6 +747,9 @@ export default function ProjectsPage() {
       if (!form.project_code.trim()) { setFormError('案件コードを入力してください'); setSaving(false); return }
       if (!form.project_name.trim()) { setFormError('案件名を入力してください'); setSaving(false); return }
       if (!form.client_id) { setFormError('荷主を選択してください'); setSaving(false); return }
+      if (clientUsesDepartments(form.client_id) && !form.department_id) {
+        setFormError('部署を選択してください'); setSaving(false); return
+      }
 
       const payload: ProjectInsert = {
         project_code:   form.project_code,
@@ -704,6 +761,7 @@ export default function ProjectsPage() {
         status:         form.cancelled ? 'cancelled' : 'accepted',
         unit_type:      form.unit_type,
         driver_visible: form.driver_visible,
+        department_id:  form.department_id || null,
       } as any
 
       const result = editTarget
@@ -793,6 +851,7 @@ export default function ProjectsPage() {
                   <th className="px-4 py-3 text-left font-medium">案件名</th>
                   <th className="px-4 py-3 text-left font-medium">ステータス</th>
                   <th className="px-4 py-3 text-left font-medium">荷主</th>
+                  <th className="px-4 py-3 text-left font-medium">部署</th>
                   <th className="px-4 py-3 text-right font-medium">受託運賃</th>
                   <th className="px-4 py-3 text-center font-medium">D表示</th>
                   <th className="px-4 py-3"></th>
@@ -806,6 +865,13 @@ export default function ProjectsPage() {
                       <StatusBadge status={row.autoStatus} />
                     </td>
                     <td className="px-4 py-3 text-zinc-600">{row.client_name ?? '—'}</td>
+                    <td className="px-4 py-3 text-zinc-600">
+                      {!clientUsesDepartments(row.client_id)
+                        ? '—'
+                        : row.department_id
+                          ? (departmentNameMap.get(row.department_id) ?? '—')
+                          : <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800">未割当</span>}
+                    </td>
                     <td className="px-4 py-3 text-right text-zinc-900 font-medium">
                       ¥{row.selling_price?.toLocaleString() ?? '0'}
                     </td>

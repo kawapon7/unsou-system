@@ -43,24 +43,33 @@ export type Database = {
         Row: {
           action_by: string
           action_type: string
+          confirmation_method: string | null
+          confirmed_party: string | null
           created_at: string
           id: string
+          note: string | null
           payment_notice_id: string
           unlock_reason: string | null
         }
         Insert: {
           action_by: string
           action_type: string
+          confirmation_method?: string | null
+          confirmed_party?: string | null
           created_at?: string
           id?: string
+          note?: string | null
           payment_notice_id: string
           unlock_reason?: string | null
         }
         Update: {
           action_by?: string
           action_type?: string
+          confirmation_method?: string | null
+          confirmed_party?: string | null
           created_at?: string
           id?: string
+          note?: string | null
           payment_notice_id?: string
           unlock_reason?: string | null
         }
@@ -252,6 +261,7 @@ export type Database = {
           bank_name: string | null
           created_at: string
           email: string | null
+          fiscal_year_end_month: number | null
           id: string
           invoice_reg_number: string | null
           name: string
@@ -269,6 +279,7 @@ export type Database = {
           bank_name?: string | null
           created_at?: string
           email?: string | null
+          fiscal_year_end_month?: number | null
           id?: string
           invoice_reg_number?: string | null
           name: string
@@ -286,6 +297,7 @@ export type Database = {
           bank_name?: string | null
           created_at?: string
           email?: string | null
+          fiscal_year_end_month?: number | null
           id?: string
           invoice_reg_number?: string | null
           name?: string
