@@ -12,6 +12,7 @@ import {
   type PriceRuleRecord,
   type RawWorkRecord,
 } from '@/utils/work-amount'
+import { closingRange, computeDueDate } from '@/utils/closing-period'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -49,11 +50,11 @@ export async function fetchInvoicePdfData(
   const tenantId = await getCurrentTenantId()
 
   const service = createServiceClient()
-  const [y, m]  = yearMonth.split('-').map(Number)
-  const monthEndDate = new Date(y, m, 0).toISOString().slice(0, 10)
 
   const [clientRes, invoiceRes, projectsRes] = await Promise.all([
-    service.from('clients').select('company_name, contact_name, tax_type, tenant_id').eq('id', clientId).single(),
+    service.from('clients')
+      .select('company_name, contact_name, tax_type, tenant_id, closing_day, payment_site')
+      .eq('id', clientId).single(),
     // billing-actions.ts は YYYY-MM-01 形式で保存するため DATE 型に合わせる
     service.from('invoices')
       .select('id, total_tax_excluded, consumption_tax, total_amount, due_date')
@@ -76,12 +77,16 @@ export async function fetchInvoicePdfData(
   // ⚠️ 2026-08-02 まで存在しない列 `quantity` / `tax_excluded_sales` を select しており、
   //    PostgREST が 42703 を返して請求書PDFが「データ取得エラー」で出せなかった。
   //    数量は piece_count、金額は price_rules から都度計算する。詳細は utils/work-amount.ts。
+  // ⚠️ 2026-08-02 まで暦月（1日〜末日）で集計しており、締め日ベースで集計する
+  //    請求書確定（finalizeInvoice）と明細が食い違っていた。締め日ベースに統一。
+  const { from, to } = closingRange(yearMonth, client.closing_day)
+
   const { data: workRows, error: wrErr } = await service
     .from('work_records')
     .select(`${WORK_RECORD_AMOUNT_COLUMNS}, work_date`)
     .in('project_id', projIds.length > 0 ? projIds : ['__never__'])
-    .gte('work_date', `${yearMonth}-01`)
-    .lte('work_date', monthEndDate)
+    .gte('work_date', from)
+    .lte('work_date', to)
     .order('work_date')
 
   if (wrErr) return { data: null, error: wrErr.message }
@@ -110,7 +115,8 @@ export async function fetchInvoicePdfData(
   const netTotal    = invoice?.total_tax_excluded ?? lines.reduce((s, l) => s + l.netAmount, 0)
   const taxAmount   = invoice?.consumption_tax    ?? Math.round(netTotal * (client.tax_type !== 'exempt' ? 0.1 : 0))
   const totalAmount = invoice?.total_amount       ?? (netTotal + taxAmount)
-  const dueDate     = invoice?.due_date           ?? monthEndDate
+  // 確定済み請求書に支払期日があればそれを使う。無ければ締め日＋支払サイトで算出する
+  const dueDate     = invoice?.due_date           ?? computeDueDate(yearMonth, client.closing_day, client.payment_site)
 
   // 請求書番号: INV-YYYYMM-{id先頭5文字}
   const suffix        = invoice?.id ? invoice.id.replace(/-/g, '').slice(0, 5).toUpperCase() : 'XXXXX'
@@ -129,7 +135,7 @@ export async function fetchInvoicePdfData(
       dueDate,
       clientName:   client.company_name,
       contactName:  client.contact_name,
-      invoiceMonth: `${y}年${m}月分`,
+      invoiceMonth: `${Number(yearMonth.slice(0, 4))}年${Number(yearMonth.slice(5, 7))}月分`,
       lines,
       netTotal,
       taxAmount,

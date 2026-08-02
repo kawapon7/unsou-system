@@ -12,6 +12,7 @@ import {
   type PriceRuleRecord,
   type RawWorkRecord,
 } from '@/utils/work-amount'
+import { closingRange, computeDueDate, isWithinRange, formatLocalDate } from '@/utils/closing-period'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 
@@ -26,22 +27,8 @@ function toDbMonth(yearMonth: string): string {
 // 他経路が「存在しない列」を参照したまま取り残されて 3 機能が停止していた）。
 
 // ── 締め日ユーティリティ ──────────────────────────────────
-
-function closingRange(yearMonth: string, closingDay: string): { from: Date; to: Date } {
-  const [y, m] = yearMonth.split('-').map(Number)
-  const isLastDay = closingDay === '月末' || closingDay === '末日' || closingDay === '99'
-  const day = isLastDay ? 0 : Number(closingDay)
-  const toDate   = isLastDay ? new Date(y, m, 0)      : new Date(y, m - 1, day)
-  const fromDate = isLastDay ? new Date(y, m - 1, 1)  : new Date(y, m - 2, day + 1)
-  return { from: fromDate, to: toDate }
-}
-
-function computeDueDate(yearMonth: string, closingDay: string, paymentSite: number): string {
-  const { to } = closingRange(yearMonth, closingDay)
-  const due = new Date(to)
-  due.setDate(due.getDate() + paymentSite)
-  return due.toISOString().slice(0, 10)
-}
+// closingRange / computeDueDate は utils/closing-period.ts へ集約した
+// （billing-actions.ts にも同じ実装が重複しており、片方だけ直しても直らなかった）。
 
 // ── 型定義 ─────────────────────────────────────────────────
 
@@ -122,15 +109,22 @@ export async function fetchSalesList(
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
 
+  // ⚠️ 集計は締め日ベース（2026-08-02 ボス判断）。締め日は荷主ごとに違うため、
+  //    ここでは起こりうる最も広い期間（前月1日〜当月末日）でまとめて引き、
+  //    荷主ごとの期間で後からふるいにかける。1荷主ずつ引くとN+1クエリになる。
+  //    日付締めの下限は前月2日（1日締めの場合）、上限は月末締めの当月末日。
+  //    余裕を見て前月1日を下限にする。
   const [y, m] = yearMonth.split('-').map(Number)
-  const periodStart = `${yearMonth}-01`
-  const periodEnd   = new Date(y, m, 0).toISOString().slice(0, 10)
+  const widestStart = formatLocalDate(new Date(y, m - 2, 1))
+  const widestEnd   = closingRange(yearMonth, '月末').to
 
   const [invoicesRes, clientsRes] = await Promise.all([
     supabase
       .from('invoices')
       .select('id, client_id, invoice_month, status, total_tax_excluded, consumption_tax, total_amount, due_date')
-      .eq('invoice_month', toDbMonth(yearMonth)),
+      .eq('invoice_month', toDbMonth(yearMonth))
+      // ⚠️ 2026-08-02 まで tenant 条件が欠落しており、他テナントの請求書が混ざりえた
+      .eq('tenant_id', tenantId),
     supabase
       .from('clients')
       .select('id, company_name, tax_type, closing_day, payment_site')
@@ -173,10 +167,10 @@ export async function fetchSalesList(
   // ※ tax_excluded_sales カラムは実DBに存在しないため、price_rules から都度計算
   const workRes = await supabase
     .from('work_records')
-    .select('project_id, piece_count, start_time, end_time, break_minutes')
+    .select('project_id, work_date, piece_count, start_time, end_time, break_minutes')
     .eq('tenant_id', tenantId)
-    .gte('work_date', periodStart)
-    .lte('work_date', periodEnd)
+    .gte('work_date', widestStart)
+    .lte('work_date', widestEnd)
 
   const extraRows: SalesListRow[] = []
 
@@ -200,11 +194,24 @@ export async function fetchSalesList(
         (rulesData.data ?? []).map(r => [r.project_id, r as PriceRuleRecord]),
       )
 
+      // 荷主ごとの締め日で対象期間を作り、その期間内の稼働だけを合算する
+      const rangeCache = new Map<string, { from: string; to: string }>()
+
       const clientNetMap = new Map<string, number>()
       for (const r of workRes.data ?? []) {
         if (!r.project_id) continue
         const clientId = projectClientMap.get(r.project_id)
         if (!clientId || invoicedClientIds.has(clientId)) continue
+        const client = clientMap.get(clientId)
+        if (!client) continue
+
+        let range = rangeCache.get(clientId)
+        if (!range) {
+          range = closingRange(yearMonth, client.closing_day)
+          rangeCache.set(clientId, range)
+        }
+        if (!isWithinRange(r.work_date, range)) continue
+
         const rule = priceRuleMap.get(r.project_id)
         const net  = calcWorkAmount(r as RawWorkRecord, rule, 'selling')
         clientNetMap.set(clientId, (clientNetMap.get(clientId) ?? 0) + net)
@@ -302,8 +309,8 @@ export async function computeInvoicePreview(
       .select('id, work_date, project_id, piece_count, start_time, end_time, break_minutes, note')
       .in('project_id', projectIds)
       .eq('tenant_id', tenantId)
-      .gte('work_date', from.toISOString().slice(0, 10))
-      .lte('work_date', to.toISOString().slice(0, 10))
+      .gte('work_date', from)
+      .lte('work_date', to)
       .order('work_date'),
     supabase
       .from('price_rules')

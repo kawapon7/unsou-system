@@ -15,6 +15,7 @@ import {
   type PriceRuleRecord,
   type RawWorkRecord,
 } from '@/utils/work-amount'
+import { closingRange, computeDueDate, parseLocalDate } from '@/utils/closing-period'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -36,33 +37,9 @@ function monthEndStr(yearMonth: string): string {
   return `${yearMonth}-${String(lastDay).padStart(2, '0')}`
 }
 
-function monthStart(yearMonth: string): Date {
-  return new Date(Date.UTC(...(yearMonth.split('-').map(Number) as [number, number]), 1) - 1 + 1)
-}
-
-function monthEnd(yearMonth: string): Date {
-  const [y, m] = yearMonth.split('-').map(Number)
-  return new Date(Date.UTC(y, m, 0, 23, 59, 59))
-}
-
-/** 締め日ベースの期間算出（billing/actions.ts の closingRange と同ロジック） */
-function closingRange(yearMonth: string, closingDay: string): { from: Date; to: Date } {
-  const [y, m] = yearMonth.split('-').map(Number)
-  const isLastDay = closingDay === '月末' || closingDay === '末日' || closingDay === '99'
-  const day = isLastDay ? 0 : Number(closingDay)
-
-  const toDate   = isLastDay ? new Date(y, m, 0)     : new Date(y, m - 1, day)
-  const fromDate = isLastDay ? new Date(y, m - 1, 1) : new Date(y, m - 2, day + 1)
-
-  return { from: fromDate, to: toDate }
-}
-
-/** 支払期日 = 請求月最終日 + paymentSite 日 */
-function calcDueDate(invoiceMonthEnd: Date, paymentSite: number): Date {
-  const due = new Date(invoiceMonthEnd)
-  due.setDate(due.getDate() + paymentSite)
-  return due
-}
+// ⚠️ 締め日ベースの期間算出（closingRange）と支払期日計算はこのファイルにも
+//    admin/sales/actions.ts にも同じものが重複実装されていた。
+//    2026-08-02 に utils/closing-period.ts へ集約した。上部の import を参照。
 
 // ── 監査ログ挿入（approval_history は UPDATE/DELETE 禁止テーブル） ─
 // approval_history のカラム: payment_notice_id / action_by / action_type / unlock_reason
@@ -128,7 +105,7 @@ async function finalizeInvoice(
   // invoices は approval_history に FK がないため、アンロック時も監査ログは記録しない
   if (lockErr) return { data: null, error: lockErr }
 
-  // 締め日ベースの対象期間
+  // 締め日ベースの対象期間（2026-08-02 ボス判断で全経路この基準に統一）
   const { from, to } = closingRange(yearMonth, client.closing_day)
 
   // 対象 work_records を取得
@@ -141,8 +118,8 @@ async function finalizeInvoice(
     .select(`${WORK_RECORD_AMOUNT_COLUMNS}, work_date, projects!inner( client_id )`)
     .eq('projects.client_id', clientId)
     .eq('tenant_id', tenantId)
-    .gte('work_date', from.toISOString().slice(0, 10))
-    .lte('work_date', to.toISOString().slice(0, 10))
+    .gte('work_date', from)
+    .lte('work_date', to)
 
   if (wrErr) return { data: null, error: wrErr.message }
 
@@ -166,8 +143,11 @@ async function finalizeInvoice(
     isTaxable,
   }))
 
-  const result = calculateInvoiceTax(items, client.invoice_registered, to)
-  const dueDate = calcDueDate(to, client.payment_site)
+  // ⚠️ 売上請求書に経過措置を適用するのは制度上おかしい（判定の主語が取引相手になっている）。
+  //    実請求書にも差し引き行は無い。ただし税務判断を伴うため顧問税理士の確認待ちとし、
+  //    ここでは既存の挙動を変えない。詳細は HANDOVER §5-4 の 2026-07-31「論点B」。
+  const result = calculateInvoiceTax(items, client.invoice_registered, parseLocalDate(to))
+  const dueDate = computeDueDate(yearMonth, client.closing_day, client.payment_site)
 
   const newTotalAmount = result.finalAmount
 
@@ -185,9 +165,13 @@ async function finalizeInvoice(
     subtotal:     result.subtotal,
     taxAmount:    result.taxAmount,
     totalAmount:  newTotalAmount,
-    status:       'draft',
-    dueDate:      dueDate.toISOString().slice(0, 10),
-    issuedAt:     null,
+    // ⚠️ 2026-08-02 ボス判断: 「確定・ロック」タブの確定は issued にする。
+    //    従来は draft を書いており、タブ名に反してロックがかからなかった
+    //    （invoice-lock.ts のロック対象は issued / paid のみ）。
+    //    これにより draft→issued の遷移経路がようやく存在するようになる。
+    status:       'issued',
+    dueDate:      dueDate,
+    issuedAt:     new Date().toISOString(),
     tenantId:     tenantId,
   })
 
