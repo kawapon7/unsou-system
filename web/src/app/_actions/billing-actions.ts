@@ -16,6 +16,11 @@ import {
   type RawWorkRecord,
 } from '@/utils/work-amount'
 import { closingRange, computeDueDate, parseLocalDate } from '@/utils/closing-period'
+import {
+  CONFIRMATION_METHODS,
+  CONFIRMED_PARTIES,
+  type ProxyApprovalParams,
+} from '@/utils/proxy-approval'
 // ⚠️ 支払通知書の金額算出は utils/payment-notice-calc.ts が正本。
 //    以前ここに admin/billing/actions.ts の劣化コピーがあり、同じ委託先・同じ月でも
 //    生成経路と確定経路で金額が食い違っていた（2026-08-02 に一本化）。
@@ -51,6 +56,10 @@ async function insertPaymentNoticeAuditLog(
     actionType:      string
     actionBy:        string
     unlockReason?:   string | null
+    /** 代理承認の確認記録（action_type='proxy_approval' のときだけ使う） */
+    confirmationMethod?: string | null
+    confirmedParty?:     string | null
+    note?:               string | null
   },
 ): Promise<void> {
   const { error } = await service
@@ -60,6 +69,9 @@ async function insertPaymentNoticeAuditLog(
       action_type:       params.actionType,
       action_by:         params.actionBy,
       unlock_reason:     params.unlockReason ?? null,
+      confirmation_method: params.confirmationMethod ?? null,
+      confirmed_party:     params.confirmedParty ?? null,
+      note:                params.note ?? null,
     })
 
   if (error) {
@@ -242,12 +254,25 @@ async function finalizePaymentNotice(
   )
   if (calcErr || !a) return { data: null, error: calcErr ?? '支払通知書の金額算出に失敗しました' }
 
-  // ⚠️ status / approval_status / locked は A（admin/billing/actions.ts の
-  //    generatePaymentNotice）と意味が食い違っている。A は生成時に status='unapproved' /
-  //    approval_status='pending' で起票し、承認は子分（driver）が行う設計。
-  //    一方ここは確定操作として即 'approved' を書いている。
-  //    どちらが正かは承認フローの業務判断を伴うため、今回の一本化では**変更していない**。
-  //    金額列だけを共通化した。整理は別タスク。
+  // ── 合意状態と確定状態を分けて書く（2026-08-02 ボス判断で設計書どおりに是正） ──
+  //
+  // 設計書 §2-3-9: 支払通知書の承認者は「子分（委託先）」、目的は「支払金額の合意証跡」。
+  // ⚠️ 以前ここは approval_status='approved' を書いており、**子分の承認なしに合意証跡が
+  //    作られていた**。親分側のコードから 'approved' を書いてはならない。
+  // ⚠️ 以前は locked:false も書いており、開発者アンロック後の上書きで
+  //    **一度かけたロックが解除される**副作用があった。
+  //
+  // この操作は「タイムリミット後の確定ロック」（設計書 §2-3-9 備考）であって承認ではない。
+  //   - 既に子分が承認済み（approved / approved_by_proxy）→ その合意状態を保ったまま確定
+  //   - まだ返事がない（pending）→ 'no_response'（連絡がつかないまま締めた）として記録
+  // 口頭確認して親分が代わりに承認する場合は、この関数ではなく
+  // proxyApprovePaymentNotice（確認記録の入力が必須）を使うこと。
+  const prevApproval = existingNotice?.approval_status
+  const nextApprovalStatus =
+    prevApproval === 'approved' || prevApproval === 'approved_by_proxy'
+      ? prevApproval
+      : 'no_response'
+
   const { error: upsertErr } = await (service as any)
     .from('payment_notices')
     .upsert(
@@ -255,7 +280,7 @@ async function finalizePaymentNotice(
         contractor_id:          contractorId,
         notice_month:           noticeMonthDate,
         target_month:           noticeMonthDate,
-        status:                 'approved',
+        status:                 'locked',
         subtotal_registered:    a.subtotalRegistered,
         tax_registered:         a.taxRegistered,
         subtotal_unregistered:  a.subtotalUnregistered,
@@ -275,8 +300,9 @@ async function finalizePaymentNotice(
         total_tax:              a.totalTax,
         total_deduction:        a.totalDeduction,
         total_amount:           a.totalAmount,
-        approval_status:        'approved',
-        locked:                 false,
+        approval_status:        nextApprovalStatus,
+        locked:                 true,
+        locked_at:              new Date().toISOString(),
       },
       { onConflict: 'contractor_id,notice_month' },
     )
@@ -350,4 +376,91 @@ export async function finalizeInvoiceAndNotice(
   } else {
     return finalizePaymentNotice(service, target.yearMonth, target.contractorId, opts)
   }
+}
+
+// ── 代理承認（口頭確認による親分の代理承認） ──────────────────
+//
+// 設計書 §2-3-9 は支払通知書の承認者を「子分（委託先）」と定めている。
+// ただし実運用では「電話で口頭確認し、親分が代わりに承認する」ケースが多い。
+// これは正当な業務なので、無かったことにせず**別の状態**として記録する。
+//
+// ⚠️ この操作は本人承認（approval_status='approved'）とは別物。
+//    approved を書けるのは子分の承認経路（driver-actions.ts）だけ。ここでは書かない。
+// ⚠️ 確認記録（方法・相手・メモ）は必須。無記名の代理承認を作らせないこと。
+//    記録が無い代理承認は、揉めたときに証跡として何の役にも立たない。
+//    記録先は approval_history（UPDATE/DELETE 禁止の不変ログ）。
+
+// ⚠️ 定数・型は utils/proxy-approval.ts に置く。'use server' ファイルは async 関数しか
+//    export できず、配列や型を混ぜると実行時に "found object" で画面が丸ごと落ちる。
+export async function proxyApprovePaymentNotice(
+  params: ProxyApprovalParams,
+): Promise<ActionResult> {
+  const supabase = await createClient()
+  const { data: { user }, error: authErr } = await supabase.auth.getUser()
+  const isDev = process.env.ALLOW_DEV_AUTH_BYPASS === 'true'
+  if ((authErr || !user) && !isDev) return { data: null, error: '認証が必要です' }
+  if (!isDev) {
+    const __owner = await requireOwner()
+    if (!__owner.ok) return { data: null, error: __owner.error }
+  }
+  const DEV_ADMIN_UUID = '33259c12-e46b-4ebd-a87c-cf50682729c4'
+  const userId = user?.id ?? DEV_ADMIN_UUID
+
+  // 入力検証: 3項目とも必須。空メモの代理承認は受け付けない
+  if (!CONFIRMATION_METHODS.includes(params.confirmationMethod)) {
+    return { data: null, error: '確認方法を選んでください' }
+  }
+  if (!CONFIRMED_PARTIES.includes(params.confirmedParty)) {
+    return { data: null, error: '確認した相手を選んでください' }
+  }
+  const note = params.note?.trim() ?? ''
+  if (!note) {
+    return { data: null, error: 'いつ・どのように確認したかのメモは必須です' }
+  }
+
+  const tenantId = await getCurrentTenantId()
+  const service  = createServiceClient()
+
+  // テナント越えの操作を防ぐため、委託先経由でテナントを確認する
+  // ⚠️ payment_notices に tenant_id 列は無い。contractors を必ず経由すること
+  const { data: notice, error: fetchErr } = await (service as any)
+    .from('payment_notices')
+    .select('id, contractor_id, approval_status, contractors!inner(tenant_id)')
+    .eq('id', params.noticeId)
+    .maybeSingle()
+
+  if (fetchErr || !notice) return { data: null, error: '対象の支払通知書が見つかりません' }
+  if (notice.contractors?.tenant_id !== tenantId) {
+    return { data: null, error: '対象の支払通知書が見つかりません' }
+  }
+
+  // 本人が既にアプリで承認済みなら、格下げになるので拒否する。
+  // （no_response からの格上げは認める＝あとから連絡がついたケース）
+  if (notice.approval_status === 'approved') {
+    return { data: null, error: 'すでに本人が承認済みです。代理承認は不要です' }
+  }
+
+  const { error: updateErr } = await (service as any)
+    .from('payment_notices')
+    .update({
+      approval_status: 'approved_by_proxy',
+      status:          'locked',
+      locked:          true,
+      locked_at:       new Date().toISOString(),
+    })
+    .eq('id', params.noticeId)
+
+  if (updateErr) return { data: null, error: updateErr.message }
+
+  // ⚠️ 証跡が本体。ここが失敗したら throw して気づけるようにする（握り潰さない）
+  await insertPaymentNoticeAuditLog(service, {
+    paymentNoticeId:    params.noticeId,
+    actionType:         'proxy_approval',
+    actionBy:           userId,
+    confirmationMethod: params.confirmationMethod,
+    confirmedParty:     params.confirmedParty,
+    note,
+  })
+
+  return { data: undefined, error: null }
 }

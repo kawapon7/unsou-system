@@ -1349,6 +1349,56 @@ web/
 
 ### 5-4. 直近の作業履歴（新しい順）
 
+#### 2026-08-02 その8（承認フローを設計書どおりに是正・「代理承認（口頭確認）」を正式仕様に）
+
+**設計書 §2-3-9 の仕様**: 支払通知書の承認者は **子分（委託先）**、目的は **支払金額の合意証跡**。
+§2-3 画面④ にも「子分が確認・承認するまでステータス『未承認』」と明記。
+
+**違反していた実装**: `finalizePaymentNotice`（親分の「確定ロック」ボタン）が
+`approval_status='approved'` を書いており、**子分の承認なしに合意証跡が作られていた**。
+さらに `locked:false` を書いていたため、**開発者アンロック後の上書きで一度かけたロックが解除される**副作用もあった。
+
+**ボス判断（2026-08-02）**: 実運用では「電話で口頭確認して親分が代わりに承認する」ケースが**多い**。
+これは正当な業務なので、無かったことにせず**別の状態として正式に持つ**。
+**⚠️ 代理承認である旨を支払通知書PDFには印字しない**（「報酬に説教がついてくるのは気分が悪い」）。記録は社内の承認履歴のみ。
+
+**設計の考え方**: 性質の違う2つの事実を、混ぜずに別の列で持つ。
+- **合意**（子分が「この金額でいい」と言ったか）→ `approval_status`。**子分以外が代行できない**
+- **確定**（もう編集できないか）→ `locked` / `locked_at`
+- `status` は上2つから導ける派生値。新規に意味を持たせない（整理は別タスク）
+
+| `approval_status` | 意味 | 画面表示 | 書ける経路 |
+|---|---|---|---|
+| `pending` | 子分の返事待ち | 🟡 承認待ち | 生成時 |
+| `approved` | 子分がアプリで承認（最も強い） | 🟢 本人承認 | **`driver-actions.ts` だけ** |
+| `approved_by_proxy` | 親分が口頭等で確認し代理承認 | 🔵 代理承認（口頭確認） | `proxyApprovePaymentNotice` |
+| `no_response` | 連絡がつかないまま親分が締めた | 🟠 未応答のまま確定 | `finalizePaymentNotice` |
+
+**実装**
+- マイグレーション `20260802105458_proxy_approval.sql`（本番適用済み）: `approval_status` に **CHECK制約を新設**（従来は制約が無く**タイポが素通り**していた）。`approval_history` に `confirmation_method` / `confirmed_party` / `note` の3列と CHECK 制約を追加
+- `proxyApprovePaymentNotice`（新設）: 確認方法・確認相手・メモの**3項目すべて必須**。記録は `approval_history`（UPDATE/DELETE 禁止の不変ログ）へ。⚠️ 記録の無い代理承認は証跡として無意味なので、UI・サーバー両方で必須にしてある
+- `finalizePaymentNotice`: `approval_status='approved'` を書くのをやめ、`locked=true` / `locked_at` を立てる。未応答なら `no_response` を記録。`locked:false` のロック解除バグも解消
+- `driver-actions.ts` の本人承認: `status==='locked'` で弾いていたのをやめ、**`approved` 以外からの格上げを常に許可**（代理承認・未応答確定のあとで本人が承認できるようにするため。本人承認のほうが強い証跡）
+- 画面: 4状態バッジ＋「代理承認（口頭確認）」のインライン入力（既存の「強制アンロック」と同じ作法）
+
+**⚠️ `'use server'` の落とし穴を踏んだ（記録）**
+定数 `CONFIRMATION_METHODS` 等を `'use server'` ファイルから export したところ、
+`A "use server" file can only export async functions, found object.` で画面が丸ごと「読み込み中...」のまま停止した。
+**`tsc --noEmit` も `vitest` も素通りし、実行時にしか出ない。** 定数・型は `utils/proxy-approval.ts`（'use server' なし）へ移して解決。
+再発防止に **`utils/use-server-exports.test.ts` を新設**（`'use server'` ファイルが async 関数・型以外を export したら落ちる全走査ガード）。
+
+**実測**: `tsc --noEmit` 0件 ／ `vitest run` **102 passed**（100→102）／ `eslint` は変更前後で同数
+**画面実測（4状態すべて）**:
+- 🟡→🔵: 渡辺健二で代理承認を実行 → バッジが「🔵 代理承認（口頭確認）」に変わりロック済みに。**DB照合で `approval_status='approved_by_proxy'` / `locked=true` / `locked_at` あり、`approval_history` に `action_type='proxy_approval'` / `confirmation_method='phone'` / `confirmed_party='self'` / メモ / 実行者UUID / 日時が記録された**
+- 🟡→🟠: 小林誠司で「確定ロック」→「🟠 未応答のまま確定」に
+- 3項目が揃うまで送信ボタンが `disabled` であることを確認
+- **支払通知書PDFに代理承認の文言が一切出ないことを確認**（ボス判断どおり）
+
+**⚠️ 残課題**
+1. `status` 列の整理（`unapproved`/`approved`/`locked` は他2列から導ける派生値。新規書き込みをやめて表示専用にし、最終的に廃止）
+2. 一覧（`fetchPaymentNoticeSummary`）のライブ計算がまだ独自実装で、期間が暦月固定（その7の残課題2と同じ）
+3. 検証で本番DBに残したデータ: 渡辺健二 2026-07 の代理承認1件（`approval_history` は不変ログのため**削除不可**）／小林誠司 2026-07 が `no_response` でロック済み
+
 #### 2026-08-02 その7（支払通知書の金額算出を一本化・単価の素値を足していた4経路を修正・実地検証）
 
 **ボス判断で「既存データはすべてダミーなので検証と修正を実行」。本番DBへの書き込みを伴う検証を実施した。**

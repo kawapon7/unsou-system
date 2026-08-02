@@ -137,7 +137,7 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
   // 所有権バリデーション（自分の notice だけ操作可能）
   const { data: notice, error: fetchErr } = await db
     .from('payment_notices')
-    .select('id, contractor_id, status')
+    .select('id, contractor_id, status, approval_status')
     .eq('id', noticeId)
     .eq('contractor_id', contractorId)
     .single()
@@ -145,7 +145,11 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
   if (fetchErr || !notice) {
     return { data: null, error: '対象の支払通知書が見つかりません' }
   }
-  if (notice.status === 'locked') {
+  // ⚠️ status='locked' で弾かない。親分の代理承認（approved_by_proxy）や
+  //    未応答での確定（no_response）でも locked になるため、それだと本人が
+  //    あとから承認できなくなる。本人承認は代理承認より強い証跡なので、
+  //    approved 以外からの格上げは常に認める（2026-08-02）。
+  if (notice.approval_status === 'approved') {
     return { data: null, error: 'すでに承認済みです' }
   }
 

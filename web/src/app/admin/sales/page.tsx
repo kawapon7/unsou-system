@@ -14,7 +14,10 @@ import {
   type InvoicePreview,
   type PaymentNoticeSummaryRow,
 } from './actions'
-import { finalizeInvoiceAndNotice } from '@/app/_actions/billing-actions'
+import {
+  finalizeInvoiceAndNotice,
+  proxyApprovePaymentNotice,
+} from '@/app/_actions/billing-actions'
 import { getDeductionRate } from '@/utils/transitional-deduction'
 import {
   fetchUnassignedSpots,
@@ -28,6 +31,12 @@ import { EmergencyImportTab }    from './EmergencyImportTab'
 import { ManualInvoiceTab }      from './ManualInvoiceTab'
 import { VoiceButton }           from '@/components/voice/VoiceButton'
 import { invoiceRegistrationLabel } from '@/utils/invoice-registration'
+import {
+  CONFIRMATION_METHODS,
+  CONFIRMED_PARTIES,
+  CONFIRMATION_METHOD_LABELS,
+  CONFIRMED_PARTY_LABELS,
+} from '@/utils/proxy-approval'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -614,11 +623,16 @@ function PaymentStatusTab({ yearMonth }: { yearMonth: string }) {
 
 // ── 確定・ロック管理タブ ──────────────────────────────────
 
+// 支払通知書の承認状態4種（DBのCHECK制約で保証済み）。設計書 §2-3-9 参照。
+// ⚠️ locked（確定ロック）とは別軸。ロック後も承認状態は approval_status のまま保持される。
 const NOTICE_STATUS_META: Record<string, { label: string; cls: string }> = {
-  pending:  { label: '未確定',   cls: 'bg-zinc-100 text-zinc-500' },
-  approved: { label: '承認済',   cls: 'bg-blue-50 text-blue-700' },
-  locked:   { label: 'ロック済', cls: 'bg-red-50 text-red-700' },
+  pending:            { label: '🟡 承認待ち',             cls: 'bg-amber-50 text-amber-700' },
+  approved:           { label: '🟢 本人承認',             cls: 'bg-green-50 text-green-700' },
+  approved_by_proxy:  { label: '🔵 代理承認（口頭確認）', cls: 'bg-blue-50 text-blue-700' },
+  no_response:        { label: '🟠 未応答のまま確定',     cls: 'bg-orange-50 text-orange-700' },
 }
+
+
 
 function Toast({ msg, onClose }: { msg: { type: 'ok' | 'err'; text: string }; onClose: () => void }) {
   return (
@@ -650,6 +664,13 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
   // per-row unlock UI state: key = clientId or contractorId
   const [unlockOpen,    setUnlockOpen]    = useState<Record<string, boolean>>({})
   const [unlockReasons, setUnlockReasons] = useState<Record<string, string>>({})
+  // per-row 代理承認 UI state: key = contractorId
+  const [proxyOpen, setProxyOpen] = useState<Record<string, boolean>>({})
+  const [proxyForm, setProxyForm] = useState<Record<string, {
+    confirmationMethod: (typeof CONFIRMATION_METHODS)[number] | ''
+    confirmedParty:     (typeof CONFIRMED_PARTIES)[number] | ''
+    note:                string
+  }>>({})
 
   const showToast = (type: 'ok' | 'err', text: string) => {
     setToast({ type, text })
@@ -711,6 +732,28 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
     } else {
       showToast('ok', '支払通知書を確定ロックしました。')
       setUnlockOpen(p => ({ ...p, [contractorId]: false }))
+      await load()
+    }
+    setProcessing(null)
+  }
+
+  // ── 支払通知書 代理承認（口頭確認等） ─────────────────────
+  const handleProxyApprove = async (contractorId: string, noticeId: string) => {
+    const form = proxyForm[contractorId]
+    // ⚠️ 3項目とも必須。サーバー側でも検証されるが、ここで先に弾いて往復を無駄にしない
+    if (!form?.confirmationMethod || !form?.confirmedParty || !form?.note.trim()) return
+    setProcessing(contractorId)
+    const res = await proxyApprovePaymentNotice({
+      noticeId,
+      confirmationMethod: form.confirmationMethod,
+      confirmedParty:     form.confirmedParty,
+      note:                form.note,
+    })
+    if (res.error) {
+      showToast('err', res.error)
+    } else {
+      showToast('ok', '代理承認を記録しました。')
+      setProxyOpen(p => ({ ...p, [contractorId]: false }))
       await load()
     }
     setProcessing(null)
@@ -852,11 +895,17 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
               )}
               {noticeRows.map(r => {
                 const isLocked = r.approvalStatus === 'approved' || r.locked
-                const statusKey = r.locked ? 'locked' : r.approvalStatus
-                const statusMeta = NOTICE_STATUS_META[statusKey] ?? NOTICE_STATUS_META.pending
+                // ⚠️ locked と approval_status は別軸。ロック後も承認状態（本人/代理/未応答）を出し分ける
+                const statusMeta = NOTICE_STATUS_META[r.approvalStatus] ?? NOTICE_STATUS_META.pending
                 const isOpen = unlockOpen[r.contractorId] ?? false
                 const reason = unlockReasons[r.contractorId] ?? ''
                 const busy   = processing === r.contractorId
+                // 代理承認は本人承認済み以外なら常に出す（no_response からの格上げも想定内）。
+                // notice がまだ存在しない行（noticeId null）は承認対象が無いので出さない
+                const proxyIsOpen = proxyOpen[r.contractorId] ?? false
+                const proxyPf = proxyForm[r.contractorId] ?? { confirmationMethod: '', confirmedParty: '', note: '' }
+                const proxyValid = !!proxyPf.confirmationMethod && !!proxyPf.confirmedParty && !!proxyPf.note.trim()
+                const canProxyApprove = !!r.noticeId && r.approvalStatus !== 'approved'
 
                 return (
                   <tr key={r.contractorId} className="hover:bg-zinc-50">
@@ -889,6 +938,63 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
                       >
                         📄 プレビュー・出力
                       </button>
+                      {canProxyApprove && (
+                        <div className="space-y-1.5">
+                          <button
+                            onClick={() => setProxyOpen(p => ({ ...p, [r.contractorId]: !proxyIsOpen }))}
+                            className="block text-xs text-zinc-400 hover:text-zinc-700 underline"
+                          >
+                            {proxyIsOpen ? '▲ 閉じる' : '▼ 代理承認（口頭確認）'}
+                          </button>
+                          {proxyIsOpen && (
+                            <div className="space-y-1.5 mt-1">
+                              <select
+                                value={proxyPf.confirmationMethod}
+                                onChange={e => setProxyForm(p => ({
+                                  ...p,
+                                  [r.contractorId]: { ...proxyPf, confirmationMethod: e.target.value as (typeof CONFIRMATION_METHODS)[number] },
+                                }))}
+                                className="block rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs w-52 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+                              >
+                                <option value="">確認方法を選択</option>
+                                {CONFIRMATION_METHODS.map(m => (
+                                  <option key={m} value={m}>{CONFIRMATION_METHOD_LABELS[m]}</option>
+                                ))}
+                              </select>
+                              <select
+                                value={proxyPf.confirmedParty}
+                                onChange={e => setProxyForm(p => ({
+                                  ...p,
+                                  [r.contractorId]: { ...proxyPf, confirmedParty: e.target.value as (typeof CONFIRMED_PARTIES)[number] },
+                                }))}
+                                className="block rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs w-52 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+                              >
+                                <option value="">確認した相手を選択</option>
+                                {CONFIRMED_PARTIES.map(p => (
+                                  <option key={p} value={p}>{CONFIRMED_PARTY_LABELS[p]}</option>
+                                ))}
+                              </select>
+                              <input
+                                type="text"
+                                placeholder="8/2 15時 本人に架電、金額合意"
+                                value={proxyPf.note}
+                                onChange={e => setProxyForm(p => ({
+                                  ...p,
+                                  [r.contractorId]: { ...proxyPf, note: e.target.value },
+                                }))}
+                                className="block rounded-md border border-zinc-300 px-2.5 py-1.5 text-xs w-52 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+                              />
+                              <button
+                                onClick={() => handleProxyApprove(r.contractorId, r.noticeId as string)}
+                                disabled={!proxyValid || busy}
+                                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40 transition whitespace-nowrap"
+                              >
+                                {busy ? '処理中...' : '代理承認する'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {!isLocked ? (
                         <button
                           onClick={() => handleFinalizeNotice(r.contractorId)}
@@ -940,6 +1046,9 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
               ベタ書きすると画面だけ古い率を表示し続ける。正本から算出する。 */}
           ※ 経過措置控除: インボイス未登録業者への支払額から差し引く金額（現在フェーズ:{' '}
           {(getDeductionRate(new Date(`${yearMonth}-01T00:00:00`)) * 100).toFixed(0)}%）
+        </p>
+        <p className="mt-1 text-xs text-zinc-400">
+          ※ 代理承認は口頭確認等の記録を残したうえで親分が代わりに承認する操作です。確認記録は承認履歴に保存されます（支払通知書PDFには印字されません）。
         </p>
       </section>
 
