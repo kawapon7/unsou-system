@@ -58,21 +58,30 @@ export type InvoicePreviewLine = {
 }
 
 export type InvoicePreview = {
-  clientId:          string
-  companyName:       string
-  contactName:       string | null
-  email:             string | null
-  taxType:           string
-  invoiceMonth:      string
-  closingDay:        string
-  paymentSite:       number
-  dueDate:           string
-  lines:             InvoicePreviewLine[]
-  netTotal:          number
-  taxTotal:          number
-  grandTotal:        number
-  existingInvoiceId: string | null
-  invoiceStatus:     string | null
+  clientId:               string
+  companyName:            string
+  contactName:            string | null
+  email:                  string | null
+  taxType:                string
+  invoiceMonth:           string
+  closingDay:             string
+  paymentSite:            number
+  dueDate:                string
+  lines:                  InvoicePreviewLine[]
+  netTotal:               number
+  taxTotal:               number
+  grandTotal:             number
+  existingInvoiceId:      string | null
+  invoiceStatus:          string | null
+  unassignedProjectCount: number
+}
+
+export type ExistingInvoiceSummary = {
+  id:             string
+  departmentId:   string | null
+  departmentName: string | null
+  status:         string
+  totalAmount:    number
 }
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
@@ -258,6 +267,7 @@ export async function fetchSalesList(
 export async function computeInvoicePreview(
   clientId: string,
   yearMonth: string,
+  departmentId?: string | null,
 ): Promise<ActionResult<InvoicePreview>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
@@ -266,7 +276,7 @@ export async function computeInvoicePreview(
 
   const { data: client, error: clientErr } = await supabase
     .from('clients')
-    .select('id, company_name, contact_name, email, tax_type, closing_day, payment_site')
+    .select('id, company_name, contact_name, email, tax_type, closing_day, payment_site, use_departments')
     .eq('id', clientId)
     .eq('tenant_id', tenantId)
     .single()
@@ -275,21 +285,46 @@ export async function computeInvoicePreview(
     return { data: null, error: clientErr?.message ?? '荷主が見つかりません' }
   }
 
+  // 部署制ONなら departmentId は必須。未指定で全案件を集めると、
+  // 部署をまたいだ請求書ができて取引先に誤った金額を提示することになる
+  if (client.use_departments && !departmentId) {
+    return { data: null, error: '部署を選択してください' }
+  }
+
   const { from, to } = closingRange(yearMonth, client.closing_day)
   const dueDate = computeDueDate(yearMonth, client.closing_day, client.payment_site)
 
-  const { data: projects, error: projErr } = await supabase
+  let projectQuery = supabase
     .from('projects')
     .select('id, project_name, project_code')
     .eq('client_id', clientId)
     .eq('tenant_id', tenantId)
+
+  // ⚠️ use_departments = false の場合は絞り込みを一切足さない（回帰防止・従来どおり全案件が対象）
+  if (client.use_departments) {
+    projectQuery = projectQuery.eq('department_id', departmentId!)
+  }
+
+  const { data: projects, error: projErr } = await projectQuery
 
   if (projErr) return { data: null, error: projErr.message }
 
   const projectIds  = (projects ?? []).map(p => p.id)
   const projectMap  = new Map((projects ?? []).map(p => [p.id, p]))
 
-  const base: Omit<InvoicePreview, 'lines' | 'netTotal' | 'taxTotal' | 'grandTotal' | 'existingInvoiceId' | 'invoiceStatus'> = {
+  // 未割当案件数（部署制の荷主だけ数える。生成をブロックするためではなく警告表示用）
+  let unassignedProjectCount = 0
+  if (client.use_departments) {
+    const { count } = await supabase
+      .from('projects')
+      .select('id', { count: 'exact', head: true })
+      .eq('client_id', clientId)
+      .eq('tenant_id', tenantId)
+      .is('department_id', null)
+    unassignedProjectCount = count ?? 0
+  }
+
+  const base: Omit<InvoicePreview, 'lines' | 'netTotal' | 'taxTotal' | 'grandTotal' | 'existingInvoiceId' | 'invoiceStatus' | 'unassignedProjectCount'> = {
     clientId,
     companyName:  client.company_name,
     contactName:  client.contact_name,
@@ -303,10 +338,12 @@ export async function computeInvoicePreview(
 
   if (projectIds.length === 0) {
     return {
-      data: { ...base, lines: [], netTotal: 0, taxTotal: 0, grandTotal: 0, existingInvoiceId: null, invoiceStatus: null },
+      data: { ...base, lines: [], netTotal: 0, taxTotal: 0, grandTotal: 0, existingInvoiceId: null, invoiceStatus: null, unassignedProjectCount },
       error: null,
     }
   }
+
+  const normalizedDepartmentId = client.use_departments ? (departmentId ?? null) : null
 
   const [recordsRes, rulesRes, existingRes] = await Promise.all([
     supabase
@@ -321,12 +358,17 @@ export async function computeInvoicePreview(
       .from('price_rules')
       .select('project_id, calculation_type, selling_price, buying_price, margin_fixed')
       .in('project_id', projectIds),
-    supabase
-      .from('invoices')
-      .select('id, status')
-      .eq('client_id', clientId)
-      .eq('invoice_month', toDbMonth(yearMonth))
-      .maybeSingle(),
+    (() => {
+      let q = supabase
+        .from('invoices')
+        .select('id, status')
+        .eq('client_id', clientId)
+        .eq('invoice_month', toDbMonth(yearMonth))
+        .eq('tenant_id', tenantId)
+      // ⚠️ .eq('department_id', null) は PostgREST では動かない。必ず .is() を使う
+      q = normalizedDepartmentId ? q.eq('department_id', normalizedDepartmentId) : q.is('department_id', null)
+      return q.maybeSingle()
+    })(),
   ])
 
   if (recordsRes.error) return { data: null, error: recordsRes.error.message }
@@ -368,6 +410,7 @@ export async function computeInvoicePreview(
       grandTotal,
       existingInvoiceId: existingRes.data?.id ?? null,
       invoiceStatus:     existingRes.data?.status ?? null,
+      unassignedProjectCount,
     },
     error: null,
   }
@@ -378,6 +421,7 @@ export async function computeInvoicePreview(
 export async function upsertInvoice(
   clientId: string,
   yearMonth: string,
+  departmentId?: string | null,
 ): Promise<ActionResult<{ id: string }>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
@@ -385,6 +429,7 @@ export async function upsertInvoice(
   // ⚠️ 従来この経路は tenant_id を渡さず DEFAULT 'local-dev' に依存していた。
   //    共通ライタは tenant_id を必須で書き、既存行の検索にもテナントを掛ける。
   const tenantId = await getCurrentTenantId()
+  const normalizedDepartmentId = departmentId ?? null
 
   // ⚠️ 確定済み（issued/paid）の上書き防止。共通ライタはロックを守らないため、書く前にここで止める。
   //    2026-07-31、この判定が無かったため「請求書プレビュー」タブの再確定が
@@ -392,7 +437,7 @@ export async function upsertInvoice(
   //    解除は「確定・ロック」タブの強制アンロック経由のみ。
   const existing = await fetchExistingInvoiceStatus(supabase, {
     clientId,
-    departmentId: null,          // Task 11 で部署対応を入れる
+    departmentId: normalizedDepartmentId,
     yearMonth,
     tenantId,
   })
@@ -401,7 +446,7 @@ export async function upsertInvoice(
   const lockErr = invoiceLockError(existing.data)
   if (lockErr) return { data: null, error: lockErr }
 
-  const previewRes = await computeInvoicePreview(clientId, yearMonth)
+  const previewRes = await computeInvoicePreview(clientId, yearMonth, normalizedDepartmentId)
   if (previewRes.error || !previewRes.data) {
     return { data: null, error: previewRes.error ?? 'プレビュー計算失敗' }
   }
@@ -411,7 +456,7 @@ export async function upsertInvoice(
   //    ここで個別に insert / update を書き直すと、3回続いた 23502 の再発源が復活する。
   const { id, error } = await writeInvoice(supabase, {
     clientId:     clientId,
-    departmentId: null,          // Task 11 で部署対応を入れる
+    departmentId: normalizedDepartmentId,
     yearMonth:    yearMonth,
     subtotal:     preview.netTotal,
     taxAmount:    preview.taxTotal,
@@ -424,6 +469,38 @@ export async function upsertInvoice(
 
   if (error || !id) return { data: null, error: error ?? '請求書の保存に失敗しました' }
   return { data: { id }, error: null }
+}
+
+// ── 既存請求書一覧（同一荷主・同一月）────────────────────────
+// 生成前に表示し、二重請求（既に発行済みの請求書があるのに気づかず再生成）を防ぐ
+
+export async function fetchExistingInvoices(
+  clientId: string,
+  yearMonth: string,
+): Promise<ActionResult<ExistingInvoiceSummary[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
+  const supabase = createServiceClient()
+
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('id, department_id, status, total_amount, client_departments ( name )')
+    .eq('client_id',     clientId)
+    .eq('invoice_month', toDbMonth(yearMonth))
+    .eq('tenant_id',     tenantId)
+  if (error) return { data: null, error: error.message }
+
+  return {
+    data: (data ?? []).map(r => ({
+      id:             r.id as string,
+      departmentId:   (r.department_id as string | null),
+      departmentName: ((r as Record<string, unknown>)['client_departments'] as { name: string } | null)?.name ?? null,
+      status:         r.status as string,
+      totalAmount:    r.total_amount as number,
+    })),
+    error: null,
+  }
 }
 
 // ── 入金ステータス更新 ────────────────────────────────────
@@ -450,7 +527,7 @@ export async function updateInvoiceStatus(
 // ── クライアント一覧 ──────────────────────────────────────
 
 export async function fetchClientOptions(): Promise<
-  ActionResult<Pick<ClientRow, 'id' | 'company_name'>[]>
+  ActionResult<Pick<ClientRow, 'id' | 'company_name' | 'use_departments'>[]>
 > {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
@@ -458,7 +535,7 @@ export async function fetchClientOptions(): Promise<
   const supabase = createServiceClient()
   const { data, error } = await supabase
     .from('clients')
-    .select('id, company_name')
+    .select('id, company_name, use_departments')
     .eq('tenant_id', tenantId)
     .order('company_name')
   if (error) return { data: null, error: error.message }

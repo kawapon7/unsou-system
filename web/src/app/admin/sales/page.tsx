@@ -10,10 +10,16 @@ import {
   upsertInvoice,
   updateInvoiceStatus,
   fetchPaymentNoticeSummary,
+  fetchExistingInvoices,
   type SalesListRow,
   type InvoicePreview,
   type PaymentNoticeSummaryRow,
+  type ExistingInvoiceSummary,
 } from './actions'
+import { fetchClientDepartments } from '@/app/admin/partners/actions'
+import type { Database } from '@/types/supabase'
+
+type ClientDepartmentRow = Database['public']['Tables']['client_departments']['Row']
 import {
   finalizeInvoiceAndNotice,
   proxyApprovePaymentNotice,
@@ -372,7 +378,7 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
   // 売上一覧で荷主名をクリックして飛んできた場合、その荷主が ?client= で渡ってくる
   const initialClientId = useSearchParams().get('client') ?? ''
 
-  const [clientOptions, setClientOptions] = useState<{ id: string; company_name: string }[]>([])
+  const [clientOptions, setClientOptions] = useState<{ id: string; company_name: string; use_departments: boolean }[]>([])
   const [selectedClientId, setSelectedClientId] = useState(initialClientId)
   const [targetMonth, setTargetMonth]           = useState(yearMonth)
   const [preview, setPreview]                   = useState<InvoicePreview | null>(null)
@@ -381,11 +387,41 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
   const [confirming, setConfirming]             = useState(false)
   const [message, setMessage]                   = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
+  const [departments, setDepartments]     = useState<ClientDepartmentRow[]>([])
+  const [departmentId, setDepartmentId]   = useState<string>('')
+  const [existingInvoices, setExistingInvoices] = useState<ExistingInvoiceSummary[]>([])
+
+  const selectedClient = clientOptions.find(c => c.id === selectedClientId) ?? null
+
   useEffect(() => {
     fetchClientOptions().then(res => {
       if (!res.error) setClientOptions(res.data ?? [])
     })
   }, [])
+
+  // 荷主を変えたら部署一覧を取り直す。選択のリセット自体は荷主セレクトの onChange 側で行う
+  // （effect 内で setState を同期的に呼ぶと cascading render になるため、
+  //  ここでは非同期コールバック内の setState のみに留める）。
+  useEffect(() => {
+    if (!selectedClient?.use_departments) return
+    let cancelled = false
+    fetchClientDepartments(selectedClient.id).then(res => {
+      if (cancelled) return
+      if (res.data) setDepartments(res.data)
+    })
+    return () => { cancelled = true }
+  }, [selectedClient?.id, selectedClient?.use_departments])
+
+  // 荷主・対象月が決まったら既存請求書の一覧を取り直す（二重請求防止のガード）
+  useEffect(() => {
+    if (!selectedClientId || !targetMonth) return
+    let cancelled = false
+    fetchExistingInvoices(selectedClientId, targetMonth).then(res => {
+      if (cancelled) return
+      if (!res.error) setExistingInvoices(res.data ?? [])
+    })
+    return () => { cancelled = true }
+  }, [selectedClientId, targetMonth])
 
   // 売上一覧から飛んできたときだけプレビューを自動実行する。
   // ⚠️ setState を effect 内で同期的に呼ぶと cascading render になる（react-hooks/set-state-in-effect）。
@@ -393,7 +429,7 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
   useEffect(() => {
     if (!initialClientId) return
     let cancelled = false
-    computeInvoicePreview(initialClientId, yearMonth).then(res => {
+    computeInvoicePreview(initialClientId, yearMonth, null).then(res => {
       if (cancelled) return
       if (res.error) setMessage({ type: 'err', text: res.error })
       else setPreview(res.data)
@@ -406,7 +442,11 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
     if (!selectedClientId) return
     setLoadingPreview(true)
     setMessage(null)
-    const res = await computeInvoicePreview(selectedClientId, targetMonth)
+    const res = await computeInvoicePreview(
+      selectedClientId,
+      targetMonth,
+      selectedClient?.use_departments ? departmentId : null,
+    )
     if (res.error) setMessage({ type: 'err', text: res.error })
     else setPreview(res.data)
     setLoadingPreview(false)
@@ -416,17 +456,30 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
     if (!selectedClientId) return
     setConfirming(true)
     setMessage(null)
-    const res = await upsertInvoice(selectedClientId, targetMonth)
+    const res = await upsertInvoice(
+      selectedClientId,
+      targetMonth,
+      selectedClient?.use_departments ? departmentId : null,
+    )
     if (res.error) {
       setMessage({ type: 'err', text: res.error })
     } else {
       setMessage({ type: 'ok', text: '請求書をDBに保存しました。' })
       // プレビューを再取得してステータスを反映
-      const refreshed = await computeInvoicePreview(selectedClientId, targetMonth)
+      const refreshed = await computeInvoicePreview(
+        selectedClientId,
+        targetMonth,
+        selectedClient?.use_departments ? departmentId : null,
+      )
       if (!refreshed.error) setPreview(refreshed.data)
+      const refreshedList = await fetchExistingInvoices(selectedClientId, targetMonth)
+      if (!refreshedList.error) setExistingInvoices(refreshedList.data ?? [])
     }
     setConfirming(false)
   }
+
+  const generateDisabled =
+    !selectedClientId || loadingPreview || (!!selectedClient?.use_departments && !departmentId)
 
   const handlePrint = () => {
     if (!selectedClientId || !targetMonth) return
@@ -446,7 +499,13 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
             <label className="block text-xs text-zinc-500 mb-1">荷主</label>
             <select
               value={selectedClientId}
-              onChange={e => { setSelectedClientId(e.target.value); setPreview(null) }}
+              onChange={e => {
+                setSelectedClientId(e.target.value)
+                setPreview(null)
+                setDepartmentId('')
+                setDepartments([])
+                setExistingInvoices([])
+              }}
               className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
             >
               <option value="">荷主を選択...</option>
@@ -455,6 +514,22 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
               ))}
             </select>
           </div>
+          {selectedClient?.use_departments && (
+            <div className="flex-1 min-w-40">
+              <label className="block text-xs text-zinc-500 mb-1">部署</label>
+              <select
+                value={departmentId}
+                onChange={e => { setDepartmentId(e.target.value); setPreview(null) }}
+                required
+                className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+              >
+                <option value="">部署を選択</option>
+                {departments.map(d => (
+                  <option key={d.id} value={d.id}>{d.name}</option>
+                ))}
+              </select>
+            </div>
+          )}
           <div>
             <label className="block text-xs text-zinc-500 mb-1">対象月</label>
             <input
@@ -466,13 +541,30 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
           </div>
           <button
             onClick={handlePreview}
-            disabled={!selectedClientId || loadingPreview}
+            disabled={generateDisabled}
             className="rounded-lg bg-zinc-900 px-5 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed transition"
           >
             {loadingPreview ? '計算中...' : 'プレビュー'}
           </button>
         </div>
       </div>
+
+      {/* 既存請求書一覧：荷主・対象月が決まった時点で生成前に見せる。
+          二重請求は取引先に直接迷惑がかかるため、部署機能と独立に価値のあるガード */}
+      {selectedClientId && existingInvoices.length > 0 && (
+        <div className="rounded-xl border border-zinc-300 bg-white p-4">
+          <div className="mb-2 text-sm font-medium text-zinc-700">
+            この荷主・この月には既に {existingInvoices.length} 件の請求書があります
+          </div>
+          <ul className="text-sm text-zinc-600 space-y-0.5">
+            {existingInvoices.map(inv => (
+              <li key={inv.id}>
+                {inv.departmentName ?? '（部署なし）'} — <StatusBadge status={inv.status} /> — {yen(inv.totalAmount)}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {message && (
         <p className={`rounded-lg px-4 py-3 text-sm ${
@@ -481,6 +573,14 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
             : 'bg-red-50 text-red-600'
         }`}>
           {message.text}
+        </p>
+      )}
+
+      {/* 未割当案件の警告。⚠️ 生成をブロックしない。止めると業務が回らないため警告のみに留める（設計書 §8-2） */}
+      {preview && preview.unassignedProjectCount > 0 && (
+        <p className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-800">
+          ⚠️ 部署が未割当の案件が {preview.unassignedProjectCount} 件あります。
+          この請求書には含まれません。案件管理画面で部署を割り当ててください。
         </p>
       )}
 
