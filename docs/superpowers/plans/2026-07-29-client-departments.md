@@ -801,7 +801,7 @@ git commit -m "fix(scan): 同一荷主・同一月の2枚目スキャンが失�
 
 ---
 
-### Task 7: 一意性制約の張り替え（本計画で最も慎重を要する）
+### Task 7: 一意性制約の張り替え（本計画で最も慎重を要する）✅ 完了 2026-08-03（ボスがSQL Editorで適用・検証済み、マイグレーション `20260803150000`）
 
 **⚠️ 前提条件: Task 4・5・6 がすべて完了し、`onConflict` を使う書き込みが 1 つも残っていないこと。**
 
@@ -1378,7 +1378,7 @@ git commit -m "feat(projects): 案件マスタに部署セレクトを追加"
 
 ---
 
-### Task 11: 請求書生成ロジックの部署対応
+### Task 11: 請求書生成ロジックの部署対応 ✅ 完了 2026-08-03（コミット `1174e3e`。実関数名は fetchInvoicePreview でなく computeInvoicePreview）
 
 **Files:**
 - Modify: `web/src/app/admin/sales/actions.ts`（`fetchInvoicePreview` 271-334行、`upsertInvoice` 382行〜）
@@ -1505,7 +1505,7 @@ git commit -m "feat(billing): 請求書生成を部署単位に対応、既存�
 
 ---
 
-### Task 12: 請求書生成画面の部署対応
+### Task 12: 請求書生成画面の部署対応 ✅ 完了 2026-08-03（コミット `9832ea5`。Step 5 の実地確認も本番URLで全項目合格）
 
 **Files:**
 - Modify: `web/src/app/admin/sales/page.tsx`（または請求書生成タブのコンポーネント）
