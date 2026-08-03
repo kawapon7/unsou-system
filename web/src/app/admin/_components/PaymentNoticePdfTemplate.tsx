@@ -55,7 +55,9 @@ function fmtDate(iso: string) {
 
 export default function PaymentNoticePdfTemplate({ data }: { data: PaymentNoticePdfTemplateData }) {
   const isUnregistered = !data.isInvoiceRegistered
-  const deductPct = Math.round(data.deductionRate * 100)
+  // ⚠️ 率は「税込額に対する差し引き率」（2026年9月まで2%／10月から3%）。
+  //    消費税額に対する割合（20%など）と混同しないこと。端数の出る実効率もあるため小数1桁まで見る
+  const deductPct = Number((data.deductionRate * 100).toFixed(1))
 
   return (
     <Document title={`支払通知書 ${data.contractorName}`}>
@@ -141,7 +143,7 @@ export default function PaymentNoticePdfTemplate({ data }: { data: PaymentNotice
           </View>
           {data.deduction > 0 && (
             <View style={s.deductRow}>
-              <Text>経過措置控除（{deductPct}%減額）</Text>
+              <Text>経過措置控除（税込額の{deductPct}%）</Text>
               <Text>−{yen(data.deduction)}</Text>
             </View>
           )}
@@ -162,7 +164,7 @@ export default function PaymentNoticePdfTemplate({ data }: { data: PaymentNotice
 
         <View style={s.footer}>
           {isUnregistered && data.deduction > 0 && (
-            <Text>※ インボイス未登録業者への支払いのため、経過措置（仕入税額控除{deductPct}%相当）を適用しています。</Text>
+            <Text>※ インボイス未登録業者への支払いのため、経過措置により、税込額の{deductPct}%を差し引いています。</Text>
           )}
           <Text>※ ご不明点は {data.company.phone} までお問い合わせください。</Text>
         </View>

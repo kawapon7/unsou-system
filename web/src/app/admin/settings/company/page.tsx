@@ -6,6 +6,8 @@ import { fetchCompanyForEdit, saveCompany, type CompanyFormValues } from './acti
 const EMPTY: CompanyFormValues = {
   name: '', invoice_reg_number: '', postal_code: '', address: '', phone: '', email: '',
   bank_name: '', bank_branch: '', account_type: '', account_number: '', account_holder: '',
+  fiscal_year_end_month: '',
+  payment_notice_response_days: '7',
 }
 
 function Field({
@@ -110,6 +112,53 @@ export default function CompanySettingsPage() {
           placeholder="T1234567890123"
           hint="「T」＋13桁。誤った番号を載せると、受け取った荷主が仕入税額控除を受けられなくなります。"
         />
+      </section>
+
+      <section className="mb-8 space-y-4">
+        <h2 className="border-b border-zinc-200 pb-2 text-sm font-semibold text-zinc-900">
+          決算
+        </h2>
+        <label className="block">
+          <span className="text-sm font-medium text-zinc-700">決算月</span>
+          <select
+            value={values.fiscal_year_end_month}
+            onChange={e => set('fiscal_year_end_month')(e.target.value)}
+            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm
+                       text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+          >
+            <option value="">未設定（暦年 1月〜12月で集計）</option>
+            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => (
+              <option key={m} value={String(m)}>{m}月</option>
+            ))}
+          </select>
+          <span className="mt-1 block text-xs text-zinc-500">
+            事業年度は決算月の翌月から始まります（3月決算なら4月〜翌年3月）。
+            委託先ごとの年度累計の集計期間に使います。未設定でも他の機能は止まりません。
+          </span>
+        </label>
+      </section>
+
+      <section className="mb-8 space-y-4">
+        <h2 className="border-b border-zinc-200 pb-2 text-sm font-semibold text-zinc-900">
+          支払通知書の承認
+        </h2>
+        <label className="block">
+          <span className="text-sm font-medium text-zinc-700">返事を待つ日数</span>
+          <input
+            type="number"
+            min={0}
+            max={90}
+            value={values.payment_notice_response_days}
+            onChange={e => set('payment_notice_response_days')(e.target.value)}
+            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm
+                       text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+          />
+          <span className="mt-1 block text-xs text-zinc-500">
+            支払通知書を作ってから、委託先本人の返事をこの日数だけ待ちます。
+            期間中は「未応答のまま確定」できません（口頭確認による「代理承認」はいつでも使えます）。
+            期間を過ぎると確定できるようになります。0 にすると待たずにいつでも確定できます。
+          </span>
+        </label>
       </section>
 
       <section className="mb-8 space-y-4">

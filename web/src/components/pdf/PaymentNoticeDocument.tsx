@@ -22,7 +22,9 @@ const EXPENSE_TYPE_LABEL: Record<string, string> = {
 
 export function PaymentNoticeDocument({ data }: { data: PaymentNoticePdfData }) {
   const isUnregistered = data.invoiceRegistration === 'unregistered'
-  const deductPct = Math.round(data.deductionRate * 100)
+  // ⚠️ 率は「税込額に対する差し引き率」（2026年9月まで2%／10月から3%）。
+  //    消費税額に対する割合（20%など）と混同しないこと。端数の出る実効率もあるため小数1桁まで見る
+  const deductPct = Number((data.deductionRate * 100).toFixed(1))
 
   return (
     <div className="a4-page w-[794px] min-h-[1122px] bg-white shadow-xl print:shadow-none p-12 font-sans text-zinc-900 text-sm">
@@ -142,7 +144,7 @@ export function PaymentNoticeDocument({ data }: { data: PaymentNoticePdfData }) 
             </div>
             {data.deduction > 0 && (
               <div className="flex justify-between text-amber-700">
-                <span>経過措置控除（{deductPct}%減額）</span>
+                <span>経過措置控除（税込額の{deductPct}%）</span>
                 <span className="tabular-nums">−{yen(data.deduction)}</span>
               </div>
             )}
@@ -158,7 +160,7 @@ export function PaymentNoticeDocument({ data }: { data: PaymentNoticePdfData }) 
       <div className="mt-8 pt-5 border-t border-zinc-200">
         {isUnregistered && data.deduction > 0 && (
           <p className="text-xs text-zinc-400 mb-1">
-            ※ インボイス未登録業者への支払いのため、経過措置（仕入税額控除{deductPct}%相当）を適用しています。
+            ※ インボイス未登録業者への支払いのため、経過措置により、税込額の{deductPct}%を差し引いています。
           </p>
         )}
         <p className="text-xs text-zinc-400">

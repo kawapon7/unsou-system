@@ -4,6 +4,8 @@ import { createClient }        from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireOwner }        from '@/utils/auth'
 import { getCurrentTenantId }  from '@/utils/tenant'
+import { writeInvoice }        from '@/utils/invoice-writer'
+import { invoiceLockError }    from '@/utils/invoice-lock'
 
 type ActionResult<T = void> =
   | { data: T;    error: null   }
@@ -77,35 +79,53 @@ export async function saveClientScanResult(
   const __owner = await requireOwner()
   if (!__owner.ok) return { data: null, error: __owner.error }
 
-  const invoiceMonth = `${params.invoiceDate.slice(0, 7)}-01`
   const service = createServiceClient()
 
-  // ⚠️ target_month / total_amount_ex_tax / total_tax は旧列だが NOT NULL・DEFAULT なし。
-  //    渡さないと 23502 not-null violation で insert が必ず失敗する（billing-actions.ts と同じ罠）。
-  //    値は新列（invoice_month / total_tax_excluded / consumption_tax）と必ず同じにすること。
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: record, error: insertErr } = await (service as any)
+  // ⚠️ 従来は素の insert だったため、同一荷主・同一月の 2 枚目をスキャンすると
+  //    23505 duplicate key で失敗していた（B-2）。
+  //    2026-07-28 に UNIQUE(client_id, invoice_month) を追加したことで顕在化した。
+  //    共通ライタの SELECT→UPDATE/INSERT へ移行して解消する。
+  // ⚠️ 挙動: 同一荷主・同一月の 2 枚目は 1 枚目を「上書き」する（draft 同士に限る）。
+  //    スキャンは 1 荷主 1 月 1 枚が前提であるという判断に基づく。
+  //    ただし issued / paid まで進んだ請求書を無警告で下書きに戻すのは事故なので、
+  //    その場合だけ止める（2026-07-31 の上書き事故と同種のガード）。
+  const yearMonth = params.invoiceDate.slice(0, 7)
+  const monthDate = `${yearMonth}-01`
+  const { data: existing, error: existErr } = await service
     .from('invoices')
-    .insert({
-      client_id:           params.clientId,
-      invoice_month:       invoiceMonth,
-      target_month:        invoiceMonth,
-      total_amount_ex_tax: params.subtotal,
-      total_tax:           params.taxAmount,
-      total_tax_excluded:  params.subtotal,
-      consumption_tax:     params.taxAmount,
-      total_amount:        params.subtotal + params.taxAmount,
-      status:              'draft',
-      tenant_id:           tenantId,
-    })
-    .select('id')
-    .single() as { data: Record<string, unknown> | null; error: { message: string } | null }
+    .select('status')
+    .eq('client_id', params.clientId)
+    .eq('invoice_month', monthDate)
+    .eq('tenant_id', tenantId)
+    .is('department_id', null)   // Task 11 で部署対応を入れる
+    .maybeSingle()
 
-  if (insertErr || !record) {
-    return { data: null, error: insertErr?.message ?? '保存に失敗しました' }
+  // ⚠️ fail-open 厳禁: エラーを握り潰すと issued/paid の請求書を無警告で下書きに戻してしまう
+  if (existErr) {
+    return { data: null, error: `既存請求書の確認に失敗しました: ${existErr.message}` }
   }
 
-  return { data: { id: record['id'] as string }, error: null }
+  const lockErr = invoiceLockError(existing)
+  if (lockErr) return { data: null, error: lockErr }
+
+  const { id, error: writeErr } = await writeInvoice(service, {
+    clientId:     params.clientId,
+    departmentId: null,          // Task 11 で部署対応を入れる
+    yearMonth,
+    subtotal:     params.subtotal,
+    taxAmount:    params.taxAmount,
+    totalAmount:  params.subtotal + params.taxAmount,
+    status:       'draft',
+    dueDate:      null,
+    issuedAt:     null,
+    tenantId:     tenantId,
+  })
+
+  if (writeErr || !id) {
+    return { data: null, error: writeErr ?? '保存に失敗しました' }
+  }
+
+  return { data: { id }, error: null }
 }
 
 // ── AI解析結果をwork_recordsへ確定保存 ───────────────────
@@ -139,8 +159,10 @@ export async function saveScanResult(
     .insert({
       contractor_id:        params.contractorId,
       work_date:            params.invoiceDate,
-      tax_excluded_payment: params.subtotal,
-      memo:                 `[AI SCAN] ${params.issuerName}`,
+      // ⚠️ `tax_excluded_payment` と `memo` は work_records に存在しない列で、
+      //    この INSERT は 42703 で必ず失敗していた（2026-08-02 修正）。
+      //    金額は metadata['scan::subtotal'] に入るため情報は失われない。備考列は `note`。
+      note:                 `[AI SCAN] ${params.issuerName}`,
       tenant_id:            tenantId,
       metadata: {
         'scan::issuer_name':   params.issuerName,

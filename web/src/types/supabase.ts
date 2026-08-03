@@ -43,24 +43,33 @@ export type Database = {
         Row: {
           action_by: string
           action_type: string
+          confirmation_method: string | null
+          confirmed_party: string | null
           created_at: string
           id: string
+          note: string | null
           payment_notice_id: string
           unlock_reason: string | null
         }
         Insert: {
           action_by: string
           action_type: string
+          confirmation_method?: string | null
+          confirmed_party?: string | null
           created_at?: string
           id?: string
+          note?: string | null
           payment_notice_id: string
           unlock_reason?: string | null
         }
         Update: {
           action_by?: string
           action_type?: string
+          confirmation_method?: string | null
+          confirmed_party?: string | null
           created_at?: string
           id?: string
+          note?: string | null
           payment_notice_id?: string
           unlock_reason?: string | null
         }
@@ -111,6 +120,50 @@ export type Database = {
         }
         Relationships: []
       }
+      client_departments: {
+        Row: {
+          client_id: string
+          contact_name: string | null
+          created_at: string
+          email: string | null
+          id: string
+          name: string
+          phone: string | null
+          sort_order: number
+          tenant_id: string
+        }
+        Insert: {
+          client_id: string
+          contact_name?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name: string
+          phone?: string | null
+          sort_order?: number
+          tenant_id?: string
+        }
+        Update: {
+          client_id?: string
+          contact_name?: string | null
+          created_at?: string
+          email?: string | null
+          id?: string
+          name?: string
+          phone?: string | null
+          sort_order?: number
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "client_departments_client_id_fkey"
+            columns: ["client_id"]
+            isOneToOne: false
+            referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       clients: {
         Row: {
           account_holder: string | null
@@ -138,6 +191,7 @@ export type Database = {
           tax_treatment: string | null
           tax_type: string
           tenant_id: string
+          use_departments: boolean
         }
         Insert: {
           account_holder?: string | null
@@ -165,6 +219,7 @@ export type Database = {
           tax_treatment?: string | null
           tax_type: string
           tenant_id?: string
+          use_departments?: boolean
         }
         Update: {
           account_holder?: string | null
@@ -192,6 +247,7 @@ export type Database = {
           tax_treatment?: string | null
           tax_type?: string
           tenant_id?: string
+          use_departments?: boolean
         }
         Relationships: []
       }
@@ -205,9 +261,11 @@ export type Database = {
           bank_name: string | null
           created_at: string
           email: string | null
+          fiscal_year_end_month: number | null
           id: string
           invoice_reg_number: string | null
           name: string
+          payment_notice_response_days: number
           phone: string | null
           postal_code: string | null
           tenant_id: string | null
@@ -222,9 +280,11 @@ export type Database = {
           bank_name?: string | null
           created_at?: string
           email?: string | null
+          fiscal_year_end_month?: number | null
           id?: string
           invoice_reg_number?: string | null
           name: string
+          payment_notice_response_days?: number
           phone?: string | null
           postal_code?: string | null
           tenant_id?: string | null
@@ -239,9 +299,11 @@ export type Database = {
           bank_name?: string | null
           created_at?: string
           email?: string | null
+          fiscal_year_end_month?: number | null
           id?: string
           invoice_reg_number?: string | null
           name?: string
+          payment_notice_response_days?: number
           phone?: string | null
           postal_code?: string | null
           tenant_id?: string | null
@@ -480,6 +542,7 @@ export type Database = {
           consumption_tax: number
           created_at: string
           deduction_unregistered: number
+          department_id: string | null
           due_date: string | null
           id: string
           invoice_month: string
@@ -507,6 +570,7 @@ export type Database = {
           consumption_tax?: number
           created_at?: string
           deduction_unregistered?: number
+          department_id?: string | null
           due_date?: string | null
           id?: string
           invoice_month?: string
@@ -534,6 +598,7 @@ export type Database = {
           consumption_tax?: number
           created_at?: string
           deduction_unregistered?: number
+          department_id?: string | null
           due_date?: string | null
           id?: string
           invoice_month?: string
@@ -562,6 +627,13 @@ export type Database = {
             columns: ["client_id"]
             isOneToOne: false
             referencedRelation: "clients"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "invoices_department_id_fkey"
+            columns: ["department_id"]
+            isOneToOne: false
+            referencedRelation: "client_departments"
             referencedColumns: ["id"]
           },
           {
@@ -890,6 +962,7 @@ export type Database = {
           contractor_id: string | null
           created_at: string
           default_margin_rate: number | null
+          department_id: string | null
           destination: string | null
           driver_visible: boolean
           id: string
@@ -911,6 +984,7 @@ export type Database = {
           contractor_id?: string | null
           created_at?: string
           default_margin_rate?: number | null
+          department_id?: string | null
           destination?: string | null
           driver_visible?: boolean
           id?: string
@@ -932,6 +1006,7 @@ export type Database = {
           contractor_id?: string | null
           created_at?: string
           default_margin_rate?: number | null
+          department_id?: string | null
           destination?: string | null
           driver_visible?: boolean
           id?: string
@@ -960,6 +1035,13 @@ export type Database = {
             columns: ["contractor_id"]
             isOneToOne: false
             referencedRelation: "contractors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "projects_department_id_fkey"
+            columns: ["department_id"]
+            isOneToOne: false
+            referencedRelation: "client_departments"
             referencedColumns: ["id"]
           },
         ]

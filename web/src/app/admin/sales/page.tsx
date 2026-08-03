@@ -14,7 +14,11 @@ import {
   type InvoicePreview,
   type PaymentNoticeSummaryRow,
 } from './actions'
-import { finalizeInvoiceAndNotice } from '@/app/_actions/billing-actions'
+import {
+  finalizeInvoiceAndNotice,
+  proxyApprovePaymentNotice,
+} from '@/app/_actions/billing-actions'
+import { getDeductionRate } from '@/utils/transitional-deduction'
 import {
   fetchUnassignedSpots,
   promoteSpotToOfficialProject,
@@ -26,6 +30,13 @@ import { ScanTab }               from './ScanTab'
 import { EmergencyImportTab }    from './EmergencyImportTab'
 import { ManualInvoiceTab }      from './ManualInvoiceTab'
 import { VoiceButton }           from '@/components/voice/VoiceButton'
+import { invoiceRegistrationLabel } from '@/utils/invoice-registration'
+import {
+  CONFIRMATION_METHODS,
+  CONFIRMED_PARTIES,
+  CONFIRMATION_METHOD_LABELS,
+  CONFIRMED_PARTY_LABELS,
+} from '@/utils/proxy-approval'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -101,6 +112,13 @@ function SalesListTab({ yearMonth }: { yearMonth: string }) {
   const [rows, setRows]         = useState<SalesListRow[]>([])
   const [loading, setLoading]   = useState(true)
   const [error, setError]       = useState<string | null>(null)
+  const router                  = useRouter()
+  const pathname                = usePathname()
+
+  // 荷主名クリックで請求書プレビューへ。タブは URL 駆動、サブセクションの既定が
+  // 'invoice'（請求書プレビュー）なので tab と client を渡すだけで目的の画面に着地する。
+  const openInvoicePreview = (clientId: string) =>
+    router.replace(`${pathname}?tab=generate&client=${encodeURIComponent(clientId)}`)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -188,7 +206,16 @@ function SalesListTab({ yearMonth }: { yearMonth: string }) {
             <tbody className="divide-y divide-zinc-100">
               {rows.map(r => (
                 <tr key={r.clientId} className="hover:bg-zinc-50">
-                  <Td bold>{r.companyName}</Td>
+                  <Td bold>
+                    <button
+                      type="button"
+                      onClick={() => openInvoicePreview(r.clientId)}
+                      className="text-left text-blue-700 underline decoration-blue-200 underline-offset-2 hover:decoration-blue-500 transition"
+                      title="請求書プレビューを開く"
+                    >
+                      {r.companyName}
+                    </button>
+                  </Td>
                   <Td>
                     <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-xs text-zinc-600">
                       {TAX_TYPE_LABEL[r.taxType] ?? r.taxType}
@@ -342,11 +369,15 @@ function InvoicePreviewCard({
 // ── 画面②：請求書生成 ────────────────────────────────────
 
 function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
+  // 売上一覧で荷主名をクリックして飛んできた場合、その荷主が ?client= で渡ってくる
+  const initialClientId = useSearchParams().get('client') ?? ''
+
   const [clientOptions, setClientOptions] = useState<{ id: string; company_name: string }[]>([])
-  const [selectedClientId, setSelectedClientId] = useState('')
+  const [selectedClientId, setSelectedClientId] = useState(initialClientId)
   const [targetMonth, setTargetMonth]           = useState(yearMonth)
   const [preview, setPreview]                   = useState<InvoicePreview | null>(null)
-  const [loadingPreview, setLoadingPreview]     = useState(false)
+  // 自動プレビューが走る場合は最初から計算中にしておく（effect 内で同期 setState しないため）
+  const [loadingPreview, setLoadingPreview]     = useState(Boolean(initialClientId))
   const [confirming, setConfirming]             = useState(false)
   const [message, setMessage]                   = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
 
@@ -355,6 +386,21 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
       if (!res.error) setClientOptions(res.data ?? [])
     })
   }, [])
+
+  // 売上一覧から飛んできたときだけプレビューを自動実行する。
+  // ⚠️ setState を effect 内で同期的に呼ぶと cascading render になる（react-hooks/set-state-in-effect）。
+  //    状態更新は必ず await 後だけに置き、loading の初期値は useState 側で立てておくこと。
+  useEffect(() => {
+    if (!initialClientId) return
+    let cancelled = false
+    computeInvoicePreview(initialClientId, yearMonth).then(res => {
+      if (cancelled) return
+      if (res.error) setMessage({ type: 'err', text: res.error })
+      else setPreview(res.data)
+      setLoadingPreview(false)
+    })
+    return () => { cancelled = true }
+  }, [initialClientId, yearMonth])
 
   const handlePreview = async () => {
     if (!selectedClientId) return
@@ -436,6 +482,15 @@ function InvoiceGenerateTab({ yearMonth }: { yearMonth: string }) {
         }`}>
           {message.text}
         </p>
+      )}
+
+      {/* 自動プレビュー中はボタンを押していないため、ボタンのラベル（計算中...）が
+          目に入らない。プレビュー領域自体に計算中を出さないと「移動したのに無反応」に見える。
+          リモートDBへの往復で 0.5〜1秒かかるので、この表示は省略できない。 */}
+      {loadingPreview && !preview && (
+        <div className="rounded-xl border border-zinc-200 bg-white py-16 text-center text-sm text-zinc-400">
+          請求内容を計算中...
+        </div>
       )}
 
       {preview && (
@@ -568,16 +623,16 @@ function PaymentStatusTab({ yearMonth }: { yearMonth: string }) {
 
 // ── 確定・ロック管理タブ ──────────────────────────────────
 
+// 支払通知書の承認状態4種（DBのCHECK制約で保証済み）。設計書 §2-3-9 参照。
+// ⚠️ locked（確定ロック）とは別軸。ロック後も承認状態は approval_status のまま保持される。
 const NOTICE_STATUS_META: Record<string, { label: string; cls: string }> = {
-  pending:  { label: '未確定',   cls: 'bg-zinc-100 text-zinc-500' },
-  approved: { label: '承認済',   cls: 'bg-blue-50 text-blue-700' },
-  locked:   { label: 'ロック済', cls: 'bg-red-50 text-red-700' },
+  pending:            { label: '🟡 承認待ち',             cls: 'bg-amber-50 text-amber-700' },
+  approved:           { label: '🟢 本人承認',             cls: 'bg-green-50 text-green-700' },
+  approved_by_proxy:  { label: '🔵 代理承認（口頭確認）', cls: 'bg-blue-50 text-blue-700' },
+  no_response:        { label: '🟠 未応答のまま確定',     cls: 'bg-orange-50 text-orange-700' },
 }
 
-const INVOICE_TYPE_LABEL: Record<string, string> = {
-  registered:   'インボイス登録済',
-  unregistered: '未登録（経過措置）',
-}
+
 
 function Toast({ msg, onClose }: { msg: { type: 'ok' | 'err'; text: string }; onClose: () => void }) {
   return (
@@ -601,6 +656,7 @@ type PdfTarget =
 function FinalizeTab({ yearMonth }: { yearMonth: string }) {
   const [invoiceRows,   setInvoiceRows]   = useState<SalesListRow[]>([])
   const [noticeRows,    setNoticeRows]    = useState<PaymentNoticeSummaryRow[]>([])
+  const [loadError,     setLoadError]     = useState<string | null>(null)
   const [loading,       setLoading]       = useState(true)
   const [processing,    setProcessing]    = useState<string | null>(null)
   const [toast,         setToast]         = useState<{ type: 'ok' | 'err'; text: string } | null>(null)
@@ -608,6 +664,13 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
   // per-row unlock UI state: key = clientId or contractorId
   const [unlockOpen,    setUnlockOpen]    = useState<Record<string, boolean>>({})
   const [unlockReasons, setUnlockReasons] = useState<Record<string, string>>({})
+  // per-row 代理承認 UI state: key = contractorId
+  const [proxyOpen, setProxyOpen] = useState<Record<string, boolean>>({})
+  const [proxyForm, setProxyForm] = useState<Record<string, {
+    confirmationMethod: (typeof CONFIRMATION_METHODS)[number] | ''
+    confirmedParty:     (typeof CONFIRMED_PARTIES)[number] | ''
+    note:                string
+  }>>({})
 
   const showToast = (type: 'ok' | 'err', text: string) => {
     setToast({ type, text })
@@ -620,6 +683,9 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
       fetchSalesList(yearMonth),
       fetchPaymentNoticeSummary(yearMonth),
     ])
+    // ⚠️ fail-open 厳禁: 取得エラーを握り潰すと、表が「対象データがありません」に見えてしまう。
+    //    実際に `contractors.tax_type`（存在しない列）の 42703 がこれで隠れていた（2026-08-02）
+    setLoadError(invRes.error ?? noticeRes.error ?? null)
     if (!invRes.error)    setInvoiceRows(invRes.data ?? [])
     if (!noticeRes.error) setNoticeRows(noticeRes.data ?? [])
     setLoading(false)
@@ -671,11 +737,44 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
     setProcessing(null)
   }
 
+  // ── 支払通知書 代理承認（口頭確認等） ─────────────────────
+  const handleProxyApprove = async (contractorId: string, noticeId: string) => {
+    const form = proxyForm[contractorId]
+    // ⚠️ 3項目とも必須。サーバー側でも検証されるが、ここで先に弾いて往復を無駄にしない
+    if (!form?.confirmationMethod || !form?.confirmedParty || !form?.note.trim()) return
+    setProcessing(contractorId)
+    const res = await proxyApprovePaymentNotice({
+      noticeId,
+      confirmationMethod: form.confirmationMethod,
+      confirmedParty:     form.confirmedParty,
+      note:                form.note,
+    })
+    if (res.error) {
+      showToast('err', res.error)
+    } else {
+      showToast('ok', '代理承認を記録しました。')
+      setProxyOpen(p => ({ ...p, [contractorId]: false }))
+      await load()
+    }
+    setProcessing(null)
+  }
+
   if (loading) return <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
 
   return (
     <div className="space-y-8">
       {toast && <Toast msg={toast} onClose={() => setToast(null)} />}
+
+      {/* 取得に失敗したら必ず表に出す。空表と区別がつかないと異常が正常に見える */}
+      {loadError && (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          <p className="font-semibold mb-1">データを取得できませんでした</p>
+          <p className="text-red-600">{loadError}</p>
+          <p className="mt-2 text-xs text-red-500">
+            下の表が空でも「対象が無い」とは限りません。復旧後に開き直してください。
+          </p>
+        </div>
+      )}
 
       {/* ── 請求書確定セクション ─────────────────────────── */}
       <section>
@@ -796,18 +895,24 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
               )}
               {noticeRows.map(r => {
                 const isLocked = r.approvalStatus === 'approved' || r.locked
-                const statusKey = r.locked ? 'locked' : r.approvalStatus
-                const statusMeta = NOTICE_STATUS_META[statusKey] ?? NOTICE_STATUS_META.pending
+                // ⚠️ locked と approval_status は別軸。ロック後も承認状態（本人/代理/未応答）を出し分ける
+                const statusMeta = NOTICE_STATUS_META[r.approvalStatus] ?? NOTICE_STATUS_META.pending
                 const isOpen = unlockOpen[r.contractorId] ?? false
                 const reason = unlockReasons[r.contractorId] ?? ''
                 const busy   = processing === r.contractorId
+                // 代理承認は本人承認済み以外なら常に出す（no_response からの格上げも想定内）。
+                // notice がまだ存在しない行（noticeId null）は承認対象が無いので出さない
+                const proxyIsOpen = proxyOpen[r.contractorId] ?? false
+                const proxyPf = proxyForm[r.contractorId] ?? { confirmationMethod: '', confirmedParty: '', note: '' }
+                const proxyValid = !!proxyPf.confirmationMethod && !!proxyPf.confirmedParty && !!proxyPf.note.trim()
+                const canProxyApprove = !!r.noticeId && r.approvalStatus !== 'approved'
 
                 return (
                   <tr key={r.contractorId} className="hover:bg-zinc-50">
                     <Td bold>{r.name}</Td>
                     <Td>
                       <span className="text-xs text-zinc-500">
-                        {INVOICE_TYPE_LABEL[r.invoiceType] ?? r.invoiceType}
+                        {invoiceRegistrationLabel(r.invoiceType)}
                       </span>
                     </Td>
                     <Td right>{yen(r.laborNet)}</Td>
@@ -833,6 +938,63 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
                       >
                         📄 プレビュー・出力
                       </button>
+                      {canProxyApprove && (
+                        <div className="space-y-1.5">
+                          <button
+                            onClick={() => setProxyOpen(p => ({ ...p, [r.contractorId]: !proxyIsOpen }))}
+                            className="block text-xs text-zinc-400 hover:text-zinc-700 underline"
+                          >
+                            {proxyIsOpen ? '▲ 閉じる' : '▼ 代理承認（口頭確認）'}
+                          </button>
+                          {proxyIsOpen && (
+                            <div className="space-y-1.5 mt-1">
+                              <select
+                                value={proxyPf.confirmationMethod}
+                                onChange={e => setProxyForm(p => ({
+                                  ...p,
+                                  [r.contractorId]: { ...proxyPf, confirmationMethod: e.target.value as (typeof CONFIRMATION_METHODS)[number] },
+                                }))}
+                                className="block rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs w-52 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+                              >
+                                <option value="">確認方法を選択</option>
+                                {CONFIRMATION_METHODS.map(m => (
+                                  <option key={m} value={m}>{CONFIRMATION_METHOD_LABELS[m]}</option>
+                                ))}
+                              </select>
+                              <select
+                                value={proxyPf.confirmedParty}
+                                onChange={e => setProxyForm(p => ({
+                                  ...p,
+                                  [r.contractorId]: { ...proxyPf, confirmedParty: e.target.value as (typeof CONFIRMED_PARTIES)[number] },
+                                }))}
+                                className="block rounded-md border border-zinc-300 bg-white px-2.5 py-1.5 text-xs w-52 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+                              >
+                                <option value="">確認した相手を選択</option>
+                                {CONFIRMED_PARTIES.map(p => (
+                                  <option key={p} value={p}>{CONFIRMED_PARTY_LABELS[p]}</option>
+                                ))}
+                              </select>
+                              <input
+                                type="text"
+                                placeholder="8/2 15時 本人に架電、金額合意"
+                                value={proxyPf.note}
+                                onChange={e => setProxyForm(p => ({
+                                  ...p,
+                                  [r.contractorId]: { ...proxyPf, note: e.target.value },
+                                }))}
+                                className="block rounded-md border border-zinc-300 px-2.5 py-1.5 text-xs w-52 outline-none focus:border-zinc-500 focus:ring-1 focus:ring-zinc-300"
+                              />
+                              <button
+                                onClick={() => handleProxyApprove(r.contractorId, r.noticeId as string)}
+                                disabled={!proxyValid || busy}
+                                className="rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-40 transition whitespace-nowrap"
+                              >
+                                {busy ? '処理中...' : '代理承認する'}
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                       {!isLocked ? (
                         <button
                           onClick={() => handleFinalizeNotice(r.contractorId)}
@@ -880,7 +1042,13 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
           </table>
         </div>
         <p className="mt-2 text-xs text-zinc-400">
-          ※ 経過措置控除: インボイス未登録業者への支払額から差し引く金額（現在フェーズ: 2%）
+          {/* ⚠️ 率をベタ書きしない。2026-10-01 に 2% → 3% へ切り替わるため、
+              ベタ書きすると画面だけ古い率を表示し続ける。正本から算出する。 */}
+          ※ 経過措置控除: インボイス未登録業者への支払額から差し引く金額（現在フェーズ:{' '}
+          {(getDeductionRate(new Date(`${yearMonth}-01T00:00:00`)) * 100).toFixed(0)}%）
+        </p>
+        <p className="mt-1 text-xs text-zinc-400">
+          ※ 代理承認は口頭確認等の記録を残したうえで親分が代わりに承認する操作です。確認記録は承認履歴に保存されます（支払通知書PDFには印字されません）。
         </p>
       </section>
 
@@ -930,7 +1098,7 @@ function SpotGuardrailTab() {
   // 荷主オプション
   const [clientOpts, setClientOpts] = useState<{ id: string; company_name: string }[]>([])
 
-  // インラインフォームの開閉：key = spotGenericId
+  // インラインフォームの開閉：key = SpotGroup.groupKey
   const [openForm, setOpenForm] = useState<Record<string, boolean>>({})
   const [forms, setForms] = useState<Record<string, PromoteForm>>({})
   const [promoting, setPromoting] = useState<Record<string, boolean>>({})
@@ -957,11 +1125,12 @@ function SpotGuardrailTab() {
     }
   }, [toast])
 
-  function toggleForm(id: string) {
+  function toggleForm(spot: SpotGroup) {
+    const id = spot.groupKey
     setOpenForm(prev => ({ ...prev, [id]: !prev[id] }))
     setForms(prev => ({
       ...prev,
-      [id]: prev[id] ?? { clientId: '', projectName: id, saleAmount: '', buyAmount: '', unitType: 'per_trip' },
+      [id]: prev[id] ?? { clientId: '', projectName: spot.jobName ?? '', saleAmount: '', buyAmount: '', unitType: 'per_trip' },
     }))
   }
 
@@ -970,21 +1139,21 @@ function SpotGuardrailTab() {
   }
 
   async function handlePromote(spot: SpotGroup) {
-    const form = forms[spot.spotGenericId]
+    const form = forms[spot.groupKey]
     if (!form?.clientId || !form.projectName || !form.saleAmount || !form.buyAmount) {
       setToast({ message: '荷主・案件名・売値・買値は必須です', type: 'error' })
       return
     }
-    setPromoting(prev => ({ ...prev, [spot.spotGenericId]: true }))
+    setPromoting(prev => ({ ...prev, [spot.groupKey]: true }))
     const res = await promoteSpotToOfficialProject({
-      spotGenericId: spot.spotGenericId,
+      recordIds:     spot.recordIds,
       clientId:      form.clientId,
       projectName:   form.projectName,
       saleAmount:    Number(form.saleAmount),
       buyAmount:     Number(form.buyAmount),
       unitType:      form.unitType,
     })
-    setPromoting(prev => ({ ...prev, [spot.spotGenericId]: false }))
+    setPromoting(prev => ({ ...prev, [spot.groupKey]: false }))
 
     if (res.error) {
       setToast({ message: res.error, type: 'error' })
@@ -993,7 +1162,7 @@ function SpotGuardrailTab() {
         message: `「${form.projectName}」として昇格完了（${res.data?.updatedCount ?? 0}件の記録を紐付け）`,
         type: 'success',
       })
-      setOpenForm(prev => ({ ...prev, [spot.spotGenericId]: false }))
+      setOpenForm(prev => ({ ...prev, [spot.groupKey]: false }))
       await load()
     }
   }
@@ -1007,12 +1176,18 @@ function SpotGuardrailTab() {
         </p>
       </div>
 
-      {error && (
-        <div className="mb-4 rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>
-      )}
-
+      {/* ⚠️ fail-open 厳禁: 取得に失敗したときは「ありません ✅」を絶対に出さない。
+          異常を正常に見せる壊れ方になるため、エラー時はここで打ち切る（2026-08-02 修正） */}
       {loading ? (
         <div className="py-20 text-center text-sm text-zinc-400">読み込み中...</div>
+      ) : error ? (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          <p className="font-semibold mb-1">スポット案件を確認できませんでした</p>
+          <p className="text-red-600">{error}</p>
+          <p className="mt-2 text-xs text-red-500">
+            未紐付けの案件が「無い」とは判断できません。復旧後にもう一度開いてください。
+          </p>
+        </div>
       ) : spots.length === 0 ? (
         <div className="py-20 text-center rounded-xl border border-dashed border-zinc-200 bg-white">
           <p className="text-zinc-400 text-sm">未紐付けのスポット案件はありません ✅</p>
@@ -1020,13 +1195,13 @@ function SpotGuardrailTab() {
       ) : (
         <div className="space-y-4">
           {spots.map(spot => {
-            const isOpen     = !!openForm[spot.spotGenericId]
-            const form       = forms[spot.spotGenericId] ?? { clientId: '', projectName: spot.spotGenericId, saleAmount: '', buyAmount: '', unitType: 'per_trip' }
-            const isPromoting = !!promoting[spot.spotGenericId]
+            const isOpen     = !!openForm[spot.groupKey]
+            const form       = forms[spot.groupKey] ?? { clientId: '', projectName: spot.jobName ?? '', saleAmount: '', buyAmount: '', unitType: 'per_trip' }
+            const isPromoting = !!promoting[spot.groupKey]
             const canSubmit  = form.clientId && form.projectName && form.saleAmount && form.buyAmount
 
             return (
-              <div key={spot.spotGenericId} className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
+              <div key={spot.groupKey} className="rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
                 {/* 概要行 */}
                 <div className="flex items-start justify-between gap-4 px-5 py-4">
                   <div className="min-w-0 flex-1">
@@ -1034,20 +1209,23 @@ function SpotGuardrailTab() {
                       <span className="inline-block rounded-full bg-amber-200 text-amber-800 text-xs font-semibold px-2 py-0.5">
                         未紐付け
                       </span>
-                      <code className="text-sm font-mono text-zinc-700 truncate">{spot.spotGenericId}</code>
+                      <span className="text-sm font-medium text-zinc-800 truncate">
+                        {spot.jobName ?? '（案件名の入力なし）'}
+                      </span>
                     </div>
                     <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
                       <span>{spot.recordCount}件の記録</span>
                       <span>{spot.earliestDate} 〜 {spot.latestDate}</span>
                       <span>担当: {spot.contractorNames.join('、') || '—'}</span>
                     </div>
-                    <div className="flex gap-4 mt-1.5 text-xs font-medium">
-                      <span className="text-zinc-600">売上合計 <span className="text-zinc-900">{yen(spot.totalSales)}</span></span>
-                      <span className="text-zinc-600">支払合計 <span className="text-zinc-900">{yen(spot.totalPayment)}</span></span>
+                    {/* 金額は出さない: 未紐付け＝単価（price_rules）が無く算出できない。
+                        ¥0 と表示すると「売上ゼロの案件」に見えるため文言で明示する */}
+                    <div className="mt-1.5 text-xs text-zinc-500">
+                      金額は未算出（単価が未登録のため、昇格後に確定します）
                     </div>
                   </div>
                   <button
-                    onClick={() => toggleForm(spot.spotGenericId)}
+                    onClick={() => toggleForm(spot)}
                     className={`shrink-0 rounded-lg px-4 py-2 text-sm font-medium transition ${
                       isOpen
                         ? 'bg-zinc-200 text-zinc-700 hover:bg-zinc-300'
@@ -1068,7 +1246,7 @@ function SpotGuardrailTab() {
                         <label className="block text-xs font-medium text-zinc-600 mb-1">荷主 <span className="text-red-500">*</span></label>
                         <select
                           value={form.clientId}
-                          onChange={e => updateForm(spot.spotGenericId, { clientId: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { clientId: e.target.value })}
                           className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         >
                           <option value="">選択してください</option>
@@ -1083,7 +1261,7 @@ function SpotGuardrailTab() {
                         <input
                           type="text"
                           value={form.projectName}
-                          onChange={e => updateForm(spot.spotGenericId, { projectName: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { projectName: e.target.value })}
                           placeholder="例：○○倉庫→△△港 定期便"
                           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         />
@@ -1095,7 +1273,7 @@ function SpotGuardrailTab() {
                           type="number"
                           min={0}
                           value={form.saleAmount}
-                          onChange={e => updateForm(spot.spotGenericId, { saleAmount: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { saleAmount: e.target.value })}
                           placeholder="30000"
                           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         />
@@ -1107,7 +1285,7 @@ function SpotGuardrailTab() {
                           type="number"
                           min={0}
                           value={form.buyAmount}
-                          onChange={e => updateForm(spot.spotGenericId, { buyAmount: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { buyAmount: e.target.value })}
                           placeholder="25000"
                           className="w-full rounded-md border border-zinc-300 px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         />
@@ -1117,7 +1295,7 @@ function SpotGuardrailTab() {
                         <label className="block text-xs font-medium text-zinc-600 mb-1">計算方式</label>
                         <select
                           value={form.unitType}
-                          onChange={e => updateForm(spot.spotGenericId, { unitType: e.target.value })}
+                          onChange={e => updateForm(spot.groupKey, { unitType: e.target.value })}
                           className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm outline-none focus:border-zinc-500"
                         >
                           {UNIT_TYPE_OPTIONS.map(o => (
@@ -1206,7 +1384,13 @@ function InvoiceGenerateTabWithSections({ yearMonth }: { yearMonth: string }) {
         ))}
       </div>
 
-      {section === 'invoice'  && <InvoiceGenerateTab  yearMonth={yearMonth} />}
+      {/* ⚠️ key に yearMonth を渡して月が変わったらタブごと作り直す。
+          InvoiceGenerateTab の targetMonth は useState(yearMonth) で初回しか初期化されず、
+          サイドバーで月を移動しても追従しないうえ前月のプレビューが残るため、
+          「サイドバーは7月・メイン画面は6月」という読み違えを招く状態が作れてしまう。
+          effect で個別に setState すると cascading render を招く（react-hooks/set-state-in-effect）ので、
+          React の作法どおり key によるリセットで state をまとめて捨てる。 */}
+      {section === 'invoice'  && <InvoiceGenerateTab  key={yearMonth} yearMonth={yearMonth} />}
       {section === 'finalize' && <FinalizeTab          yearMonth={yearMonth} />}
       {section === 'spot'     && <SpotGuardrailTab />}
       {section === 'manual'   && <ManualInvoiceTab     yearMonth={yearMonth} />}

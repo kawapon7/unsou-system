@@ -241,7 +241,10 @@ export function ManualInvoiceTab({ yearMonth }: { yearMonth: string }) {
       clientId:     mode === 'in' ? clientId : undefined,
       contractorId: mode === 'out' ? contractorId : undefined,
       mode,
-      finalAmount: preview.finalAmount,
+      // ⚠️ 3つとも別物。finalAmount だけを渡すと税抜列に税込額が入る
+      subtotalExTax: preview.subtotal,    // 税抜合計
+      taxAmount:     preview.taxAmount,   // 消費税額
+      finalAmount:   preview.finalAmount, // 税込・経過措置差引後
     })
     setSaving(false)
     if (res.error) { setError(res.error); return }

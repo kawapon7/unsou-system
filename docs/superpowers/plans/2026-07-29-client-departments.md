@@ -47,7 +47,10 @@ Task 13（実地検証・引き継ぎ更新）※ 全タスク完了後
 
 ---
 
-### Task 1: ベースライン取得（実装前の必須作業・コード変更なし）
+### Task 1: ベースライン取得（実装前の必須作業・コード変更なし）✅ 完了 2026-07-29（コミット `e511e78`）
+
+> **実施結果:** UI 自動操作が効かなかったため、**スキーマとコードの突き合わせによる論理的確定**に切り替えた（設計書 §12 参照）。B-1（`commitManualInvoice` の必須列3つ欠落 → `23502`）と B-2（`saveClientScanResult` の2枚目 → `23505`）を確定。
+> **⚠️ 申し送り: UI 自動操作（`computer` のクリック／タイプ）がこのアプリに届かない。** Task 4 以降の画面検証は別手段が必要（設計書 §12-4）。
 
 2026-07-28 時点で本番の `invoices` は **0件**だった。これらの経路の多くは本番でまだ一度も成功していない可能性がある。改修後に不具合が出たとき「今回壊したのか、元から壊れていたのか」を判別できないと原因究明に時間を溶かす。
 
@@ -58,13 +61,13 @@ Task 13（実地検証・引き継ぎ更新）※ 全タスク完了後
 - Consumes: なし
 - Produces: §12 に埋まったベースライン記録。Task 4・5・6 の完了判定の比較対象になる
 
-- [ ] **Step 1: 作業ブランチを作る**
+- [x] **Step 1: 作業ブランチを作る**
 
 ```bash
 git switch -c feat/client-departments
 ```
 
-- [ ] **Step 2: ローカル開発サーバを起動する**
+- [x] **Step 2: ローカル開発サーバを起動する**
 
 `.claude/launch.json` が無ければ以下の内容で作成する。
 
@@ -87,24 +90,24 @@ git switch -c feat/client-departments
 ⚠️ `.claude/launch.json` の `runtimeArgs` は `web/` ディレクトリで実行される必要がある。
 `npm run dev` がリポジトリルートで失敗する場合は `"runtimeArgs": ["--prefix", "web", "run", "dev"]` に変更する。
 
-- [ ] **Step 3: 4経路をそれぞれ画面から実行し、結果を記録する**
+- [x] **Step 3: 4経路をそれぞれ画面から実行し、結果を記録する**
 
 現状のコードのまま、以下を順に実行する。**成功・失敗のどちらでも構わない。結果を正確に記録することが目的。**
 
 | # | 経路 | 画面 | 操作 |
 |---|---|---|---|
 | 1 | `finalizeInvoice` | `/admin/billing` | 請求確定を実行 |
-| 2 | `saveClientScanResult`（1回目） | `/admin/sales?tab=scan` | 請求書をスキャンして保存 |
-| 2' | `saveClientScanResult`（2回目） | `/admin/sales?tab=scan` | **同一荷主・同一月**でもう一度保存（B-2 の確認） |
+| 2 | `saveClientScanResult`（1回目） | `/admin/scan` | 請求書をスキャンして保存 |
+| 2' | `saveClientScanResult`（2回目） | `/admin/scan` | **同一荷主・同一月**でもう一度保存（B-2 の確認） |
 | 4 | `commitManualInvoice` | `/admin/sales` | 手動で請求書を作成して確定（B-1 の確認） |
 
 エラーが出た場合は `read_console_messages` と `preview_logs` でエラーコード（`23502` / `23505` / `42P10` など）を採取する。
 
-- [ ] **Step 4: 設計書 §12 の表を埋める**
+- [x] **Step 4: 設計書 §12 の表を埋める**
 
 `docs/superpowers/specs/2026-07-29-client-departments-design.md` の §12「ベースライン記録」の表に、実行日・結果（成功/失敗）・エラーコードを記入する。
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add docs/superpowers/specs/2026-07-29-client-departments-design.md
@@ -113,9 +116,19 @@ git commit -m "docs: 請求書書き込み4経路のベースラインを記録"
 
 ---
 
-### Task 2: マイグレーション（テーブル・列の追加のみ）
+### Task 2: マイグレーション（テーブル・列の追加のみ）✅ 完了 2026-07-30（コミット `a521442`）
 
 追加のみで既存データを変更しない。制約の張り替えは Task 7 で行う。
+
+> **実施結果（実測）:** 本番DB `hbpnhbsmsuhjyrohpluu` へ適用済み。テーブル1・列3すべて存在、`client_departments.tenant_id` は **`text`**、RLS 有効・ポリシー **0件**。型再生成後 `tsc --noEmit` エラー0。
+> 適用ファイルは `supabase/migrations/20260730123144_add_client_departments.sql`（MCP の自動採番に合わせてリネーム済み）。
+>
+> **⚠️ 下記 Step 1 の SQL から意図的に変更した点（1件）:** 計画時に書いた
+> `CREATE POLICY "service role full access" ON public.client_departments FOR ALL USING (true) WITH CHECK (true);`
+> は **採用しなかった**。`TO` 指定が無いため `public`（anon / authenticated）に開いてしまい、
+> `20260627000000_rls_tighten_5tables.sql` で全廃した緩いポリシーと同型になるため。
+> service_role は RLS を常にバイパスするので service 用ポリシーは不要。
+> **正しい形は「RLS 有効化＋ポリシー0件（deny-by-default）」。** 以降のタスクでもこの形を守ること。
 
 **Files:**
 - Create: `supabase/migrations/20260729000000_add_client_departments.sql`
@@ -125,7 +138,7 @@ git commit -m "docs: 請求書書き込み4経路のベースラインを記録"
 - Consumes: なし
 - Produces: テーブル `client_departments`、列 `clients.use_departments` / `projects.department_id` / `invoices.department_id`。TypeScript 型 `Database['public']['Tables']['client_departments']['Row' | 'Insert' | 'Update']`
 
-- [ ] **Step 1: マイグレーションファイルを作る**
+- [x] **Step 1: マイグレーションファイルを作る**
 
 ```sql
 -- 取引先の部署分割対応。
@@ -199,7 +212,7 @@ CREATE INDEX IF NOT EXISTS invoices_department_id_idx
   ON public.invoices (department_id);
 ```
 
-- [ ] **Step 2: 本番DBへ適用する（ボス確認必須）**
+- [x] **Step 2: 本番DBへ適用する（ボス確認必須）**
 
 ⚠️ **本プロジェクトのDBは本番1つのみで、開発と共用している。適用前に必ずボスの確認を取る。**
 
@@ -207,7 +220,7 @@ CREATE INDEX IF NOT EXISTS invoices_department_id_idx
 
 ⚠️ **MCP 経由の適用はバージョン番号を自動採番する。** 適用後、ローカルのファイル名を採番結果に合わせてリネームすること（HANDOVER §5-2 の 2026-07-27 参照。これを怠るとマイグレーションと本番スキーマの 1:1 一致が崩れる）。
 
-- [ ] **Step 3: 適用結果を確認する**
+- [x] **Step 3: 適用結果を確認する**
 
 `execute_sql` で以下を実行し、4つとも存在することを確認する。
 
@@ -229,13 +242,13 @@ SELECT
 
 **`tenant_type` が `uuid` になっていたら即座に修正する。** これを見逃すと保存が本番で必ず失敗する。
 
-- [ ] **Step 4: TypeScript 型を再生成する**
+- [x] **Step 4: TypeScript 型を再生成する**
 
 ```bash
 cd web && npx supabase gen types typescript --linked > src/types/supabase.ts
 ```
 
-- [ ] **Step 5: 型チェックが通ることを確認する**
+- [x] **Step 5: 型チェックが通ることを確認する**
 
 ```bash
 cd web && npx tsc --noEmit
@@ -243,7 +256,7 @@ cd web && npx tsc --noEmit
 
 期待: エラー 0 件
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add supabase/migrations/ web/src/types/supabase.ts
@@ -252,9 +265,21 @@ git commit -m "feat(db): client_departments テーブルと department_id 列を
 
 ---
 
-### Task 3: 共通ライタ `invoice-writer.ts`（TDD）
+### Task 3: 共通ライタ `invoice-writer.ts`（TDD）✅ 完了 2026-07-30（コミット `33d591a`）
 
 `invoices` への書き込みを 1 箇所に集約する。金額の計算は各呼び出し側に残し、この関数は「必須列を埋めて書く」ことだけに責任を持つ。
+
+> **実施結果（実測）:** 計画の SQL/TS から変更なしで実装。`vitest run src/utils/invoice-writer.test.ts` → **8 passed**、`tsc --noEmit` → 0件、`eslint src/utils/invoice-writer.ts` → 0件。
+> Step 2 の失敗確認も想定どおり（`Cannot find module './invoice-writer'`）。
+>
+> **B-1 の裏付け（型定義で確認済み）:** 再生成後の `web/src/types/supabase.ts` の `invoices.Insert` において
+> `target_month` / `total_amount_ex_tax` / `total_tax` は **`?` なし＝必須**、
+> 一方 `invoice_month` / `total_tax_excluded` / `consumption_tax` は `?` 付き（DEFAULT あり）。
+> 旧列だけが必須という非対称が 23502 の原因であることがスキーマ上で確定した。
+> `department_id` / `updated_at` 列も存在を確認済み（ライタが書く列はすべて実在する）。
+>
+> **未検証:** DBに実際に書く `writeInvoice` はテスト対象外（純粋関数 `buildInvoiceRow` のみテスト）。
+> 実書き込みの確認は Task 4・5・6 の実地確認で行う。
 
 **Files:**
 - Create: `web/src/utils/invoice-writer.ts`
@@ -267,7 +292,7 @@ git commit -m "feat(db): client_departments テーブルと department_id 列を
   - `function buildInvoiceRow(p: InvoiceWritePayload): Record<string, unknown>` — 純粋関数
   - `async function writeInvoice(service, payload: InvoiceWritePayload): Promise<{ id: string | null; error: string | null }>`
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 Create `web/src/utils/invoice-writer.test.ts`:
 
@@ -339,7 +364,7 @@ describe('buildInvoiceRow', () => {
 })
 ```
 
-- [ ] **Step 2: テストが失敗することを確認する**
+- [x] **Step 2: テストが失敗することを確認する**
 
 ```bash
 cd web && npx vitest run src/utils/invoice-writer.test.ts
@@ -347,7 +372,7 @@ cd web && npx vitest run src/utils/invoice-writer.test.ts
 
 期待: FAIL（`Failed to resolve import "./invoice-writer"`）
 
-- [ ] **Step 3: 実装する**
+- [x] **Step 3: 実装する**
 
 Create `web/src/utils/invoice-writer.ts`:
 
@@ -462,7 +487,7 @@ export async function writeInvoice(
 }
 ```
 
-- [ ] **Step 4: テストが通ることを確認する**
+- [x] **Step 4: テストが通ることを確認する**
 
 ```bash
 cd web && npx vitest run src/utils/invoice-writer.test.ts
@@ -470,7 +495,7 @@ cd web && npx vitest run src/utils/invoice-writer.test.ts
 
 期待: 8 tests passed
 
-- [ ] **Step 5: 型チェックとリント**
+- [x] **Step 5: 型チェックとリント**
 
 ```bash
 cd web && npx tsc --noEmit && npx eslint src/utils/invoice-writer.ts
@@ -478,7 +503,7 @@ cd web && npx tsc --noEmit && npx eslint src/utils/invoice-writer.ts
 
 期待: どちらもエラー 0 件
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add web/src/utils/invoice-writer.ts web/src/utils/invoice-writer.test.ts
@@ -487,7 +512,20 @@ git commit -m "feat(billing): invoices 書き込みの共通ライタを追加�
 
 ---
 
-### Task 4: `admin/sales/actions.ts` の 2 経路を共通ライタへ移行（B-1・B-3 解消）
+### Task 4: `admin/sales/actions.ts` の 2 経路を共通ライタへ移行（B-1・B-3 解消）🔶 コード完了 2026-07-30（コミット `36728e8`）／**実地確認は未実施**
+
+> **実施結果（実測）:** `tsc --noEmit` 0件 / `vitest run` **24 passed**（全3ファイル）/ `eslint` **新規エラー0件**（既存5件のみ＝`createServiceClient() as any` 2箇所・`(r: any)` 1箇所・ManualInvoiceTab の既存2件）。
+>
+> **計画書から意図的に変更・追加した点:**
+> 1. **`upsertInvoice` に `tenantId` が無かったので `getCurrentTenantId()` を追加した**（計画書 Step 2 の ⚠️ どおり）。従来この経路は `tenant_id` を渡さず DEFAULT に依存していた。
+> 2. **`commitManualInvoice` の引数に `subtotalExTax` / `taxAmount` を追加**し、呼び出し元 `ManualInvoiceTab.tsx` も修正（計画書 Step 3 の ⚠️ どおり。`finalAmount` は税込なので旧列 `total_amount_ex_tax` に税込額が入るのを防いだ）。
+> 3. **Step 4 の grep の期待値は不正確だった。** 「`insert(`/`update(` を伴う行が無いこと」とあるが、実際には次の2つが残る（どちらも正しい）:
+>    - `updateInvoiceStatus` の `.update({ status })` — **status のみを id 指定で更新**する入金ステータス更新。必須列に触れないため 23502 は起こり得ず、共通ライタでは「金額を渡さず status だけ変える」を表現できない（金額の再取得が必要になり、かえって危険）。**意図的に残した。**
+>    - `commitManualInvoice` の else 側 `payment_notices` への `insert` — `invoices` ではないため本計画の対象外。
+>
+> **⚠️ 別件として発見（本計画では未対応）:** `updateInvoiceStatus` は `.eq('id', invoiceId)` のみで **`tenant_id` フィルタが無い**。`requireOwner()` は通るが、テナントが複数になった時点でテナント跨ぎの更新が可能になる。B社オンボーディング前に潰す必要がある。
+>
+> **未検証:** 画面からの実地確認（Step 6）。ローカルは `ALLOW_DEV_AUTH_BYPASS=false` でログインが必要であり、パスワード入力はアシスタントが行えないため。**ボス判断により Task 5・6 完了後に4経路まとめて実施することにした（2026-07-30）。**
 
 **Files:**
 - Modify: `web/src/app/admin/sales/actions.ts`（`upsertInvoice` 周辺 396-441行、`commitManualInvoice` 周辺 713-750行）
@@ -496,7 +534,7 @@ git commit -m "feat(billing): invoices 書き込みの共通ライタを追加�
 - Consumes: `writeInvoice` / `InvoiceWritePayload`（Task 3）
 - Produces: 変更なし（両関数の外部シグネチャは維持する）
 
-- [ ] **Step 1: import を追加する**
+- [x] **Step 1: import を追加する**
 
 `web/src/app/admin/sales/actions.ts` の import 群に追加:
 
@@ -504,7 +542,7 @@ git commit -m "feat(billing): invoices 書き込みの共通ライタを追加�
 import { writeInvoice } from '@/utils/invoice-writer'
 ```
 
-- [ ] **Step 2: `upsertInvoice` の SELECT→UPDATE/INSERT を置き換える**
+- [x] **Step 2: `upsertInvoice` の SELECT→UPDATE/INSERT を置き換える**
 
 396-441行（`const { data: existing } = await supabase.from('invoices')` から関数末尾の `return { data: { id: data.id }, error: null }` まで）を以下で置き換える:
 
@@ -528,7 +566,7 @@ import { writeInvoice } from '@/utils/invoice-writer'
 
 ⚠️ この関数のスコープに `tenantId` が無い場合は、関数冒頭で `const tenantId = await getCurrentTenantId()` を取得すること。
 
-- [ ] **Step 3: `commitManualInvoice` の insert を置き換える（B-1・B-3 の修正）**
+- [x] **Step 3: `commitManualInvoice` の insert を置き換える（B-1・B-3 の修正）**
 
 737-748行の `.from('invoices').insert({...})` ブロックを以下で置き換える:
 
@@ -553,9 +591,25 @@ import { writeInvoice } from '@/utils/invoice-writer'
     if (error || !id) return { data: null, error: error ?? '請求書の保存に失敗しました' }
 ```
 
-⚠️ `params.finalAmount` が税込か税抜かを実装時にコード上で確認すること。税込なら上記のとおり（`subtotal` に税込を入れると旧列 `total_amount_ex_tax` にも税込が入る点に注意）。**税抜・税額が別途取れるならそちらを渡す。** 判断がつかない場合は実装を止めてボスに確認する。
+⚠️ **`params.finalAmount` は税込である**（Task 1 のベースライン取得で画面プレビューにより確認済み。
+税抜 ¥10,000 → 消費税 +¥1,000 → 経過措置 −¥220 → 最終請求額 ¥10,780）。
 
-- [ ] **Step 4: 元の insert / update ブロックが残っていないことを確認する**
+**そのため上記コードのままでは誤りになる。** `subtotal` に税込額が入り、旧列 `total_amount_ex_tax`
+（税抜であるべき列）に税込額が書かれてしまう。
+
+`computeManualInvoicePreview` の戻り値には税抜合計・消費税額も含まれているため、
+`commitManualInvoice` の引数にそれらを追加し、以下のように渡すこと:
+
+```ts
+      subtotal:     params.subtotalExTax,   // 税抜合計（新規に引数へ追加する）
+      taxAmount:    params.taxAmount,       // 消費税額（新規に引数へ追加する）
+      totalAmount:  params.finalAmount,     // 税込（経過措置差引後）
+```
+
+呼び出し元 `web/src/app/admin/sales/ManualInvoiceTab.tsx:238` の `commitManualInvoice({...})` にも
+同じ 2 つを追加する（`preview` から取れる）。
+
+- [x] **Step 4: 元の insert / update ブロックが残っていないことを確認する**
 
 ```bash
 cd /Users/kawasakiatsushi/developer/unsou-system && grep -n "from('invoices')" web/src/app/admin/sales/actions.ts
@@ -563,7 +617,7 @@ cd /Users/kawasakiatsushi/developer/unsou-system && grep -n "from('invoices')" w
 
 期待: **SELECT 系のみが残る**（147行・329行・398行付近の読み取り）。`insert(` / `update(` を伴う行が無いこと。
 
-- [ ] **Step 5: 型チェックとテスト**
+- [x] **Step 5: 型チェックとテスト**
 
 ```bash
 cd web && npx tsc --noEmit && npx vitest run
@@ -581,7 +635,7 @@ cd web && npx tsc --noEmit && npx vitest run
 
 `read_console_messages` と `preview_logs` でエラーが出ていないことを確認する。
 
-- [ ] **Step 7: コミット**
+- [x] **Step 7: コミット**
 
 ```bash
 git add web/src/app/admin/sales/actions.ts
@@ -590,7 +644,14 @@ git commit -m "fix(billing): 手動請求書確定の必須列欠落と重複エ
 
 ---
 
-### Task 5: `_actions/billing-actions.ts` を共通ライタへ移行（ロック判定は残す）
+### Task 5: `_actions/billing-actions.ts` を共通ライタへ移行（ロック判定は残す）🔶 コード完了 2026-07-30（コミット `cf55276`）／**実地確認は未実施**
+
+> **実施結果（実測）:** `tsc --noEmit` 0件 / `vitest run` 24 passed / `eslint` **新規エラー0件**（既存3件のみ＝`finalizePaymentNotice` 内の `as any` 3箇所。変更前と同一行）。
+> `tenantId` は既に関数スコープ内（91行）にあったため追加不要だった。ロック判定（104-122行）は無変更。
+>
+> **意図的な挙動変更（1件）:** 従来の upsert は `issued_at` に触れなかったため、開発者アンロックでの再確定時に `status='draft'` なのに `issued_at` が残るという矛盾状態になっていた。共通ライタは `issuedAt: null` を渡すためクリアされる。draft に戻すのと整合する方向なので採用した。
+>
+> **未検証:** 画面からの実地確認（Step 5）。とくに**ロック判定が生きていること**（issued の請求書に再確定して開発者アンロックを要求して停止する）は自動テストで代替できていない。4経路の一括検証で必ず確認する。
 
 **Files:**
 - Modify: `web/src/app/_actions/billing-actions.ts`（`finalizeInvoice` 内 149-170行）
@@ -599,17 +660,17 @@ git commit -m "fix(billing): 手動請求書確定の必須列欠落と重複エ
 - Consumes: `writeInvoice`（Task 3）
 - Produces: 変更なし
 
-- [ ] **Step 1: import を追加する**
+- [x] **Step 1: import を追加する**
 
 ```ts
 import { writeInvoice } from '@/utils/invoice-writer'
 ```
 
-- [ ] **Step 2: ロック判定（113-122行）に手を触れないことを確認する**
+- [x] **Step 2: ロック判定（113-122行）に手を触れないことを確認する**
 
 `status` が `issued` / `paid` の請求書を上書きしようとしたとき停止し、開発者アンロックを要求する処理がある。**この判定は業務ロジックであり、そのまま残す。** 共通ライタは渡された内容をそのまま書くだけで、ロックを守らない。
 
-- [ ] **Step 3: upsert を置き換える（149-170行）**
+- [x] **Step 3: upsert を置き換える（149-170行）**
 
 ```ts
   // ⚠️ 従来は onConflict: 'client_id,invoice_month' の upsert だった。
@@ -639,7 +700,7 @@ import { writeInvoice } from '@/utils/invoice-writer'
 
 ⚠️ `tenantId` がこの関数のスコープに無い場合は `getCurrentTenantId()` で取得する。従来この経路は `tenant_id` を渡しておらず DEFAULT に依存していた。
 
-- [ ] **Step 4: 型チェックとテスト**
+- [x] **Step 4: 型チェックとテスト**
 
 ```bash
 cd web && npx tsc --noEmit && npx vitest run
@@ -653,7 +714,7 @@ cd web && npx tsc --noEmit && npx vitest run
 
 **加えてロック判定が生きていることを確認する:** 一度確定して `issued` にした請求書に対してもう一度確定を実行し、**開発者アンロックを要求して停止する**ことを確認する。ここが素通りしたら Step 2 の判定が壊れている。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add web/src/app/_actions/billing-actions.ts
@@ -662,7 +723,15 @@ git commit -m "refactor(billing): finalizeInvoice を共通ライタへ移行（
 
 ---
 
-### Task 6: `_actions/scan-actions.ts` を共通ライタへ移行（B-2 解消）
+### Task 6: `_actions/scan-actions.ts` を共通ライタへ移行（B-2 解消）🔶 コード完了 2026-07-30（コミット `6127294`）／**実地確認は未実施**
+
+> **実施結果（実測）:** `tsc --noEmit` 0件 / `vitest run` 24 passed / `eslint src/app/_actions/scan-actions.ts` **0件**（Step 3 の `(service as any)` と `eslint-disable-next-line` を削除できたため）。
+> 使わなくなった `invoiceMonth` 変数も削除済み（未使用変数の警告は出ていない）。
+>
+> **未検証:** 画面からの実地確認（Step 5）。とくに**同一荷主・同一月の2枚目が1枚目を上書きする**という挙動変更の妥当性は、実データで一度見ておく必要がある。
+>
+> **✅ Task 7 の前提条件は充足済み（機械確認）:** `grep -rn "onConflict" src/app/_actions/ src/app/admin/ | grep -i invoice` → **0件**。
+> なお最初は Task 5 で書いたコメント文に `onConflict` の語が含まれて grep に引っかかったため、**将来のセッションが誤って手戻りしないようコメント文言から該当語を外した**（`cf55276` の内容）。
 
 **Files:**
 - Modify: `web/src/app/_actions/scan-actions.ts`（`saveClientScanResult` 内 83-106行）
@@ -671,13 +740,13 @@ git commit -m "refactor(billing): finalizeInvoice を共通ライタへ移行（
 - Consumes: `writeInvoice`（Task 3）
 - Produces: 変更なし
 
-- [ ] **Step 1: import を追加する**
+- [x] **Step 1: import を追加する**
 
 ```ts
 import { writeInvoice } from '@/utils/invoice-writer'
 ```
 
-- [ ] **Step 2: insert を置き換える（83-106行）**
+- [x] **Step 2: insert を置き換える（83-106行）**
 
 ```ts
   // ⚠️ 従来は素の insert だったため、同一荷主・同一月の 2 枚目をスキャンすると
@@ -706,11 +775,11 @@ import { writeInvoice } from '@/utils/invoice-writer'
 
 ⚠️ **挙動の変更点を認識すること。** 従来は毎回新しい行を作ろうとしていた（が制約で失敗した）。移行後は同一荷主・同一月の 2 枚目が **1 枚目を上書き**する。スキャンは 1 荷主 1 月 1 枚が前提であるという判断に基づく。**この前提が誤っている場合は実装を止めてボスに確認する**（複数枚を別行として残す必要があるなら、設計から見直しが必要）。
 
-- [ ] **Step 3: `as any` キャストの eslint-disable が不要になったら削除する**
+- [x] **Step 3: `as any` キャストの eslint-disable が不要になったら削除する**
 
 元コードには `// eslint-disable-next-line @typescript-eslint/no-explicit-any` と `(service as any)` があった。共通ライタ側でキャストを持つため、この経路では不要になる。残っていたら削除する。
 
-- [ ] **Step 4: 型チェック・テスト・リント**
+- [x] **Step 4: 型チェック・テスト・リント**
 
 ```bash
 cd web && npx tsc --noEmit && npx vitest run && npx eslint src/app/_actions/scan-actions.ts
@@ -720,10 +789,10 @@ cd web && npx tsc --noEmit && npx vitest run && npx eslint src/app/_actions/scan
 
 - [ ] **Step 5: ローカルで実地確認**
 
-`/admin/sales?tab=scan` で請求書をスキャンして保存し、成功することを確認する。
+`/admin/scan` で請求書をスキャンして保存し、成功することを確認する。
 **同一荷主・同一月で 2 回目を保存しても失敗しない**ことを確認する（B-2 解消）。
 
-- [ ] **Step 6: コミット**
+- [x] **Step 6: コミット**
 
 ```bash
 git add web/src/app/_actions/scan-actions.ts
@@ -735,6 +804,12 @@ git commit -m "fix(scan): 同一荷主・同一月の2枚目スキャンが失�
 ### Task 7: 一意性制約の張り替え（本計画で最も慎重を要する）
 
 **⚠️ 前提条件: Task 4・5・6 がすべて完了し、`onConflict` を使う書き込みが 1 つも残っていないこと。**
+
+> **🚧 2026-07-30 時点の状態: Task 7 にはまだ着手してはならない。**
+> Task 4・5・6 は**コードは完了しているが実地確認が未実施**（3タスクとも Step 5/6 の画面確認が未消化）。
+> 制約を張り替えた後に不具合が出ると「今回の張り替えで壊れたのか、4・5・6 の移行が元から壊れていたのか」を切り分けられなくなる。
+> **順序: ①4経路の実地確認 → ②本番デプロイ → ③Task 7。**
+> なお Step 1 の grep 自体は既に 0 件（Task 6 の実施結果を参照）。
 
 **Files:**
 - Create: `supabase/migrations/20260729000001_invoices_unique_with_department.sql`
@@ -820,7 +895,7 @@ WHERE conname = 'invoices_client_id_invoice_month_key';
 制約を張り替えた直後が最も危険なので、**Task 4・5・6 で確認した 4 経路をもう一度すべて実行する。**
 
 - [ ] `/admin/billing` 請求確定
-- [ ] `/admin/sales?tab=scan` スキャン保存
+- [ ] `/admin/scan` スキャン保存
 - [ ] `/admin/sales` 請求書発行
 - [ ] `/admin/sales` 手動請求書確定
 
@@ -835,7 +910,7 @@ git commit -m "feat(db): invoices の一意性を荷主×部署×月へ張り替
 
 ---
 
-### Task 8: 部署の CRUD Server Actions
+### Task 8: 部署の CRUD Server Actions ✅ 完了 2026-07-30（コミット `eb47545`）
 
 **Files:**
 - Modify: `web/src/app/admin/partners/actions.ts`（末尾に追加）
@@ -849,7 +924,7 @@ git commit -m "feat(db): invoices の一意性を荷主×部署×月へ張り替
   - `deleteClientDepartment(id: string): Promise<ActionResult<null>>`
   - `countUnassignedProjects(clientId: string): Promise<ActionResult<number>>`
 
-- [ ] **Step 1: 型エイリアスを追加する**
+- [x] **Step 1: 型エイリアスを追加する**
 
 `web/src/app/admin/partners/actions.ts` の型定義群（10-15行付近）に追加:
 
@@ -859,7 +934,7 @@ type ClientDepartmentInsert = Database['public']['Tables']['client_departments']
 type ClientDepartmentUpdate = Database['public']['Tables']['client_departments']['Update']
 ```
 
-- [ ] **Step 2: CRUD を追加する**
+- [x] **Step 2: CRUD を追加する**
 
 ファイル末尾に追加:
 
@@ -962,7 +1037,7 @@ export async function countUnassignedProjects(
 }
 ```
 
-- [ ] **Step 3: `'use server'` の制約に違反していないことを確認する**
+- [x] **Step 3: `'use server'` の制約に違反していないことを確認する**
 
 このファイルは `'use server'` である。**追加したのが全て `async function` の export であることを確認する。** 型エイリアスは `type` なので実行時 export されず問題ない。
 
@@ -972,7 +1047,7 @@ cd /Users/kawasakiatsushi/developer/unsou-system && grep -n "^export" web/src/ap
 
 期待: 出力が空
 
-- [ ] **Step 4: 型チェックとリント**
+- [x] **Step 4: 型チェックとリント**
 
 ```bash
 cd web && npx tsc --noEmit && npx eslint src/app/admin/partners/actions.ts
@@ -980,7 +1055,7 @@ cd web && npx tsc --noEmit && npx eslint src/app/admin/partners/actions.ts
 
 期待: どちらもエラー 0 件
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add web/src/app/admin/partners/actions.ts

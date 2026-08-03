@@ -11,11 +11,17 @@ import {
   deleteContractor,
   createContractor,
   updateContractor,
+  fetchClientDepartments,
+  createClientDepartment,
+  updateClientDepartment,
+  deleteClientDepartment,
+  countUnassignedProjects,
 } from './actions'
 import type { Database } from '@/types/supabase'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
+type ClientDepartmentRow = Database['public']['Tables']['client_departments']['Row']
 
 type ClientInsert = Database['public']['Tables']['clients']['Insert']
 type ContractorInsert = Database['public']['Tables']['contractors']['Insert']
@@ -60,6 +66,7 @@ type ClientForm = {
   account_type: string
   account_number: string
   account_holder: string
+  use_departments: boolean
 }
 
 const defaultClientForm = (): ClientForm => ({
@@ -77,6 +84,7 @@ const defaultClientForm = (): ClientForm => ({
   account_type: '普通',
   account_number: '',
   account_holder: '',
+  use_departments: false,
 })
 
 // ── 委託先フォームの型 ────────────────────────────────────
@@ -274,6 +282,28 @@ function ClientFormFields({
         </Field>
       </div>
 
+      <div className="mt-4">
+        <label className="flex items-center gap-2">
+          <input
+            type="checkbox"
+            checked={form.use_departments}
+            onChange={e => set('use_departments', e.target.checked)}
+          />
+          <span>部署で請求を分ける</span>
+        </label>
+        <p className="text-xs text-zinc-500">
+          同じ会社でも部署ごとに請求書を分けて提出する場合にオンにします。
+          オンにすると案件の登録時に部署の指定が必要になります。あとから変更できます。
+        </p>
+        {/* ⚠️ Task 11（請求書生成の部署対応）が未実装のため、いまの請求書は
+            部署に関係なく 1 枚にまとまって出る。画面が「分かれる」と読める文言だけを
+            先に出すと、実物と食い違って事故になる。Task 11 完了時にこの注記を消すこと。 */}
+        <p className="mt-1 text-xs text-amber-700">
+          ⚠️ 現在、請求書の部署別発行は準備中です。部署を設定しても請求書は従来どおり
+          荷主ごとに1枚（全部署分をまとめて）発行されます。
+        </p>
+      </div>
+
       <SectionTitle>振込先口座</SectionTitle>
       <div className="grid grid-cols-2 gap-4">
         <Field label="銀行名">
@@ -455,6 +485,11 @@ function ContractorFormFields({
   )
 }
 
+// ── 部署フォームの型 ──────────────────────────────────────
+
+type DeptForm = { name: string; contact_name: string; email: string; phone: string; sort_order: number }
+const emptyDeptForm: DeptForm = { name: '', contact_name: '', email: '', phone: '', sort_order: 0 }
+
 // ── 荷主タブ ──────────────────────────────────────────────
 
 function ClientsTab() {
@@ -467,6 +502,54 @@ function ClientsTab() {
   const [saving, setSaving] = useState(false)
   const [formError, setFormError] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
+
+  // 部署管理（use_departments がオンの荷主のみ使用）
+  const [departments, setDepartments] = useState<ClientDepartmentRow[]>([])
+  const [deptForm, setDeptForm] = useState<DeptForm>(emptyDeptForm)
+  const [editingDeptId, setEditingDeptId] = useState<string | null>(null)
+  const [unassignedCount, setUnassignedCount] = useState(0)
+  const editingClientId = editTarget?.id ?? null
+
+  async function reloadDepartments(clientId: string) {
+    const res = await fetchClientDepartments(clientId)
+    if (res.data) setDepartments(res.data)
+  }
+
+  async function handleSaveDepartment() {
+    if (!editingClientId) return
+    const payload = {
+      name:         deptForm.name.trim(),
+      contact_name: deptForm.contact_name || null,
+      email:        deptForm.email || null,
+      phone:        deptForm.phone || null,
+      sort_order:   deptForm.sort_order,
+    }
+    const res = editingDeptId
+      ? await updateClientDepartment(editingDeptId, payload)
+      : await createClientDepartment({ ...payload, client_id: editingClientId })
+    if (res.error) { setFormError(res.error); return }
+    setDeptForm(emptyDeptForm)
+    setEditingDeptId(null)
+    await reloadDepartments(editingClientId)
+  }
+
+  function handleEditDepartment(d: ClientDepartmentRow) {
+    setEditingDeptId(d.id)
+    setDeptForm({
+      name:         d.name,
+      contact_name: d.contact_name ?? '',
+      email:        d.email ?? '',
+      phone:        d.phone ?? '',
+      sort_order:   d.sort_order,
+    })
+  }
+
+  async function handleDeleteDepartment(id: string) {
+    if (!confirm('この部署を削除しますか？\n確定済みの請求書がある部署は削除できません。')) return
+    const res = await deleteClientDepartment(id)
+    if (res.error) { setFormError(res.error); return }
+    if (editingClientId) await reloadDepartments(editingClientId)
+  }
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -483,11 +566,20 @@ function ClientsTab() {
     setForm(defaultClientForm())
     setFormError(null)
     setIsDirty(false)
+    setDepartments([])
+    setDeptForm(emptyDeptForm)
+    setEditingDeptId(null)
+    setUnassignedCount(0)
     setModalOpen(true)
   }
 
   function openEdit(row: ClientRow) {
     setEditTarget(row)
+    setDeptForm(emptyDeptForm)
+    setEditingDeptId(null)
+    setUnassignedCount(0)
+    if (row.use_departments) void reloadDepartments(row.id)
+    else setDepartments([])
     // payment_site（整数）から payment_month_offset と payment_day を逆算
     const siteVal = row.payment_site ?? 30
     const pdRaw = siteVal % 30
@@ -507,6 +599,7 @@ function ClientsTab() {
       account_type: row.account_type ?? '普通',
       account_number: row.account_number ?? '',
       account_holder: row.account_holder ?? '',
+      use_departments: row.use_departments ?? false,
     })
     setFormError(null)
     setIsDirty(false)
@@ -535,6 +628,7 @@ function ClientsTab() {
       account_type: form.account_type || null,
       account_number: form.account_number || null,
       account_holder: form.account_holder || null,
+      use_departments: form.use_departments,
     }
 
     const result = editTarget
@@ -628,7 +722,102 @@ function ClientsTab() {
           isDirty={isDirty}
         >
           <form onSubmit={handleSubmit}>
-            <ClientFormFields form={form} onChange={f => { setForm(f); setIsDirty(true) }} />
+            <ClientFormFields
+              form={form}
+              onChange={f => {
+                const turnedOn = f.use_departments && !form.use_departments
+                setForm(f)
+                setIsDirty(true)
+                if (turnedOn && editingClientId) {
+                  countUnassignedProjects(editingClientId).then(res => setUnassignedCount(res.data ?? 0))
+                }
+              }}
+            />
+            {form.use_departments && (
+              <div className="mt-4 rounded border border-zinc-200 p-3">
+                <div className="mb-2 text-sm font-medium">部署</div>
+                {departments.length === 0 && (
+                  <p className="text-xs text-zinc-500">
+                    部署がまだ登録されていません。1つ以上登録してください。
+                  </p>
+                )}
+                <ul className="space-y-2">
+                  {departments.map(d => (
+                    <li key={d.id} className="flex items-center gap-2">
+                      <span className="flex-1">{d.name}</span>
+                      <span className="text-xs text-zinc-500">{d.contact_name ?? '担当者未設定'}</span>
+                      <button type="button" onClick={() => handleEditDepartment(d)}>編集</button>
+                      <button type="button" onClick={() => handleDeleteDepartment(d.id)}>削除</button>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-3 grid grid-cols-2 gap-2 border-t border-zinc-200 pt-3">
+                  <div>
+                    <label className="text-xs text-zinc-600">部署名 <span className="text-red-500">*</span></label>
+                    <input
+                      className={inputCls}
+                      value={deptForm.name}
+                      onChange={e => setDeptForm({ ...deptForm, name: e.target.value })}
+                      placeholder="人材派遣部"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">担当者名</label>
+                    <input
+                      className={inputCls}
+                      value={deptForm.contact_name}
+                      onChange={e => setDeptForm({ ...deptForm, contact_name: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">メール</label>
+                    <input
+                      className={inputCls}
+                      value={deptForm.email}
+                      onChange={e => setDeptForm({ ...deptForm, email: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">電話</label>
+                    <input
+                      className={inputCls}
+                      value={deptForm.phone}
+                      onChange={e => setDeptForm({ ...deptForm, phone: e.target.value })}
+                    />
+                  </div>
+                  <div>
+                    <label className="text-xs text-zinc-600">並び順</label>
+                    <input
+                      type="number"
+                      className={inputCls}
+                      value={deptForm.sort_order}
+                      onChange={e => setDeptForm({ ...deptForm, sort_order: Number(e.target.value) })}
+                    />
+                  </div>
+                  <div className="flex items-end">
+                    <button
+                      type="button"
+                      className="rounded bg-zinc-900 px-3 py-1.5 text-sm text-white disabled:opacity-40"
+                      disabled={!deptForm.name.trim() || !editingClientId}
+                      onClick={handleSaveDepartment}
+                    >
+                      {editingDeptId ? '更新' : '追加'}
+                    </button>
+                  </div>
+                </div>
+                {!editingClientId && (
+                  <p className="mt-2 text-xs text-zinc-500">
+                    荷主を保存すると部署を登録できるようになります。
+                  </p>
+                )}
+              </div>
+            )}
+            {unassignedCount > 0 && (
+              <p className="mt-2 rounded bg-amber-50 p-2 text-sm text-amber-800">
+                ⚠️ この荷主には部署が未割当の案件が {unassignedCount} 件あります。
+                案件管理画面で部署を割り当ててください。
+              </p>
+            )}
             {formError && (
               <p className="mt-4 text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{formError}</p>
             )}

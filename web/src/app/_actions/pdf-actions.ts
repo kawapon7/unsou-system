@@ -4,6 +4,17 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireOwner, requireAuth } from '@/utils/auth'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { getCompanyInfo, type CompanyInfo } from '@/utils/company'
+import {
+  calcWorkAmount,
+  buildPriceRuleMap,
+  WORK_RECORD_AMOUNT_COLUMNS,
+  PRICE_RULE_COLUMNS,
+  type PriceRuleRecord,
+  type RawWorkRecord,
+} from '@/utils/work-amount'
+import { closingRange, computeDueDate } from '@/utils/closing-period'
+import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
+import { getDeductionRate } from '@/utils/transitional-deduction'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -41,11 +52,11 @@ export async function fetchInvoicePdfData(
   const tenantId = await getCurrentTenantId()
 
   const service = createServiceClient()
-  const [y, m]  = yearMonth.split('-').map(Number)
-  const monthEndDate = new Date(y, m, 0).toISOString().slice(0, 10)
 
   const [clientRes, invoiceRes, projectsRes] = await Promise.all([
-    service.from('clients').select('company_name, contact_name, tax_type, tenant_id').eq('id', clientId).single(),
+    service.from('clients')
+      .select('company_name, contact_name, tax_type, tenant_id, closing_day, payment_site')
+      .eq('id', clientId).single(),
     // billing-actions.ts は YYYY-MM-01 形式で保存するため DATE 型に合わせる
     service.from('invoices')
       .select('id, total_tax_excluded, consumption_tax, total_amount, due_date')
@@ -65,28 +76,49 @@ export async function fetchInvoicePdfData(
   const projMap  = new Map(projects.map(p => [p.id, p.project_name]))
   const projIds  = projects.map(p => p.id)
 
+  // ⚠️ 2026-08-02 まで存在しない列 `quantity` / `tax_excluded_sales` を select しており、
+  //    PostgREST が 42703 を返して請求書PDFが「データ取得エラー」で出せなかった。
+  //    数量は piece_count、金額は price_rules から都度計算する。詳細は utils/work-amount.ts。
+  // ⚠️ 2026-08-02 まで暦月（1日〜末日）で集計しており、締め日ベースで集計する
+  //    請求書確定（finalizeInvoice）と明細が食い違っていた。締め日ベースに統一。
+  const { from, to } = closingRange(yearMonth, client.closing_day)
+
   const { data: workRows, error: wrErr } = await service
     .from('work_records')
-    .select('work_date, project_id, quantity, tax_excluded_sales')
+    .select(`${WORK_RECORD_AMOUNT_COLUMNS}, work_date`)
     .in('project_id', projIds.length > 0 ? projIds : ['__never__'])
-    .gte('work_date', `${yearMonth}-01`)
-    .lte('work_date', monthEndDate)
+    .gte('work_date', from)
+    .lte('work_date', to)
     .order('work_date')
 
   if (wrErr) return { data: null, error: wrErr.message }
 
-  const lines: InvoicePdfLine[] = (workRows ?? []).map(r => ({
+  const rawRows = (workRows ?? []) as unknown as (RawWorkRecord & { work_date: string })[]
+
+  // price_rules には tenant_id が無いため、テナント確認済みの案件IDだけを引く
+  let ruleMap = new Map<string, PriceRuleRecord>()
+  if (projIds.length > 0) {
+    const { data: rules, error: ruleErr } = await service
+      .from('price_rules')
+      .select(PRICE_RULE_COLUMNS)
+      .in('project_id', projIds)
+    if (ruleErr) return { data: null, error: ruleErr.message }
+    ruleMap = buildPriceRuleMap(rules as unknown as PriceRuleRecord[])
+  }
+
+  const lines: InvoicePdfLine[] = rawRows.map(r => ({
     workDate:    r.work_date,
     projectName: r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）',
-    quantity:    r.quantity,
-    netAmount:   r.tax_excluded_sales,
+    quantity:    r.piece_count ?? 0,
+    netAmount:   calcWorkAmount(r, r.project_id ? ruleMap.get(r.project_id) : undefined, 'selling'),
   }))
 
   // 確定済み invoice があればその値を優先（taxCalculator.ts との一致を保証）
   const netTotal    = invoice?.total_tax_excluded ?? lines.reduce((s, l) => s + l.netAmount, 0)
   const taxAmount   = invoice?.consumption_tax    ?? Math.round(netTotal * (client.tax_type !== 'exempt' ? 0.1 : 0))
   const totalAmount = invoice?.total_amount       ?? (netTotal + taxAmount)
-  const dueDate     = invoice?.due_date           ?? monthEndDate
+  // 確定済み請求書に支払期日があればそれを使う。無ければ締め日＋支払サイトで算出する
+  const dueDate     = invoice?.due_date           ?? computeDueDate(yearMonth, client.closing_day, client.payment_site)
 
   // 請求書番号: INV-YYYYMM-{id先頭5文字}
   const suffix        = invoice?.id ? invoice.id.replace(/-/g, '').slice(0, 5).toUpperCase() : 'XXXXX'
@@ -105,7 +137,7 @@ export async function fetchInvoicePdfData(
       dueDate,
       clientName:   client.company_name,
       contactName:  client.contact_name,
-      invoiceMonth: `${y}年${m}月分`,
+      invoiceMonth: `${Number(yearMonth.slice(0, 4))}年${Number(yearMonth.slice(5, 7))}月分`,
       lines,
       netTotal,
       taxAmount,
@@ -183,14 +215,20 @@ export async function fetchPaymentNoticePdfData(
       .eq('contractor_id', contractorId)
       .eq('notice_month', from)
       .maybeSingle(),
+    // ⚠️ 存在しない列 `quantity` / `tax_excluded_payment` を select していたため、
+    //    PostgREST が 42703 を返して支払通知書PDFが出せなかった（2026-08-02 修正）。
+    //    数量は piece_count、金額は price_rules から都度計算する。詳細は utils/work-amount.ts。
     service.from('work_records')
-      .select('work_date, project_id, quantity, tax_excluded_payment')
+      .select(`${WORK_RECORD_AMOUNT_COLUMNS}, work_date`)
       .eq('contractor_id', contractorId)
       .gte('work_date', from).lte('work_date', to)
       .order('work_date'),
+    // ⚠️ 承認済みだけを載せる。小計は payment_notices の保存値（承認済みのみ集計）を使うため、
+    //    ここで未承認まで明細に出すと「明細に行があるのに小計 0」という文書になる（2026-08-02 修正）。
     service.from('expense_records')
       .select('expense_date, expense_type, amount_tax_excluded, tax_category')
       .eq('contractor_id', contractorId)
+      .eq('approval_status', 'approved')
       .gte('expense_date', from).lte('expense_date', to)
       .order('expense_date'),
     service.from('projects').select('id, project_name'),
@@ -202,11 +240,29 @@ export async function fetchPaymentNoticePdfData(
   const notice     = noticeRes.data
   const projMap    = new Map((projectsRes.data ?? []).map(p => [p.id, p.project_name]))
 
-  const laborLines: LaborPdfLine[] = (workRes.data ?? []).map(r => ({
+  const laborRows = (workRes.data ?? []) as unknown as (RawWorkRecord & { work_date: string })[]
+
+  // price_rules には tenant_id が無いため、実際に出てきた案件IDだけを引く
+  // （work_records は contractor_id で絞ってあり、その委託先のテナントは上で確認済み）
+  const laborProjIds = Array.from(
+    new Set(laborRows.map(r => r.project_id).filter((id): id is string => !!id)),
+  )
+  let payRuleMap = new Map<string, PriceRuleRecord>()
+  if (laborProjIds.length > 0) {
+    const { data: rules, error: ruleErr } = await service
+      .from('price_rules')
+      .select(PRICE_RULE_COLUMNS)
+      .in('project_id', laborProjIds)
+    if (ruleErr) return { data: null, error: ruleErr.message }
+    payRuleMap = buildPriceRuleMap(rules as unknown as PriceRuleRecord[])
+  }
+
+  const laborLines: LaborPdfLine[] = laborRows.map(r => ({
     workDate:    r.work_date,
     projectName: r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）',
-    quantity:    r.quantity,
-    netAmount:   r.tax_excluded_payment,
+    quantity:    r.piece_count ?? 0,
+    // 支払通知書は「買値」side。請求書（selling）と取り違えないこと
+    netAmount:   calcWorkAmount(r, r.project_id ? payRuleMap.get(r.project_id) : undefined, 'buying'),
   }))
 
   const expenseLines: ExpensePdfLine[] = (expenseRes.data ?? []).map(r => ({
@@ -231,7 +287,18 @@ export async function fetchPaymentNoticePdfData(
   const expenseNet  = Math.max(0, totalEx - laborNet)
   const expenseTax  = Math.max(0, totalTax - laborTax)
   const deduction   = n ? Number(n.total_deduction ?? 0) : 0
-  const deductionRate = laborTax > 0 ? Math.round((deduction / laborTax) * 100) / 100 : 0
+  // ⚠️ 以前は `deduction / laborTax` を率としていたため「20%」と表示され、画面の
+  //    「現在フェーズ 2%」と食い違っていた（消費税額に対する割合を出していたのが原因）。
+  // ⚠️ `payment_notices.deduction_rate` は**単位が混在**していて使えない。
+  //    実データに `2.0000`（パーセント）と `0.0200`（小数）が両方入っている（書き込み経路が
+  //    複数あった名残）。そのまま率として使うと 200% と表示される。
+  //    表示は制度上の率が唯一確かなので、正本から対象月の率を引く。
+  // ⚠️ 締め期間が率の切り替わり（2026-10-01 など）をまたぐ月は単一の率が存在しない。
+  //    その場合ここは期間末の率を表示する（金額は保存済みの差し引き額が正）。
+  const deductionRate = getDeductionRate(
+    new Date(y, m, 0),
+    isQualifiedInvoiceIssuer(contractor.invoice_registration_type),
+  )
   const totalAmount = totalEx + totalTax - deduction
 
   // ⚠️ fail-closed: 自社情報が未登録なら支払通知書も発行しない（請求書と同じ方針）
@@ -242,7 +309,7 @@ export async function fetchPaymentNoticePdfData(
     data: {
       company:             companyRes.data,
       contractorName:      contractor.name,
-      invoiceRegistration: contractor.invoice_registration_type === 'registered' ? 'registered' : 'unregistered',
+      invoiceRegistration: isQualifiedInvoiceIssuer(contractor.invoice_registration_type) ? 'registered' : 'unregistered',
       noticeMonth:         `${y}年${m}月分`,
       issueDate:           new Date().toISOString().slice(0, 10),
       laborLines,
