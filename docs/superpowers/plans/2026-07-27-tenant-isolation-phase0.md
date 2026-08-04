@@ -12,6 +12,29 @@
 
 ---
 
+## 🟢 2026-08-04 実装状況（コード側は全タスク完了・DB適用待ち）
+
+**実装担当分（ファイル作成・コード変更）はすべて完了した。残るのは「人間（ボス）による適用」のみ。**
+
+| 完了したもの | コミット |
+|---|---|
+| Task 1〜5 マイグレーション5本 | `8c137b7` |
+| Task 5B 全INSERT/UPSERTへの tenant_id 明示（13箇所修正） | `6feb337`（前提修正 `481712c` 含む） |
+| Task 6〜8 `tenant.ts`（UUID化・app_metadata一次ソース・tenants正本） | `a94bc23` |
+| Task 9 backfillスクリプト | `81665f6` |
+
+**計画書v2からの乖離（2026-08-04 実装時に確定した適応。以下が正）:**
+
+1. **マイグレーションのファイル名は `20260804010000`〜`20260804010004`**（本文中の `20260727010000`〜`010004` を読み替える）。計画作成後に部署分割対応等で `20260803150000` まで進んだため、Global Constraints の採番規則に従い後ろへずらした。
+2. **`client_departments`（2026-07-30新設・2行）をA群に追加** — A群は10→**11テーブル**、Task 5 の制約対象は16→**17テーブル**。**Task 5 Step 3 の期待FK数は 17→18**（17テーブル＋companies）。
+3. **`companies` は0行→1行**（`'local-dev'`）になっていたため、Task 2 のマイグレーションに uuid 変換前の `UPDATE`（`'local-dev'`→A社UUID）を追加済み。
+4. **行数の現況（2026-08-04実測）** — Task 3 Step 3・Task 10 の期待値を読み替える: `payment_notices` 10→**20** / `notification_logs` 8→**20** / `invoices` 0→**9** / `scan_jobs` 1→**3** / `approval_history` 0→**1**。`price_rules` 20・`project_payees` 12 は変わらず。auth ユーザーは計画どおり**10名**。
+5. **Task 5B の確定結果** — 真の該当13箇所を修正: `approval_history` 6経路（承認/却下/driver承認/開発者アンロック/上書き/代理承認）、`notification_logs`（`logNotification` は cron 経由もあるため引数 `tenantId` 必須化）、`expense_records` 2経路（音声・ドライバー画面）、`scan_jobs`（`upsertScanJob`）、疎通テスト6テーブル分。候補リストの他は誤検出と目視確認済み。`payment_notices` 生成・確定経路は前提修正 `481712c` で対応済み。
+
+**前提条件の確認済み事項:** 自動デプロイ（GitHub Actions）は2026-07-27に復旧済みのため、着手条件はクリアしている。
+
+---
+
 ## Global Constraints
 
 - **DB適用（SQL実行 / db push）は人間が行う。** 実装担当はファイル作成と読み取り専用クエリの提示までに留める。
