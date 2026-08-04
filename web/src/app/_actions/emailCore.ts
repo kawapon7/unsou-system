@@ -94,6 +94,7 @@ export async function deliverAlertEmail(params: {
 
   if (!destination || !body) {
     const logRes = await logNotification({
+      tenantId:     params.tenantId,
       contractorId: params.contractorId,
       type:         'email',
       destination:  destination ?? '(未設定)',
@@ -109,6 +110,7 @@ export async function deliverAlertEmail(params: {
   const messageId = 'error' in sendResult ? null : sendResult.messageId
 
   const logRes = await logNotification({
+    tenantId:     params.tenantId,
     contractorId: params.contractorId,
     type:         'email',
     destination,

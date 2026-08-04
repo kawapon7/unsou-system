@@ -27,6 +27,11 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 })
 
+// ⚠️ F0で tenant_id の DEFAULT を撤去したため、全INSERTで明示が必須。
+//    utils/tenant.ts の DEV_TENANT_ID と同値だが、あちらは next/headers に依存する
+//    モジュール群と同居しており、このスタンドアロンNodeスクリプトからは import しない。
+const TENANT_A_UUID = '00000000-0000-0000-0000-0000000000a1'
+
 // billing/actions.ts の集計関数をインポート（'use server' は Node.js では無害）
 import { fetchBillingByClient, fetchPaymentByContractor } from '../app/admin/billing/actions'
 
@@ -38,6 +43,7 @@ async function runTest() {
     const { data: client, error: clientErr } = await supabase
       .from('clients')
       .insert([{
+        tenant_id:    TENANT_A_UUID,
         company_name: 'テスト荷主（シミュレーション）',
         closing_day:  '31',
         payment_site: 30,
@@ -52,6 +58,7 @@ async function runTest() {
     const { data: contractor, error: contractorErr } = await supabase
       .from('contractors')
       .insert([{
+        tenant_id:       TENANT_A_UUID,
         name:            'テスト子分（源泉なし・インボイスあり）',
         email:           `test-contractor-${Date.now()}@test.internal`,
         tax_category:    'exclusive',
@@ -77,6 +84,7 @@ async function runTest() {
     }
 
     const projectInsert: Record<string, unknown> = {
+      tenant_id:    TENANT_A_UUID,
       project_code: `TEST-${Date.now()}`,
       project_name: '城南エリア定期便（テスト）',
       client_id:    client.id,
@@ -101,6 +109,7 @@ async function runTest() {
     const { error: priceErr } = await supabase
       .from('price_rules')
       .insert([{
+        tenant_id:        TENANT_A_UUID,
         project_id:       project.id,
         selling_price:    50000,
         buying_price:     40000,
@@ -113,6 +122,7 @@ async function runTest() {
     const { error: payeeErr } = await supabase
       .from('project_payees')
       .insert([{
+        tenant_id:           TENANT_A_UUID,
         project_id:          project.id,
         payee_contractor_id: contractor.id,
       }])
@@ -123,8 +133,8 @@ async function runTest() {
     const { error: workErr } = await supabase
       .from('work_records')
       .insert([
-        { project_id: project.id, contractor_id: contractor.id, work_date: '2026-06-01' },
-        { project_id: project.id, contractor_id: contractor.id, work_date: '2026-06-15' },
+        { tenant_id: TENANT_A_UUID, project_id: project.id, contractor_id: contractor.id, work_date: '2026-06-01' },
+        { tenant_id: TENANT_A_UUID, project_id: project.id, contractor_id: contractor.id, work_date: '2026-06-15' },
       ])
     if (workErr) throw workErr
     console.log('✅ work_records（2件）作成完了')

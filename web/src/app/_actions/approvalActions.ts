@@ -123,6 +123,8 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
   if (error) return { data: null, error: error.message }
 
   await db.from('approval_history').insert({
+    // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる
+    tenant_id:         tenantId,
     payment_notice_id: noticeId,
     action_type:       'approve',
     action_by:         'admin',
@@ -156,6 +158,8 @@ export async function rejectPaymentNotice(noticeId: string): Promise<ActionResul
   if (error) return { data: null, error: error.message }
 
   await db.from('approval_history').insert({
+    // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる
+    tenant_id:         tenantId,
     payment_notice_id: noticeId,
     action_type:       'reject',
     action_by:         'admin',

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { getCurrentTenantId } from '@/utils/tenant'
 import { mergeMetadata } from '@/app/_actions/scan-voice-bridge'
 import {
   extractInvoiceData,
@@ -24,6 +25,8 @@ const ALLOWED_TYPES = [
 type JobStatus = 'queued' | 'processing' | 'completed' | 'failed'
 
 async function upsertScanJob(params: {
+  /** ⚠️ F0で tenant_id の DEFAULT を撤去したため必須。省略すると NOT NULL 違反になる */
+  tenantId:       string
   jobId:          string
   userId:         string
   status:         JobStatus
@@ -39,6 +42,7 @@ async function upsertScanJob(params: {
     .from('scan_jobs')
     .upsert(
       {
+        tenant_id:       params.tenantId,
         job_id:          params.jobId,
         user_id:         params.userId,
         status:          params.status,
@@ -74,12 +78,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unsupported file type' }, { status: 415 })
   }
 
+  const tenantId     = await getCurrentTenantId()
   const jobId        = crypto.randomUUID()
   const workRecordId = formData.get('work_record_id')
   const wrid         = typeof workRecordId === 'string' ? workRecordId : null
 
   // ── ジョブ受付ログを scan_jobs に INSERT ─────────────
   await upsertScanJob({
+    tenantId,
     jobId,
     userId:        user.id,
     status:        'queued',
@@ -104,7 +110,7 @@ export async function POST(req: NextRequest) {
   // ── Gemini 1.5 Flash による同期処理 ─────────────────
 
   // 処理開始ステータスを記録
-  await upsertScanJob({ jobId, userId: user.id, status: 'processing', workRecordId: wrid }).catch(() => {})
+  await upsertScanJob({ tenantId, jobId, userId: user.id, status: 'processing', workRecordId: wrid }).catch(() => {})
   if (wrid) {
     mergeMetadata('work_records', wrid, {
       'scan::job_id':      jobId,
@@ -121,6 +127,7 @@ export async function POST(req: NextRequest) {
 
     // ── 成功: scan_jobs と metadata に結果を保存 ─────────
     await upsertScanJob({
+      tenantId,
       jobId,
       userId:       user.id,
       status:       'completed',
@@ -153,6 +160,7 @@ export async function POST(req: NextRequest) {
     const message = err instanceof Error ? err.message : String(err)
 
     await upsertScanJob({
+      tenantId,
       jobId,
       userId:       user.id,
       status:       'failed',

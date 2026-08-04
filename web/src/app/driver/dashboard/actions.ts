@@ -2,6 +2,7 @@
 
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { getCurrentTenantId } from '@/utils/tenant'
 import type { Database } from '@/types/supabase'
 
 type ProjectRow    = Database['public']['Tables']['projects']['Row']
@@ -190,11 +191,14 @@ export async function submitExpense(
   const contractorId = me.data.id
 
   const supabase = createServiceClient()
+  const tenantId = await getCurrentTenantId()
   const amountTaxExcluded = Math.round(params.amountActual / 1.1)
 
   const { data, error } = await supabase
     .from('expense_records')
     .insert({
+      // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる
+      tenant_id:           tenantId,
       contractor_id:       contractorId,
       expense_date:        params.expenseDate,
       expense_type:        params.expenseType,

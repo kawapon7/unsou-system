@@ -2,6 +2,7 @@
 
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { getCurrentTenantId } from '@/utils/tenant'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -153,6 +154,10 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
     return { data: null, error: 'すでに承認済みです' }
   }
 
+  // ⚠️ fail-closed で例外を投げ得るため、更新前に解決しておく
+  //    （更新後に投げると「承認は済んだのにエラー表示」になる）
+  const tenantId = await getCurrentTenantId()
+
   // driver 承認確定: status='locked' に加え approval_status / locked も同期。
   // （表示・管理画面は approval_status を参照するため両列を揃える）
   const { error: updateErr } = await db
@@ -171,9 +176,11 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
   if (updateErr) return { data: null, error: updateErr.message }
 
   // 監査ログ（ベストエフォート: 失敗しても承認自体は成功扱い）
+  // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる
   await db
     .from('approval_history')
     .insert({
+      tenant_id:         tenantId,
       payment_notice_id: noticeId,
       action_type:       'driver_approval',
       action_by:         userId,

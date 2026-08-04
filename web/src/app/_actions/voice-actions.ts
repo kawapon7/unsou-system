@@ -8,6 +8,7 @@ import {
 import { createClient }        from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { requireAuth }         from '@/utils/auth'
+import { getCurrentTenantId }  from '@/utils/tenant'
 
 // ── 公開型 ────────────────────────────────────────────────
 
@@ -181,12 +182,15 @@ export async function saveVoiceExpense(
   if (authErr || !user) return { error: '認証が必要です' }
 
   const service           = createServiceClient()
+  const tenantId          = await getCurrentTenantId()
   const amountTaxExcluded = Math.round(params.amount / 1.1)
   const expenseType       = CATEGORY_TO_TYPE[params.category] ?? 'other'
 
   const { error } = await service
     .from('expense_records')
     .insert({
+      // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる
+      tenant_id:           tenantId,
       contractor_id:       params.contractorId,
       expense_date:        params.date,
       expense_type:        expenseType,

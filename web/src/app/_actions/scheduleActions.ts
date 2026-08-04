@@ -547,6 +547,10 @@ export type NotificationLogType   = 'email' | 'sms' | 'import_log' | 'reminder'
 export type NotificationLogStatus = 'sent' | 'failed' | 'delivered'
 
 export async function logNotification(params: {
+  /** ⚠️ F0で tenant_id の DEFAULT を撤去したため必須。
+   *  cron経由（ユーザーセッション無し）でも呼ばれるため getCurrentTenantId() は使わず、
+   *  呼び出し元から明示的に受け取る。 */
+  tenantId:     string
   contractorId: string
   type:         NotificationLogType
   destination:  string
@@ -559,6 +563,7 @@ export async function logNotification(params: {
   const { data, error } = await db
     .from('notification_logs')
     .insert({
+      tenant_id:     params.tenantId,
       contractor_id: params.contractorId,
       type:          params.type,
       destination:   params.destination,

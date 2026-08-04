@@ -53,6 +53,8 @@ function monthStartStr(yearMonth: string): string {
 async function insertPaymentNoticeAuditLog(
   service: ReturnType<typeof createServiceClient>,
   params: {
+    /** ⚠️ F0で tenant_id の DEFAULT を撤去したため必須。省略すると NOT NULL 違反になる */
+    tenantId:        string
     paymentNoticeId: string
     actionType:      string
     actionBy:        string
@@ -66,6 +68,7 @@ async function insertPaymentNoticeAuditLog(
   const { error } = await service
     .from('approval_history')
     .insert({
+      tenant_id:         params.tenantId,
       payment_notice_id: params.paymentNoticeId,
       action_type:       params.actionType,
       action_by:         params.actionBy,
@@ -247,6 +250,7 @@ async function finalizePaymentNotice(
 
     // 開発者アンロックが有効 → 逃げられない証跡を approval_history に刻む
     await insertPaymentNoticeAuditLog(service, {
+      tenantId,
       paymentNoticeId: existingNotice.id,
       actionType:      'developer_unlock',
       actionBy:        opts.userId,
@@ -361,6 +365,7 @@ async function finalizePaymentNotice(
   // アンロック後の上書き完了ログ
   if (isLocked && existingNotice) {
     await insertPaymentNoticeAuditLog(service, {
+      tenantId,
       paymentNoticeId: existingNotice.id,
       actionType:      'overwrite_after_unlock',
       actionBy:        opts.userId,
@@ -503,6 +508,7 @@ export async function proxyApprovePaymentNotice(
 
   // ⚠️ 証跡が本体。ここが失敗したら throw して気づけるようにする（握り潰さない）
   await insertPaymentNoticeAuditLog(service, {
+    tenantId,
     paymentNoticeId:    params.noticeId,
     actionType:         'proxy_approval',
     actionBy:           userId,
