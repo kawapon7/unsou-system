@@ -221,6 +221,10 @@ async function finalizePaymentNotice(
   const { data: existingNotice } = await service
     .from('payment_notices')
     .select('id, approval_status, locked, total_amount, created_at')
+    // ⚠️ 一意制約は (contractor_id, notice_month) で tenant_id を含まない。
+    //    contractor_id は他テナントの値も指定できてしまうため、tenant_id で必ず絞る
+    //    （service クライアントは RLS を通らない）。
+    .eq('tenant_id', tenantId)
     .eq('contractor_id', contractorId)
     .eq('notice_month', noticeMonthDate)
     .maybeSingle()
@@ -319,6 +323,9 @@ async function finalizePaymentNotice(
     .from('payment_notices')
     .upsert(
       {
+        // ⚠️ tenant_id を書かないと DB デフォルト 'local-dev' が入る。
+        //    テナント分離F0（uuid化）後はデフォルト値が実テナントと一致しなくなるため明示する。
+        tenant_id:              tenantId,
         contractor_id:          contractorId,
         notice_month:           noticeMonthDate,
         target_month:           noticeMonthDate,

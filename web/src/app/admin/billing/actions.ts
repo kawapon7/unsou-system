@@ -602,10 +602,12 @@ export async function fetchPaymentNoticeStatuses(
 ): Promise<ActionResult<PaymentNoticeStatus[]>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await (supabase as any)
     .from('payment_notices')
     .select('id, contractor_id, approval_status, locked, total_excluding_tax, total_tax, total_deduction, adjustment_amount')
+    .eq('tenant_id', tenantId)
     .eq('notice_month', `${yearMonth}-01`)
 
   if (error) return { data: null, error: error.message }
@@ -653,6 +655,9 @@ export async function generatePaymentNotice(
   const { data: existing } = await db
     .from('payment_notices')
     .select('id, status, approval_status, locked')
+    // ⚠️ 一意制約は (contractor_id, notice_month) で tenant_id を含まない。
+    //    service クライアントは RLS を通らないため tenant_id で必ず絞る。
+    .eq('tenant_id', tenantId)
     .eq('contractor_id', contractorId)
     .eq('notice_month', targetMonth)
     .maybeSingle()
@@ -708,6 +713,7 @@ export async function generatePaymentNotice(
       .from('payment_notices')
       .update(noticePayload)
       .eq('id', existing.id)
+      .eq('tenant_id', tenantId)
       .select('id')
       .single()
     if (uErr) return { data: null, error: uErr.message }
@@ -715,7 +721,8 @@ export async function generatePaymentNotice(
   } else {
     const { data: inserted, error: iErr } = await db
       .from('payment_notices')
-      .insert({ contractor_id: contractorId, notice_month: targetMonth, ...noticePayload })
+      // ⚠️ tenant_id を書かないと DB デフォルト 'local-dev' が入る（F0のuuid化後に破綻）
+      .insert({ tenant_id: tenantId, contractor_id: contractorId, notice_month: targetMonth, ...noticePayload })
       .select('id')
       .single()
     if (iErr) return { data: null, error: iErr.message }
