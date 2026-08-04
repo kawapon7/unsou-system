@@ -11,7 +11,7 @@ const base: InvoiceWritePayload = {
   status:       'draft',
   dueDate:      '2026-07-31',
   issuedAt:     null,
-  tenantId:     'local-dev',
+  tenantId:     '00000000-0000-0000-0000-0000000000a1',
 }
 
 describe('buildInvoiceRow', () => {
@@ -48,7 +48,7 @@ describe('buildInvoiceRow', () => {
 
   it('tenant_id を必ず書き込む（DEFAULT 依存をやめる）', () => {
     const row = buildInvoiceRow(base)
-    expect(row['tenant_id']).toBe('local-dev')
+    expect(row['tenant_id']).toBe('00000000-0000-0000-0000-0000000000a1')
   })
 
   it('金額をそのまま渡す', () => {

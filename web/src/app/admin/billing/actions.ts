@@ -721,7 +721,7 @@ export async function generatePaymentNotice(
   } else {
     const { data: inserted, error: iErr } = await db
       .from('payment_notices')
-      // ⚠️ tenant_id を書かないと DB デフォルト 'local-dev' が入る（F0のuuid化後に破綻）
+      // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる
       .insert({ tenant_id: tenantId, contractor_id: contractorId, notice_month: targetMonth, ...noticePayload })
       .select('id')
       .single()

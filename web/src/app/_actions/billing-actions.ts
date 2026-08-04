@@ -327,8 +327,7 @@ async function finalizePaymentNotice(
     .from('payment_notices')
     .upsert(
       {
-        // ⚠️ tenant_id を書かないと DB デフォルト 'local-dev' が入る。
-        //    テナント分離F0（uuid化）後はデフォルト値が実テナントと一致しなくなるため明示する。
+        // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる
         tenant_id:              tenantId,
         contractor_id:          contractorId,
         notice_month:           noticeMonthDate,
