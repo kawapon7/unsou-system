@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useCallback, useTransition } from 'react'
 import {
-  getDefensiveAlerts,
   reviewThresholdRecord,
   deleteAlertRecord,
   type DefensiveAlerts,
@@ -500,10 +499,19 @@ export default function DefensiveAlertPanel() {
   }, [])
 
   const load = useCallback(async () => {
-    const res = await getDefensiveAlerts()
-    if (res.error) { setLoadErr(res.error); return }
-    setAlerts(res.data)
-    setLoadErr(null)
+    // Server Action ではなく GET 窓口で取得する。
+    // アクションキュー（直列）に読み取りを並ばせると、キュー停止時に
+    // 後続の全アクションを道連れにするため（2026-08-05障害の回避策）
+    try {
+      const r = await fetch('/api/admin/defensive-alerts')
+      if (!r.ok) { setLoadErr(`アラート取得に失敗しました (${r.status})`); return }
+      const res = (await r.json()) as { data: DefensiveAlerts | null; error: string | null }
+      if (res.error) { setLoadErr(res.error); return }
+      setAlerts(res.data)
+      setLoadErr(null)
+    } catch {
+      setLoadErr('アラート取得に失敗しました（通信エラー）')
+    }
   }, [])
 
   useEffect(() => { void load() }, [load])

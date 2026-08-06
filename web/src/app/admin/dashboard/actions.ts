@@ -508,3 +508,34 @@ export async function fetchScheduleTrend(): Promise<ActionResult<ScheduleTrendRo
     error: null,
   }
 }
+
+export type DashboardData = {
+  summary:  ScheduleSummary       | null
+  projects: ProjectBreakdownRow[] | null
+  trend:    ScheduleTrendRow[]    | null
+}
+
+// 業績サマリー画面の初期表示3種を1リクエストで返す統合エントリーポイント。
+// Server Action はアクションキューで直列処理されるため、読み取りを3本並べると
+// キュー停止時に全滅する（2026-08-05障害）。1本化で滞留自体を起こさせない。
+export async function fetchDashboardData(
+  yearMonth: string,
+): Promise<{ data: DashboardData; error: string | null }> {
+  // 戻り型がActionResultでないのは意図的: 3種のうち一部だけ成功したとき
+  // 部分データとエラーを同時に返すため（ActionResultは二者択一で表せない）
+  const [summaryRes, projectsRes, trendRes] = await Promise.all([
+    fetchScheduleSummary(yearMonth),
+    fetchProjectBreakdown(yearMonth),
+    fetchScheduleTrend(),
+  ])
+  const firstErr =
+    [summaryRes, projectsRes, trendRes].map(r => r.error).find(Boolean) ?? null
+  return {
+    data: {
+      summary:  summaryRes.data,
+      projects: projectsRes.data,
+      trend:    trendRes.data,
+    },
+    error: firstErr,
+  }
+}

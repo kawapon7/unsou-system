@@ -4,9 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { todayYearMonthJST } from '@/utils/date'
 import {
-  fetchScheduleSummary,
-  fetchProjectBreakdown,
-  fetchScheduleTrend,
+  fetchDashboardData,
   type ScheduleSummary,
   type ProjectBreakdownRow,
   type ScheduleTrendRow,
@@ -329,16 +327,12 @@ export default function DashboardPage() {
   const load = useCallback(async (ym: string) => {
     setLoading(true)
     setError(null)
-    const [summaryRes, projectsRes, trendRes] = await Promise.all([
-      fetchScheduleSummary(ym),
-      fetchProjectBreakdown(ym),
-      fetchScheduleTrend(),
-    ])
-    const firstErr = [summaryRes, projectsRes, trendRes].map(r => r.error).find(Boolean)
-    if (firstErr) setError(firstErr)
-    if (summaryRes.data)  setSummary(summaryRes.data)
-    if (projectsRes.data) setProjects(projectsRes.data)
-    if (trendRes.data)    setTrend(trendRes.data)
+    // 3本のServer Actionを1本に統合（アクションキュー直列処理の滞留対策）
+    const res = await fetchDashboardData(ym)
+    if (res.error) setError(res.error)
+    if (res.data?.summary)  setSummary(res.data.summary)
+    if (res.data?.projects) setProjects(res.data.projects)
+    if (res.data?.trend)    setTrend(res.data.trend)
     setLoading(false)
   }, [])
 
