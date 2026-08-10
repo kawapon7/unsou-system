@@ -8,7 +8,7 @@
 //
 //   - admin/billing/actions.ts   `=== '適格'`     → `registered` の委託先を未登録扱い
 //   - admin/sales/actions.ts     `=== 'registered'` → `適格` の委託先を未登録扱い
-//   - _actions/pdfActions.ts     両方を見る（唯一正しかった）
+//   - _actions/pdfActions.ts     両方を見る（唯一正しかった。ファイル自体は未使用の重複で 2026-08-10 削除済み）
 //
 // 未登録扱いになると経過措置の控除が引かれるため、**これは表示ではなく支払額の誤り**。
 // 判定が要るならこのモジュールを使い、`=== 'registered'` のような直書きを増やさないこと。

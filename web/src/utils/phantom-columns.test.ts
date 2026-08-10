@@ -26,10 +26,6 @@ const EXCLUDED = [
   'types/supabase.ts',
   'utils/phantom-columns.test.ts',
   'utils/work-amount.test.ts',
-  // ⚠️ ここだけは列ではなく metadata(jsonb) のキー名として同じ文字列を使っている
-  //    （`metaNumber(row.metadata, 'tax_excluded_sales')`）。列参照ではないので 42703 にならない。
-  //    なお本ファイルは型だけが2コンポーネントから import されている重複ファイルで、整理は別タスク。
-  'app/_actions/pdfActions.ts',
 ]
 
 function collectSourceFiles(dir: string): string[] {
