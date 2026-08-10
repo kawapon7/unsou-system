@@ -35,5 +35,8 @@ yarn-debug.log*
 # Git worktrees
 .worktrees/
 
+# Claude Code ローカル設定（端末ごとの個人設定。共有しない）
+.claude/settings.local.json
+
 # 実データ（口座情報・角印・従業員実名を含む。Git管理下に置かない）
 ooba/
