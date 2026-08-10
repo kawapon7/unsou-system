@@ -1299,7 +1299,7 @@ web/
 | ✅ 完了 2026-07-01〜02深夜 | APIキー/トークンのローテーション | 2026-07-01セッションでチャットに各種キー露出（Cloudflare token/Supabase/Gemini/Resend）。深夜作業で日付を跨ぎつつ全キー再発行・差し替え済み（ユーザー確認）。Supabase側は「Legacy API Keys（旧来のanon/service_roleキー）」の再発行で手こずった |
 | ✅ 完了 2026-07-27 | 自動デプロイ再設定 | **CLOUDFLARE_API_TOKEN を再発行してGitHub secretへ入れ直し、復旧を確認**（run `30262909199` success、Worker更新 `2026-07-27T11:43:02Z`）。以降 `web/**` を含む main への push で自動デプロイされる。以下は経緯: **GitHub Actions方式で実装・push済み**（`.github/workflows/deploy.yml`、コミット`b8069eb`）。main push（`web/**`変更時）で `npm run deploy` をCI実行。GitHub secrets 4つ登録済み（NEXT_PUBLIC_SUPABASE_URL/ANON_KEY・CLOUDFLARE_API_TOKEN・CLOUDFLARE_ACCOUNT_ID）。**初回実行はビルド全成功→デプロイ段でCloudflare認証失敗**（`Invalid access token [code:9109]`）。**残作業＝CLOUDFLARE_API_TOKENの再発行と入れ直しのみ**。手順：Cloudflare My Profile→API Tokens→Create Token→テンプレ「Edit Cloudflare Workers」で発行→GitHubの同名secretを編集で上書き→`gh workflow run deploy.yml`（またはActionsタブのRun workflow）で再実行。ビルド側（Node24・NEXT_PUBLIC焼き込み）は検証済みで問題なし |
 | 🟡 中 | 旧URL `unsou-system.pages.dev` の扱い決定 | 7/1のWorkers移行以降404が正常な状態。放置／リダイレクト／Pagesプロジェクト削除のいずれにするか未決定 |
-| 🟢 低 | `.cursorrules` / `agent.md` のコミット | 意図的に作成した未追跡ファイル。別コミットで追加予定 |
+| ✅ 完了 | `.cursorrules` / `agent.md` のコミット | 2026-08-10 確認: 既に `0513d7e` でコミット済みだった（タスクが古いだけ） |
 | ✅ 完了 2026-07-23 | 5大アラートのResendメール自動送信復活 | 実装・本番デプロイ完了 2026-07-10。①入力遅延・⑤長期未承認の2アラートで自動送信＋手動再送信ボタンが稼働中。**2026-07-23、実アラート発生時のメール着信をボスが確認済み → タスククローズ**。これをもって7/6引き継ぎ課題「Resend通知メール実送受信確認」も完全クローズ。詳細は5-4参照 |
 | ✅ 完了 2026-07-26 | 総合テスト用デモデータ投入 | `web/scripts/seed-demo-full.mjs` / `clear-demo-data.mjs` を新規作成（コミット`7959237`）。予定137・実績122・支払通知書10。5大アラート発火状態を確認済み。**削除は `node web/scripts/clear-demo-data.mjs --execute`**（既定はDRY RUN）。詳細は5-4参照 |
 | ✅ 完了 2026-07-26 | 自社マスタ（請求書発行元）実装 | 設計欠落の発覚に対応（コミット`650fe39`）。`companies`拡張＋`/admin/settings/company`編集画面＋PDF4テンプレートの定数全廃。**PDFを出すには先に「マスタ・設定→自社情報」の登録が必要**（未登録はfail-closedでエラー停止）。詳細は5-4参照 |
@@ -1316,12 +1316,12 @@ web/
 | 🟡 中 | **立替金への経過措置適用（論点D・税理士確認待ち）** | ETCカードの所有者が委託先であることが判明。国税庁 質疑応答事例「実費弁償金の課税」に照らすと、高速代は**委託先への対価に含まれる＝委託先からの課税仕入れ**と読める。そうなら**立替金にも経過措置がかかる**が、現行は労務報酬にしかかけていないため**差し引き不足＝支払超過**の可能性がある。⚠️支払額が変わるため税理士確認が取れるまで実装しない。年度累計を労務／立替で分けて表示してあるのは、結論がどちらでも画面を作り直さずに済むようにするため |
 | 🟡 中 | **売上請求書から経過措置を外す（論点B・税理士確認待ち）** | `finalizeInvoice` が `client.invoice_registered`（＝取引相手）を見て差し引いている。制度上、経過措置は買い手が未登録の売り手から仕入れたときの話なので、売上側の判定主語が誤り。実請求書にも差し引き行は無い。**税務判断を伴うため顧問税理士の確認を取ってから実装すること。** 詳細は §5-4 の 2026-07-31 |
 | ✅ 完了 2026-08-04 | **取引先の部署分割対応＋請求書書き込み一本化** | **全13タスク完了・本番反映・実地確認全項目合格**（部署別2枚生成・ロック拒否・未割当警告・§11-4フラグ切替まで。詳細は §5-4 の 2026-08-03 その2）。検証用の一時変更も復元済み（突発案件=運送事業部・東京物流の部署制ON、2026-08-04にDB確認）。admin画面の描画不具合は**ボスの通常タブでは発生せず・自動操作環境でも時間経過で解消＝本番実害なしでクローズ**。残: 検証で作った東京物流2026-07の請求書3枚（issued・¥0）はダミーデータ一掃時に削除 |
-| 🟡 中 | **一覧のライブ計算が独自実装（暦月固定）** | `fetchPaymentNoticeSummary`（確定・ロックタブの支払通知書一覧）だけが自前で金額を計算しており、対象期間が**暦月固定**。支払通知書の生成は締め日ベース（`utils/payment-notice-calc.ts`）。⚠️**現在は委託先16件すべてが「月末」締めのため実害なし。月末以外の締めの委託先が1人でも入った瞬間に、画面の金額と通知書の金額が食い違う。** 対応＝ライブ計算を `computePaymentNoticeAmounts` の呼び出しに寄せる。詳細は §5-4 の 2026-08-02 その7 |
+| ✅ 完了 2026-08-10 | **一覧のライブ計算が独自実装（暦月固定）** | `fetchPaymentNoticeSummary` を `computePaymentNoticeAmounts`（唯一の正本）の呼び出しへ一本化。`payment_notices` 読み取りの `tenant_id` 条件漏れも同時修正。tsc/vitest107/本番ビルドで検証済み。⚠️画面確認だけ未了（次回ログイン可能なセッションで確定・ロックタブを一度見ること）。詳細は §5-4 の 2026-08-10 その2 |
 | 🟡 中 | **源泉徴収税が支払通知書に反映されない** | `payment_notices` に源泉の列が**存在しない**。一覧 `fetchPaymentByContractor` だけが 10.21% を差し引くため、画面と通知書で金額が食い違う。⚠️**設計書 §2-3-10 で源泉徴収は「拡張用ルール（凍結中）」とされており、現在 `has_withholding` は16件すべて false のため実害なし。凍結を解除する前に必ず対応すること** |
 | ✅ 完了 2026-08-04 | **`payment_notices` の既存行取得に `tenant_id` 条件が無い** | 修正完了（`481712c`）。生成（`generatePaymentNotice`）・確定（`finalizePaymentNotice`）・一覧（`fetchPaymentNoticeStatuses`）に `tenant_id` 条件を追加し、INSERT/UPSERT に `tenant_id` を明示（従来はDBデフォルト `'local-dev'` 頼みで、F0のuuid化後に実テナントと食い違う罠だった）。一意制約 `(contractor_id, notice_month)` は tenant を含まないため `onConflict` は変更せず。tsc 0件・107テスト通過、既存20行は全て `local-dev` で挙動変化なしを確認 |
 | 🟡 中 | **AIスキャンのUI全体が未検証** | 2026-08-02 に列参照バグを修正したが、検証は INSERT ペイロードを実DBで実行しただけ。**画像アップロード→Gemini解析→保存の通し確認は未実施**（請求書画像が必要）。ボスから画像をもらって実施すること |
 | 🟢 低 | **`status` 列の整理（`payment_notices`）** | `unapproved`/`approved`/`locked` は `approval_status` と `locked` から導ける派生値。新規に意味を持たせるのをやめ、表示専用にして最終的に廃止する。詳細は §5-4 の 2026-08-02 その8 |
-| 🟢 低 | **重複ファイル `pdfActions.ts` の整理** | 型だけが2コンポーネントから import されている未使用の重複ファイル。`pdf-actions.ts`（ハイフン）が現役。2026-07-29 から未着手 |
+| ✅ 完了 2026-08-10 | **重複ファイル `pdfActions.ts` の整理** | `pdfActions.ts`＋レガシーPDFテンプレート2本＋`registerFonts.ts`＋依存 `@react-pdf/renderer` を削除。現役は `pdf-actions.ts`＋`components/pdf/`。詳細は §5-4 の 2026-08-10 その2 |
 | 🟢 低 | **経過措置の控除限度額（年間税込1億円超）が未実装** | 一の免税事業者等からの経過措置対象仕入れが年間1億円を超える部分は対象外。委託先1社あたりの判定であり現在の規模では届かないため意図的に未実装。詳細は `utils/transitional-deduction.ts` の冒頭コメント |
 | 🟢 低 | 既存ダミーデータの削除 | 委託先7・案件10（【テスト】印）が残存し【デモ】データと混在。本番DBへの`DELETE`はハーネスにブロックされるため、SupabaseダッシュボードのSQL Editorでボスが実行する必要がある |
 | 🟢 低 | HIBIKIフィールドテスト（A社） | 本番ユーザー作成・実ログイン確認・Resend通知メール実送受信確認はすべて完了（2026-07-23）。以降はフィールドテスト運用フィードバック待ち |
@@ -1356,6 +1356,14 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-08-10 その2（支払通知書一覧のライブ計算を正本へ一本化・レガシーPDF実装の削除）
+
+1. **支払通知書一覧（確定・ロックタブ）のライブ計算を `computePaymentNoticeAmounts` へ委譲**: `fetchPaymentNoticeSummary`（`admin/sales/actions.ts`）が最後まで残っていた暦月固定の自前計算だった件を解消。対象委託先の洗い出しは `generateAllPaymentNotices` と同じ「前月1日〜当月末日」の広域窓＋締め期間内活動の有無で判定。これで月末以外の締めの委託先が入っても一覧と通知書の金額が食い違わない。ライブ計算の失敗は fail-closed（1件でも失敗したら一覧全体をエラー表示）。
+2. **同関数の `payment_notices` 読み取りに `tenant_id` 条件が無かった同型バグも修正**（2026-08-04 の `481712c` と同型の取り残し）。
+3. **レガシーPDF実装（未使用の重複）を削除**: `_actions/pdfActions.ts`・`admin/_components/InvoicePdfTemplate.tsx`・`PaymentNoticePdfTemplate.tsx`・`utils/pdf/registerFonts.ts` の4本と、これらだけが使っていた依存 `@react-pdf/renderer` を削除。現役は `_actions/pdf-actions.ts`＋`components/pdf/`（HTML印刷モーダル）。`phantom-columns.test.ts` の除外リストからも削除。
+4. **検証**: `tsc --noEmit` 0件／`vitest run` 107 passed／`npm run build`（本番ビルド）成功／eslint 新規指摘0（既存3件のまま）。⚠️**画面での実地確認は未了** — このセッションの実行環境ではログイン（パスワード入力）とDB照会が許可されず不可だった。ただし①計算本体は無変更（8/2に11件再生成＋PDF照合で実地検証済みの正本）②現在は全委託先が「月末」締めのため新旧ロジックは数学的に同値③配線は型検証済み。**次回ログイン可能なセッションで 売上/請求→確定・ロックタブ の表示を一度確認すること。**
+5. ほか: `.claude/launch.json` の `cwd`/`npm` パスが旧マシンのままで dev サーバーが起動できなかったのを現環境（mise shims）へ修正。タスク表の「`.cursorrules` / `agent.md` のコミット」は **既に `0513d7e` でコミット済みだったことを確認**しクローズ。
 
 #### 2026-08-03 その2（Task 7適用・Task 11/12デプロイ・実地確認全項目合格・未解決の描画不具合1件）
 

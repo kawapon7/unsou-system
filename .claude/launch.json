@@ -3,11 +3,11 @@
   "configurations": [
     {
       "name": "Next.js dev",
-      "runtimeExecutable": "npm",
+      "runtimeExecutable": "/Users/atsushikawasaki/.local/share/mise/shims/npm",
       "runtimeArgs": ["run", "dev"],
       "port": 3000,
       "autoPort": false,
-      "cwd": "/Users/kawasakiatsushi/developer/unsou-system/web"
+      "cwd": "/Users/atsushikawasaki/dev/unsou-system/web"
     },
     {
       "name": "Cloudflare Pages preview",
