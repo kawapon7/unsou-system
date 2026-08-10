@@ -13,6 +13,7 @@ import {
   type RawWorkRecord,
 } from '@/utils/work-amount'
 import { closingRange, computeDueDate, isWithinRange, formatLocalDate } from '@/utils/closing-period'
+import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
 import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
@@ -569,151 +570,137 @@ export async function fetchPaymentNoticeSummary(
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
 
+  // ⚠️ 対象期間は暦月固定ではなく委託先ごとの締め期間。金額の算出は
+  //    computePaymentNoticeAmounts（唯一の正本）に委譲する。以前はここだけが
+  //    暦月固定の自前計算で、月末以外の締めの委託先が入った瞬間に
+  //    通知書と金額が食い違う状態だった。自前計算に戻さないこと。
+  // 締め日は委託先ごとに異なるため、対象委託先の洗い出しは「前月1日〜当月末日」に
+  // 広げる（generateAllPaymentNotices と同じパターン）。実際の集計期間は
+  // computePaymentNoticeAmounts 側で closing_day により再度絞り込まれる。
   const [y, m] = yearMonth.split('-').map(Number)
-  const from = `${yearMonth}-01`
-  const to   = new Date(y, m, 0).toISOString().slice(0, 10)
+  const wideFrom = formatLocalDate(new Date(y, m - 2, 1))
+  const wideTo   = formatLocalDate(new Date(y, m, 0))
   const noticeMonth = `${yearMonth}-01`
 
   const [contractorsRes, workRes, expenseRes, noticesRes] = await Promise.all([
     supabase
       .from('contractors')
-      // ⚠️ `tax_type` は contractors に存在しない列。正しくは `tax_category`。
-      //    参照していた間は 42703 でこの一覧が丸ごと空になっていた（2026-08-02 修正）。
-      .select('id, name, invoice_registration_type, tax_category')
+      .select('id, name, invoice_registration_type')
       .eq('tenant_id', tenantId)
       .order('name'),
     supabase
       .from('work_records')
-      // tax_excluded_payment は実DBに存在しないため project_id + 計測値を取得して都度計算
-      .select('contractor_id, project_id, piece_count, start_time, end_time, break_minutes')
+      .select('contractor_id, work_date')
       .eq('tenant_id', tenantId)
-      .gte('work_date', from)
-      .lte('work_date', to),
-    // ⚠️ 承認済みだけを集計する。支払通知書の生成（utils/payment-notice-calc.ts）が
-    //    approval_status='approved' で絞っているのに、ここだけ絞っていなかったため
-    //    未承認の立替金まで支払予定に乗り、一覧のほうが過大に出ていた（2026-08-02 修正）。
+      .gte('work_date', wideFrom)
+      .lte('work_date', wideTo)
+      .not('contractor_id', 'is', null),
+    // 承認済みのみ。通知書の集計（payment-notice-calc.ts）と同じ絞り込み
     supabase
       .from('expense_records')
-      .select('contractor_id, amount_tax_excluded, tax_category')
+      .select('contractor_id, expense_date')
       .eq('tenant_id', tenantId)
       .eq('approval_status', 'approved')
-      .gte('expense_date', from)
-      .lte('expense_date', to),
+      .gte('expense_date', wideFrom)
+      .lte('expense_date', wideTo),
     supabase
       .from('payment_notices')
       .select('id, contractor_id, approval_status, locked, labor_tax_excluded, labor_tax, expense_tax_excluded, expense_tax, deduction_rate, deduction, total_amount')
+      // ⚠️ tenant_id 条件を忘れないこと。2026-08-04 の billing-actions 側の修正
+      //    （481712c）と同型の漏れがここに残っていた（2026-08-10 修正）
+      .eq('tenant_id', tenantId)
       .eq('notice_month', toDbMonth(noticeMonth)),
   ])
 
   if (contractorsRes.error) return { data: null, error: contractorsRes.error.message }
+  if (workRes.error)        return { data: null, error: workRes.error.message }
+  if (expenseRes.error)     return { data: null, error: expenseRes.error.message }
+  if (noticesRes.error)     return { data: null, error: noticesRes.error.message }
 
   const noticeMap = new Map(
     (noticesRes.data ?? []).map(n => [n.contractor_id, n]),
   )
 
-  // price_rules を一括取得して project_id → rule のマップを構築
-  const allProjectIds = [
-    ...new Set((workRes.data ?? []).map(r => r.project_id).filter((id): id is string => id !== null)),
-  ]
-  const priceRuleMapForPayment = new Map<string, PriceRuleRecord>()
-  if (allProjectIds.length > 0) {
-    const { data: rules } = await supabase
-      .from('price_rules')
-      .select('project_id, calculation_type, selling_price, buying_price, margin_fixed')
-      .in('project_id', allProjectIds)
-    for (const r of rules ?? []) priceRuleMapForPayment.set(r.project_id, r as PriceRuleRecord)
-  }
-
-  // 稼働・経費の税抜き合計を contractor ごとに集計
-  type WorkAccum  = { laborNet: number }
-  type ExpAccum   = { expNetTaxable: number; expNetExempt: number }
-  const workMap   = new Map<string, WorkAccum>()
-  const expMap    = new Map<string, ExpAccum>()
-
+  // 広域窓に活動のある委託先だけをライブ計算の候補にする（activityDates は
+  // 締め期間確定後の「表示するか」の最終判定に使う）
+  const activityDates = new Map<string, string[]>()
   for (const r of workRes.data ?? []) {
-    const rule = r.project_id ? priceRuleMapForPayment.get(r.project_id) : undefined
-    const payment = calcWorkAmount(r as RawWorkRecord, rule, 'buying')
-    const acc = workMap.get(r.contractor_id) ?? { laborNet: 0 }
-    acc.laborNet += payment
-    workMap.set(r.contractor_id, acc)
+    if (!r.contractor_id) continue
+    const dates = activityDates.get(r.contractor_id) ?? []
+    dates.push(r.work_date)
+    activityDates.set(r.contractor_id, dates)
   }
   for (const r of expenseRes.data ?? []) {
-    const acc = expMap.get(r.contractor_id) ?? { expNetTaxable: 0, expNetExempt: 0 }
-    if ((r as { tax_category: string }).tax_category === 'taxable_10') {
-      acc.expNetTaxable += r.amount_tax_excluded
-    } else {
-      acc.expNetExempt  += r.amount_tax_excluded
-    }
-    expMap.set(r.contractor_id, acc)
+    const dates = activityDates.get(r.contractor_id) ?? []
+    dates.push(r.expense_date)
+    activityDates.set(r.contractor_id, dates)
   }
 
-  const { getTransitionDeductionRate } = await import('@/lib/invoice')
-  const targetDate = new Date(y, m, 0) // 月末
+  let rows: (PaymentNoticeSummaryRow | null)[]
+  try {
+    rows = await Promise.all(
+    (contractorsRes.data ?? []).map(async (contractor): Promise<PaymentNoticeSummaryRow | null> => {
+      const existing = noticeMap.get(contractor.id)
+      if (existing) {
+        // 既存 notice の保存値をそのまま表示
+        return {
+          contractorId:  contractor.id,
+          name:          contractor.name,
+          invoiceType:   contractor.invoice_registration_type,
+          laborNet:      existing.labor_tax_excluded,
+          laborTax:      existing.labor_tax,
+          expenseNet:    existing.expense_tax_excluded,
+          expenseTax:    existing.expense_tax,
+          deductionRate: Number(existing.deduction_rate),
+          deduction:     existing.deduction,
+          totalAmount:   existing.total_amount,
+          noticeId:      existing.id,
+          approvalStatus: existing.approval_status,
+          locked:        existing.locked,
+        }
+      }
 
-  const rows: PaymentNoticeSummaryRow[] = []
+      const dates = activityDates.get(contractor.id)
+      if (!dates) return null  // 広域窓に稼働・承認済み経費なし → 表示しない
 
-  for (const contractor of contractorsRes.data ?? []) {
-    const work = workMap.get(contractor.id)
-    const exp  = expMap.get(contractor.id)
-    if (!work && !exp) continue  // この月の稼働・経費なし → 表示しない
+      // 未確定 → 正本のライブ計算（締め期間・payee ルール・調整金・稼働日別の率まで
+      // 通知書の生成とまったく同じ計算）で表示する
+      const { data: a, error } = await computePaymentNoticeAmounts(supabase, {
+        tenantId,
+        contractorId: contractor.id,
+        yearMonth,
+      })
+      // ⚠️ 1件の失敗で行を黙って落とすと支払漏れにつながるため fail-closed
+      if (error || !a) throw new Error(`${contractor.name}: ${error ?? '計算結果が空です'}`)
 
-    const existing = noticeMap.get(contractor.id)
-    if (existing) {
-      // 既存 notice の保存値をそのまま表示
-      rows.push({
+      // 広域窓の活動がこの委託先の締め期間の外だけ（例: 前月分は前月の通知書の範囲）
+      // なら、この月の行としては表示しない
+      const inPeriod = dates.some(d => d >= a.period.from && d <= a.period.to)
+      if (!inPeriod) return null
+
+      return {
         contractorId:  contractor.id,
         name:          contractor.name,
         invoiceType:   contractor.invoice_registration_type,
-        laborNet:      existing.labor_tax_excluded,
-        laborTax:      existing.labor_tax,
-        expenseNet:    existing.expense_tax_excluded,
-        expenseTax:    existing.expense_tax,
-        deductionRate: Number(existing.deduction_rate),
-        deduction:     existing.deduction,
-        totalAmount:   existing.total_amount,
-        noticeId:      existing.id,
-        approvalStatus: existing.approval_status,
-        locked:        existing.locked,
-      })
-      continue
-    }
-
-    // 未確定 → ライブ計算で表示
-    // ⚠️ 表記ゆれ（registered / 適格）があるため正本の判定を使う。直書きに戻さないこと
-    const isRegistered  = isQualifiedInvoiceIssuer(contractor.invoice_registration_type)
-    // 免税の表現ゆれ（'exempt' / '免税' / 'non_taxable'）に合わせる。pdfActions.ts と同判定
-    const taxCategory = contractor.tax_category ?? 'exclusive'
-    const isLaborTaxable = taxCategory !== 'exempt' && taxCategory !== '免税' && taxCategory !== 'non_taxable'
-    const deductionRate = getTransitionDeductionRate(targetDate)
-
-    const laborNet  = work?.laborNet ?? 0
-    const laborTax  = isLaborTaxable ? Math.round(laborNet * 0.1) : 0
-    const expNetTax = exp?.expNetTaxable ?? 0
-    const expNetExm = exp?.expNetExempt  ?? 0
-    const expTax    = Math.round(expNetTax * 0.1)
-
-    const totalWithTax = laborNet + laborTax + expNetTax + expNetExm + expTax
-    const deduction = isRegistered ? 0 : Math.round(totalWithTax * deductionRate)
-    const totalAmount = totalWithTax - deduction
-
-    rows.push({
-      contractorId:  contractor.id,
-      name:          contractor.name,
-      invoiceType:   contractor.invoice_registration_type,
-      laborNet,
-      laborTax,
-      expenseNet:    expNetTax + expNetExm,
-      expenseTax:    expTax,
-      deductionRate: isRegistered ? 0 : deductionRate,
-      deduction,
-      totalAmount,
-      noticeId:      null,
-      approvalStatus: 'pending',
-      locked:        false,
-    })
+        laborNet:      a.laborTaxExcluded,
+        laborTax:      a.laborTax,
+        expenseNet:    a.expenseTaxExcluded,
+        expenseTax:    a.expenseTax,
+        deductionRate: a.deductionRate,
+        deduction:     a.deduction,
+        // 調整金込み。通知書が保存する total_amount と同じ定義
+        totalAmount:   a.totalAmount,
+        noticeId:      null,
+        approvalStatus: 'pending',
+        locked:        false,
+      }
+    }),
+    )
+  } catch (e) {
+    return { data: null, error: e instanceof Error ? e.message : String(e) }
   }
 
-  return { data: rows, error: null }
+  return { data: rows.filter((r): r is PaymentNoticeSummaryRow => r !== null), error: null }
 }
 
 // ================================================================
