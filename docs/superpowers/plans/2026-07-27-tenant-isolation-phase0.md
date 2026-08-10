@@ -14,7 +14,7 @@
 
 ## 🟢 2026-08-04 実装状況（コード側は全タスク完了・DB適用待ち）
 
-**✅ 2026-08-05 DB適用完了。** バックアップ（DB内 `backup_f0` スキーマ・18テーブル＋authメタ）→マイグレーション5本適用→backfill実行（10/10・provider保持）→デプロイ反映（Worker `modified_on` 11:42Z）→Task 10 Step 1〜4・6相当・tsc EXIT 0 まで完了。**残: 全ユーザー再ログインと Task 10 Step 5（画面確認）のみ。** 注: MCP経由適用のため `supabase_migrations.schema_migrations` のversion番号はローカルファイル名（`20260804010000`〜）と不一致（内容は同一）。本番DB作り直し時のマイグレーション照合ではこの5本を名前で突合すること。Step 6 は意図的な失敗INSERTの代わりに「FK18本を `NOT VALID` 無しで張った＝既存行検証済み・新規書き込み拒否保証」の仕様確認で代替した。
+**✅ 2026-08-05 DB適用完了。** バックアップ（DB内 `backup_f0` スキーマ・18テーブル＋authメタ）→マイグレーション5本適用→backfill実行（10/10・provider保持）→デプロイ反映（Worker `modified_on` 11:42Z）→Task 10 Step 1〜4・6相当・tsc EXIT 0 まで完了。**✅2026-08-10 Task 10 Step 5（画面確認）完了 — 全7項目PASS（詳細はHANDOVER §5-3のF0行）。残は他9ユーザーの再ログインのみ（各自ログイン時に自動完了・実害なし）。実質F0 Done。** 注: MCP経由適用のため `supabase_migrations.schema_migrations` のversion番号はローカルファイル名（`20260804010000`〜）と不一致（内容は同一）。本番DB作り直し時のマイグレーション照合ではこの5本を名前で突合すること。Step 6 は意図的な失敗INSERTの代わりに「FK18本を `NOT VALID` 無しで張った＝既存行検証済み・新規書き込み拒否保証」の仕様確認で代替した。
 
 **実装担当分（ファイル作成・コード変更）はすべて完了した。残るのは「人間（ボス）による適用」のみ。**
 
@@ -908,7 +908,7 @@ ORDER BY 1, 2;
 ```
 Expected: 4行すべて `tgenabled = 'O'`（有効）。`trg_approval_history_no_delete` / `trg_approval_history_no_update` / `trg_notification_logs_no_delete` / `trg_notification_logs_no_update`。
 
-- [ ] **Step 5: アプリ動作確認（挙動不変であること）**
+- [x] **Step 5: アプリ動作確認（挙動不変であること）** ✅2026-08-10 全項目PASS
 
 全ユーザーが**再ログイン**した上で、本番URL（`https://unsou-system.kawapon7.workers.dev`）で以下を確認する。service_role 動作のままなので、F0では表示内容は従来と変わらないはず。
 
