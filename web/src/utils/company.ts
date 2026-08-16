@@ -116,6 +116,39 @@ export async function getPaymentNoticeResponseDays(
   return { days: data?.payment_notice_response_days ?? DEFAULT_RESPONSE_DAYS, error: null }
 }
 
+// ── 運送保険料（委託先負担・全社一律・非課税） ──────────────────────
+
+/** 列が無い/行が無いときのフォールバック。DB 側の DEFAULT と必ず揃えること */
+const DEFAULT_TRANSPORT_INSURANCE = 1000
+
+/**
+ * 支払通知書で相殺する運送保険料（月額）を返す。0 なら相殺しない。
+ *
+ * ⚠️ 非課税項目。消費税・経過措置の計算基準には含めないこと。
+ */
+export async function getTransportInsuranceAmount(
+  tenantId: string,
+): Promise<{ amount: number; error: null } | { amount: null; error: string }> {
+  const service = createServiceClient()
+  const { data, error } = await service
+    .from('companies')
+    .select('transport_insurance_amount')
+    .eq('tenant_id', tenantId)
+    .maybeSingle()
+
+  // ⚠️ fail-open 厳禁: 取得失敗を 0 で通すと、相殺し忘れた支払通知書を発行してしまう。
+  //    金額が変わる項目なので、確認できないなら止める。
+  if (error) return { amount: null, error: `自社設定の取得に失敗しました: ${error.message}` }
+
+  return {
+    amount: Number(
+      (data as { transport_insurance_amount?: number } | null)?.transport_insurance_amount
+        ?? DEFAULT_TRANSPORT_INSURANCE,
+    ),
+    error: null,
+  }
+}
+
 /**
  * 「未応答のまま確定」してよい日時を返す。
  * @param noticeCreatedAt 支払通知書の生成日時（ISO 文字列）。まだ作られていなければ null

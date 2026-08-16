@@ -20,6 +20,8 @@ import {
   type TransitionalPurchase,
 } from '@/utils/transitional-deduction'
 import { isQualifiedInvoiceIssuer, normalizeInvoiceRegistration } from '@/utils/invoice-registration'
+import { getTransportInsuranceAmount } from '@/utils/company'
+import { assemblePaymentTotals } from '@/utils/payment-notice-totals'
 import {
   calcWorkAmount,
   buildPriceRuleMap,
@@ -156,6 +158,8 @@ export type PaymentNoticeAmounts = {
   deductionRate: number
   /** 税込思考業者の端数補正（inclusive＋調整有効の payee ルールのみ） */
   adjustment: number
+  /** 運送保険の相殺額（委託先負担・非課税）。totalDeduction に含まれる */
+  insuranceDeduction: number
   subtotalRegistered: number; taxRegistered: number
   subtotalUnregistered: number; taxUnregistered: number
   deductionUnregistered: number; subtotalExempt: number
@@ -374,11 +378,24 @@ export async function computePaymentNoticeAmounts(
   const deductionUnregistered = deduction
   const subtotalExempt        = isExempt ? laborTaxExcluded : 0
 
-  const totalExcludingTax = laborTaxExcluded + expenseTaxExcluded
-  const totalTax          = laborTax + expenseTax
-  const totalDeduction    = deduction
-  // 調整金を加算して業者の期待値と一致させる
-  const totalAmount = totalExcludingTax + totalTax - totalDeduction + totalAdjustment
+  // 運送保険（委託先負担・非課税）。相殺額合計にだけ積む。
+  // ⚠️ fail-closed。取得できなければ止める（相殺し忘れた通知書を出さないため）
+  const insuranceRes = await getTransportInsuranceAmount(tenantId)
+  if (insuranceRes.error !== null) return { data: null, error: insuranceRes.error }
+  // 稼働も立替も無い月は保険だけを相殺してマイナス支給にしない
+  const hasActivity = laborTaxExcluded > 0 || expenseTaxExcluded > 0
+  const insuranceDeduction = hasActivity ? insuranceRes.amount : 0
+
+  // 差引支給額の組み立ては utils/payment-notice-totals.ts が正本。ここで式を再現しないこと
+  const { totalExcludingTax, totalTax, totalDeduction, totalAmount } = assemblePaymentTotals({
+    laborTaxExcluded,
+    laborTax,
+    expenseTaxExcluded,
+    expenseTax,
+    deduction,
+    adjustment: totalAdjustment,
+    insuranceDeduction,
+  })
 
   return {
     data: {
@@ -389,6 +406,7 @@ export async function computePaymentNoticeAmounts(
       deduction,
       deductionRate,
       adjustment: totalAdjustment,
+      insuranceDeduction,
       subtotalRegistered,
       taxRegistered,
       subtotalUnregistered,

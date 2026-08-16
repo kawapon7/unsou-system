@@ -555,6 +555,8 @@ export type PaymentNoticeSummaryRow = {
   expenseTax:      number
   deductionRate:   number
   deduction:       number
+  /** 運送保険の相殺額（非課税）。deduction とは別枠で表示する */
+  insuranceDeduction: number
   totalAmount:     number
   // 既存 payment_notice
   noticeId:        string | null
@@ -605,7 +607,7 @@ export async function fetchPaymentNoticeSummary(
       .lte('expense_date', wideTo),
     supabase
       .from('payment_notices')
-      .select('id, contractor_id, approval_status, locked, labor_tax_excluded, labor_tax, expense_tax_excluded, expense_tax, deduction_rate, deduction, total_amount')
+      .select('id, contractor_id, approval_status, locked, labor_tax_excluded, labor_tax, expense_tax_excluded, expense_tax, deduction_rate, deduction, insurance_deduction, total_amount')
       // ⚠️ tenant_id 条件を忘れないこと。2026-08-04 の billing-actions 側の修正
       //    （481712c）と同型の漏れがここに残っていた（2026-08-10 修正）
       .eq('tenant_id', tenantId)
@@ -653,6 +655,7 @@ export async function fetchPaymentNoticeSummary(
           expenseTax:    existing.expense_tax,
           deductionRate: Number(existing.deduction_rate),
           deduction:     existing.deduction,
+          insuranceDeduction: Number((existing as { insurance_deduction?: number }).insurance_deduction ?? 0),
           totalAmount:   existing.total_amount,
           noticeId:      existing.id,
           approvalStatus: existing.approval_status,
@@ -688,6 +691,7 @@ export async function fetchPaymentNoticeSummary(
         expenseTax:    a.expenseTax,
         deductionRate: a.deductionRate,
         deduction:     a.deduction,
+        insuranceDeduction: a.insuranceDeduction,
         // 調整金込み。通知書が保存する total_amount と同じ定義
         totalAmount:   a.totalAmount,
         noticeId:      null,

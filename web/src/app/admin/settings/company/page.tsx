@@ -8,6 +8,7 @@ const EMPTY: CompanyFormValues = {
   bank_name: '', bank_branch: '', account_type: '', account_number: '', account_holder: '',
   fiscal_year_end_month: '',
   payment_notice_response_days: '7',
+  transport_insurance_amount: '1000',
 }
 
 function Field({
@@ -157,6 +158,23 @@ export default function CompanySettingsPage() {
             支払通知書を作ってから、委託先本人の返事をこの日数だけ待ちます。
             期間中は「未応答のまま確定」できません（口頭確認による「代理承認」はいつでも使えます）。
             期間を過ぎると確定できるようになります。0 にすると待たずにいつでも確定できます。
+          </span>
+        </label>
+
+        <label className="block">
+          <span className="text-sm font-medium text-zinc-700">運送保険料（月額・委託先負担）</span>
+          <input
+            type="number"
+            min={0}
+            step={1}
+            value={values.transport_insurance_amount}
+            onChange={e => set('transport_insurance_amount')(e.target.value)}
+            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm
+                       text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+          />
+          <span className="mt-1 block text-xs text-zinc-500">
+            支払通知書の相殺額に「運送保険（非課税）」として計上します。稼働のある委託先へ毎月一律で適用します。
+            <strong>非課税項目</strong>なので消費税・経過措置の計算には含めません。0 にすると相殺しません。
           </span>
         </label>
       </section>

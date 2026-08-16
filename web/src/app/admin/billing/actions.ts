@@ -691,6 +691,7 @@ export async function generatePaymentNotice(
     total_excluding_tax:    a.totalExcludingTax,
     total_tax:              a.totalTax,
     total_deduction:        a.totalDeduction,
+    insurance_deduction:    a.insuranceDeduction,
     adjustment_amount:      a.adjustment,
     approval_status:        'pending',
     // ⚠️ 2026-08-02 追加。この経路は内訳列と total_amount を一切書いておらず、

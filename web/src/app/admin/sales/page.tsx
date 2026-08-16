@@ -980,6 +980,7 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
                 <Th right>労務報酬（税抜）</Th>
                 <Th right>立替金（税抜）</Th>
                 <Th right>経過措置控除</Th>
+                <Th right>運送保険</Th>
                 <Th right>最終支払額</Th>
                 <Th>ステータス</Th>
                 <Th>操作</Th>
@@ -988,7 +989,7 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
             <tbody className="divide-y divide-zinc-100">
               {noticeRows.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-10 text-center text-sm text-zinc-400">
+                  <td colSpan={9} className="px-4 py-10 text-center text-sm text-zinc-400">
                     対象データがありません
                   </td>
                 </tr>
@@ -1020,6 +1021,13 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
                     <Td right>
                       {r.deduction > 0 ? (
                         <span className="text-amber-700">▲{yen(r.deduction)}</span>
+                      ) : (
+                        <span className="text-zinc-300">—</span>
+                      )}
+                    </Td>
+                    <Td right>
+                      {r.insuranceDeduction > 0 ? (
+                        <span className="text-zinc-600">▲{yen(r.insuranceDeduction)}</span>
                       ) : (
                         <span className="text-zinc-300">—</span>
                       )}
@@ -1144,6 +1152,7 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
         <p className="mt-2 text-xs text-zinc-400">
           {/* ⚠️ 率をベタ書きしない。2026-10-01 に 2% → 3% へ切り替わるため、
               ベタ書きすると画面だけ古い率を表示し続ける。正本から算出する。 */}
+          ※ 運送保険: 委託先が負担する保険料（非課税）。金額は「マスタ・設定 → 自社情報」で変更できます。<br />
           ※ 経過措置控除: インボイス未登録業者への支払額から差し引く金額（現在フェーズ:{' '}
           {(getDeductionRate(new Date(`${yearMonth}-01T00:00:00`)) * 100).toFixed(0)}%）
         </p>

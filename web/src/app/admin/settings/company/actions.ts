@@ -24,6 +24,7 @@ export type CompanyFormValues = {
   fiscal_year_end_month: string
   /** 支払通知書を作ってから子分の返事を待つ日数（'0'〜'90'）。0 は待たない運用 */
   payment_notice_response_days: string
+  transport_insurance_amount: string
 }
 
 const EMPTY: CompanyFormValues = {
@@ -31,6 +32,7 @@ const EMPTY: CompanyFormValues = {
   bank_name: '', bank_branch: '', account_type: '', account_number: '', account_holder: '',
   fiscal_year_end_month: '',
   payment_notice_response_days: '7',
+  transport_insurance_amount: '1000',
 }
 
 /**
@@ -70,6 +72,9 @@ export async function fetchCompanyForEdit(): Promise<ActionResult<CompanyFormVal
       payment_notice_response_days:
         (data as { payment_notice_response_days?: number | null })
           .payment_notice_response_days?.toString() ?? '7',
+      transport_insurance_amount:
+        (data as { transport_insurance_amount?: number | null })
+          .transport_insurance_amount?.toString() ?? '1000',
     },
     error: null,
   }
@@ -107,6 +112,14 @@ export async function saveCompany(values: CompanyFormValues): Promise<ActionResu
     return { data: null, error: '返事を待つ日数は0〜90の整数で指定してください。' }
   }
 
+  // 運送保険料: 0以上の整数。⚠️ 空欄を既定値で握りつぶさない（返事の待機日数と同じ方針）。
+  //    ここを黙って1000に戻すと、0にしたつもりの会社から毎月1,000円を相殺してしまう。
+  const insuranceRaw = values.transport_insurance_amount.trim()
+  const insurance = Number(insuranceRaw)
+  if (insuranceRaw === '' || !Number.isInteger(insurance) || insurance < 0) {
+    return { data: null, error: '運送保険料は0以上の整数で指定してください。' }
+  }
+
   const tenantId = await getCurrentTenantId()
   const service  = createServiceClient()
 
@@ -128,6 +141,7 @@ export async function saveCompany(values: CompanyFormValues): Promise<ActionResu
     account_type:       values.account_type.trim(),
     fiscal_year_end_month: fiscalYearEndMonth,
     payment_notice_response_days: days,
+    transport_insurance_amount: insurance,
     tenant_id:          tenantId,
     updated_at:         new Date().toISOString(),
   }

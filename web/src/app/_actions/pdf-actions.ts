@@ -177,6 +177,10 @@ export type PaymentNoticePdfData = {
   expenseTax:           number
   deductionRate:        number   // e.g. 0.02
   deduction:            number
+  /** 運送保険の相殺額（非課税）。0 なら印字しない */
+  insuranceDeduction:   number
+  /** 税込思考業者の端数補正。0 なら印字しない */
+  adjustment:           number
   totalAmount:          number
   /** 発行元（自社）情報。振込先は支払通知書には印字しない */
   company:              CompanyInfo
@@ -211,7 +215,7 @@ export async function fetchPaymentNoticePdfData(
     // 委託先レコード自身からテナントを引く）
     service.from('contractors').select('name, invoice_registration_type, tenant_id').eq('id', contractorId).single(),
     (service as any).from('payment_notices')
-      .select('subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction')
+      .select('subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction, insurance_deduction, adjustment_amount')
       .eq('contractor_id', contractorId)
       .eq('notice_month', from)
       .maybeSingle(),
@@ -286,7 +290,15 @@ export async function fetchPaymentNoticePdfData(
   const totalTax    = n ? Number(n.total_tax ?? 0) : laborTax
   const expenseNet  = Math.max(0, totalEx - laborNet)
   const expenseTax  = Math.max(0, totalTax - laborTax)
-  const deduction   = n ? Number(n.total_deduction ?? 0) : 0
+  // ⚠️ total_deduction は相殺額合計（経過措置＋運送保険）。経過措置だけを取り出して表示する。
+  //    ここを分けずに全額を「経過措置控除（税込額の2%）」と印字すると、金額と率が合わない
+  //    通知書を委託先に渡すことになる。
+  const extra = n as { insurance_deduction?: number | null; adjustment_amount?: number | null } | null
+  const insuranceDeduction = Number(extra?.insurance_deduction ?? 0)
+  const totalDeduction     = n ? Number(n.total_deduction ?? 0) : 0
+  const deduction          = Math.max(0, totalDeduction - insuranceDeduction)
+  // 税込思考業者の端数補正。DB の total_amount と食い違わないよう、ここでも加算する
+  const adjustment         = Number(extra?.adjustment_amount ?? 0)
   // ⚠️ 以前は `deduction / laborTax` を率としていたため「20%」と表示され、画面の
   //    「現在フェーズ 2%」と食い違っていた（消費税額に対する割合を出していたのが原因）。
   // ⚠️ `payment_notices.deduction_rate` は**単位が混在**していて使えない。
@@ -299,7 +311,7 @@ export async function fetchPaymentNoticePdfData(
     new Date(y, m, 0),
     isQualifiedInvoiceIssuer(contractor.invoice_registration_type),
   )
-  const totalAmount = totalEx + totalTax - deduction
+  const totalAmount = totalEx + totalTax - totalDeduction + adjustment
 
   // ⚠️ fail-closed: 自社情報が未登録なら支払通知書も発行しない（請求書と同じ方針）
   const companyRes = await getCompanyInfo((contractor as any).tenant_id ?? '')
@@ -320,6 +332,8 @@ export async function fetchPaymentNoticePdfData(
       expenseTax,
       deductionRate,
       deduction,
+      insuranceDeduction,
+      adjustment,
       totalAmount,
     },
     error: null,

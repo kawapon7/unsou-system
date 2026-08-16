@@ -351,6 +351,7 @@ async function finalizePaymentNotice(
         total_excluding_tax:    a.totalExcludingTax,
         total_tax:              a.totalTax,
         total_deduction:        a.totalDeduction,
+        insurance_deduction:    a.insuranceDeduction,
         total_amount:           a.totalAmount,
         approval_status:        nextApprovalStatus,
         locked:                 true,

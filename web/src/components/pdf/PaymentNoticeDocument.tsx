@@ -142,10 +142,25 @@ export function PaymentNoticeDocument({ data }: { data: PaymentNoticePdfData }) 
               <span>立替経費（税込）</span>
               <span className="tabular-nums">{yen(data.expenseNet + data.expenseTax)}</span>
             </div>
+            {data.adjustment !== 0 && (
+              <div className="flex justify-between text-zinc-600">
+                <span>調整</span>
+                <span className="tabular-nums">
+                  {data.adjustment > 0 ? '+' : '−'}{yen(Math.abs(data.adjustment))}
+                </span>
+              </div>
+            )}
             {data.deduction > 0 && (
               <div className="flex justify-between text-amber-700">
                 <span>経過措置控除（税込額の{deductPct}%）</span>
                 <span className="tabular-nums">−{yen(data.deduction)}</span>
+              </div>
+            )}
+            {/* 運送保険は非課税。経過措置とは別行にする（率と金額が合わなくなるため） */}
+            {data.insuranceDeduction > 0 && (
+              <div className="flex justify-between text-zinc-600">
+                <span>運送保険（非課税）</span>
+                <span className="tabular-nums">−{yen(data.insuranceDeduction)}</span>
               </div>
             )}
             <div className="flex justify-between font-bold text-zinc-900 border-t-2 border-zinc-800 pt-1.5">
