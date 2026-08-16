@@ -169,10 +169,10 @@ async function finalizeInvoice(
     isTaxable,
   }))
 
-  // ⚠️ 売上請求書に経過措置を適用するのは制度上おかしい（判定の主語が取引相手になっている）。
-  //    実請求書にも差し引き行は無い。ただし税務判断を伴うため顧問税理士の確認待ちとし、
-  //    ここでは既存の挙動を変えない。詳細は HANDOVER §5-4 の 2026-07-31「論点B」。
-  const result = calculateInvoiceTax(items, client.invoice_registered, parseLocalDate(to))
+  // ⚠️ 売上請求書（IN）に経過措置は適用しない。判定の主語は自社であって荷主ではない。
+  //    2026-08-16 に client.invoice_registered を渡すのをやめた（論点B）。
+  //    詳細は calculateInvoiceTax の注記と HANDOVER §5-4 の 2026-07-31。
+  const result = calculateInvoiceTax(items)
   const dueDate = computeDueDate(yearMonth, client.closing_day, client.payment_site)
 
   const newTotalAmount = result.finalAmount

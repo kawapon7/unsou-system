@@ -10,6 +10,14 @@
       "cwd": "/Users/atsushikawasaki/dev/unsou-system/web"
     },
     {
+      "name": "Next.js dev (3001)",
+      "runtimeExecutable": "/Users/atsushikawasaki/.local/share/mise/shims/npm",
+      "runtimeArgs": ["run", "dev", "--", "-p", "3001"],
+      "port": 3001,
+      "autoPort": false,
+      "cwd": "/Users/atsushikawasaki/dev/unsou-system/web"
+    },
+    {
       "name": "Cloudflare Pages preview",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "preview"],

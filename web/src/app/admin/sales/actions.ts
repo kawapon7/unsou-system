@@ -726,39 +726,42 @@ export type ManualInvoicePreview = {
 
 /**
  * 手入力インボイスの計算プレビュー（保存しない・純粋計算）
- * isRegistered: 荷主 or 委託先のインボイス登録状態
+ *
+ * ⚠️ 経過措置を適用するかどうかは **mode がサーバー側で決める**。呼び出し側に決めさせないこと。
+ *    売上（in・自社が売り手）は差し引きなし、支払（out・自社が買い手）だけ差し引く。
+ *    2026-08-16 以前は mode を受け取らず、画面が渡す isRegistered だけで判定していた。
+ *    その値は fetchClientOptions が invoice_registered を返さないため売上側で常に false に落ち、
+ *    **荷主の登録状況にかかわらず全ての手入力売上請求書から2%が引かれていた**（論点B）。
+ *
+ * isRegistered: 委託先のインボイス登録状態（mode='out' のときだけ意味を持つ）
  * targetDate: 取引日（最初の行の日付を代表として使用）
  */
 export async function computeManualInvoicePreview(params: {
   lines:        ManualInvoiceLine[]
+  mode:         'in' | 'out'
   isRegistered: boolean
   targetDate:   string
 }): Promise<ActionResult<ManualInvoicePreview>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
-  const { getTransitionalDeductionRate } = await import('@/utils/billing/taxCalculator')
-  const date = new Date(params.targetDate)
+  const { calculateInvoiceTax, calculatePaymentTax } = await import('@/utils/billing/taxCalculator')
 
-  const taxableSub = params.lines
-    .filter(l => l.checked && l.isTaxable)
-    .reduce((s, l) => s + l.amount, 0)
-  const nonTaxSub = params.lines
-    .filter(l => l.checked && !l.isTaxable)
-    .reduce((s, l) => s + l.amount, 0)
+  const items = params.lines
+    .filter(l => l.checked)
+    .map(l => ({ amount: l.amount, isTaxable: l.isTaxable }))
 
-  const taxAmount = Math.round(taxableSub * 0.1)
-  const deductionRate   = getTransitionalDeductionRate(params.isRegistered, date)
-  const deductionAmount = params.isRegistered
-    ? 0
-    : Math.round((taxableSub + taxAmount) * deductionRate)
+  const result =
+    params.mode === 'out'
+      ? calculatePaymentTax(items, params.isRegistered, new Date(params.targetDate))
+      : { ...calculateInvoiceTax(items), deductionRate: 0, deductionAmount: 0 }
 
   return {
     data: {
-      subtotal:        taxableSub + nonTaxSub,
-      taxAmount,
-      deductionRate,
-      deductionAmount,
-      finalAmount:     taxableSub + nonTaxSub + taxAmount - deductionAmount,
+      subtotal:        result.subtotal,
+      taxAmount:       result.taxAmount,
+      deductionRate:   result.deductionRate,
+      deductionAmount: result.deductionAmount,
+      finalAmount:     result.finalAmount,
     },
     error: null,
   }

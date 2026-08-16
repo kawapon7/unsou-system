@@ -153,7 +153,10 @@ function PreviewCard({
 
   return (
     <div className={`rounded-xl border px-5 py-4 space-y-1.5 ${accentCls}`}>
-      <p className="text-xs font-semibold mb-2">計算プレビュー（インボイス経過措置自動計算）</p>
+      {/* 売上（in）に経過措置は掛からないので、見出しでも経過措置を名乗らない（論点B） */}
+      <p className="text-xs font-semibold mb-2">
+        {mode === 'in' ? '計算プレビュー' : '計算プレビュー（インボイス経過措置自動計算）'}
+      </p>
       <Row label="税抜き合計" value={yen(preview.subtotal)} />
       <Row label="消費税（10%）" value={`+ ${yen(preview.taxAmount)}`} />
       {preview.deductionRate > 0 && (
@@ -209,13 +212,13 @@ export function ManualInvoiceTab({ yearMonth }: { yearMonth: string }) {
     const checkedLines = lines.filter(l => l.checked && l.amount > 0)
     if (checkedLines.length === 0) { setPreview(null); return }
 
-    const isRegistered = mode === 'in'
-      ? (clients.find(c => c.id === clientId) as any)?.invoice_registered ?? false
-      : contractors.find(c => c.id === contractorId)?.isRegistered ?? false
+    // ⚠️ 売上（in）では経過措置を使わないので、登録状況を見るのは支払（out）だけ。
+    //    適用の要否はサーバー側が mode で決める（ここで決めさせない）。詳細は論点B。
+    const isRegistered = contractors.find(c => c.id === contractorId)?.isRegistered ?? false
 
     const targetDate = checkedLines[0]?.date ?? todayISO()
 
-    void computeManualInvoicePreview({ lines: checkedLines, isRegistered, targetDate })
+    void computeManualInvoicePreview({ lines: checkedLines, mode, isRegistered, targetDate })
       .then(r => { if (r.data) setPreview(r.data) })
   }, [lines, mode, clientId, contractorId, clients, contractors])
 
