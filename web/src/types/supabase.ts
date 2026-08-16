@@ -269,6 +269,7 @@ export type Database = {
           phone: string | null
           postal_code: string | null
           tenant_id: string | null
+          transport_insurance_amount: number
           updated_at: string | null
         }
         Insert: {
@@ -288,6 +289,7 @@ export type Database = {
           phone?: string | null
           postal_code?: string | null
           tenant_id?: string | null
+          transport_insurance_amount?: number
           updated_at?: string | null
         }
         Update: {
@@ -307,6 +309,7 @@ export type Database = {
           phone?: string | null
           postal_code?: string | null
           tenant_id?: string | null
+          transport_insurance_amount?: number
           updated_at?: string | null
         }
         Relationships: []
@@ -708,6 +711,7 @@ export type Database = {
           expense_tax: number
           expense_tax_excluded: number
           id: string
+          insurance_deduction: number
           labor_tax: number
           labor_tax_excluded: number
           locked: boolean
@@ -738,6 +742,7 @@ export type Database = {
           expense_tax?: number
           expense_tax_excluded?: number
           id?: string
+          insurance_deduction?: number
           labor_tax?: number
           labor_tax_excluded?: number
           locked?: boolean
@@ -768,6 +773,7 @@ export type Database = {
           expense_tax?: number
           expense_tax_excluded?: number
           id?: string
+          insurance_deduction?: number
           labor_tax?: number
           labor_tax_excluded?: number
           locked?: boolean
