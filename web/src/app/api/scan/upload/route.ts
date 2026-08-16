@@ -46,11 +46,16 @@ async function upsertScanJob(params: {
         job_id:          params.jobId,
         user_id:         params.userId,
         status:          params.status,
-        file_name:       params.fileName       ?? null,
-        file_type:       params.fileType       ?? null,
-        work_record_id:  params.workRecordId   ?? null,
-        extracted_data:  params.extractedData  ?? null,
-        error_message:   params.errorMessage   ?? null,
+        // ⚠️ 渡されなかった項目は「キーごと省く」。`?? null` で埋めてはならない。
+        //    このヘルパーは onConflict: 'job_id' の upsert を同一ジョブに対して
+        //    queued → processing → completed と 3 回叩く。null を書くと、最初の
+        //    queued で入れた file_name / file_type を後続が NULL で上書きしてしまい、
+        //    取り込み履歴から「どのファイルを読んだのか」が消える（2026-08-17 実測で発覚）。
+        ...(params.fileName      !== undefined && { file_name:      params.fileName }),
+        ...(params.fileType      !== undefined && { file_type:      params.fileType }),
+        ...(params.workRecordId  !== undefined && { work_record_id: params.workRecordId }),
+        ...(params.extractedData !== undefined && { extracted_data: params.extractedData }),
+        ...(params.errorMessage  !== undefined && { error_message:  params.errorMessage }),
         updated_at:      new Date().toISOString(),
       },
       { onConflict: 'job_id' },
