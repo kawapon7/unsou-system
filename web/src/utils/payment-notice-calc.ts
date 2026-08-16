@@ -156,8 +156,10 @@ export type PaymentNoticeAmounts = {
    *    実効率（差し引き額 ÷ 税込合計）を返す。率が 1 つの通常月はその率と一致する。
    */
   deductionRate: number
-  /** 税込思考業者の端数補正（inclusive＋調整有効の payee ルールのみ） */
+  /** 実際に適用した調整＝自動端数補正 + 手入力。payment_notices.adjustment_amount に入る */
   adjustment: number
+  /** 手入力の調整額（±）だけを取り出したもの。監査・再編集用 */
+  manualAdjustment: number
   /** 運送保険の相殺額（委託先負担・非課税）。totalDeduction に含まれる */
   insuranceDeduction: number
   subtotalRegistered: number; taxRegistered: number
@@ -181,7 +183,16 @@ type CalcResult =
  */
 export async function computePaymentNoticeAmounts(
   db: SupabaseClient,
-  params: { tenantId: string; contractorId: string; yearMonth: string },
+  params: {
+    tenantId: string
+    contractorId: string
+    yearMonth: string
+    /**
+     * 親分が手で入れる調整額（±円）。省略時は保存済みの手動調整を引き継ぐ。
+     * ⚠️ 自動端数補正（calcPayeeAmount）とは別枠。合算した実適用額が adjustment になる。
+     */
+    manualAdjustment?: number
+  },
 ): Promise<CalcResult> {
   const { tenantId, contractorId, yearMonth } = params
   // ⚠️ 生成 SDK の型は列の増減に追従していないため、既存コードに合わせて any 経由で叩く
@@ -378,6 +389,23 @@ export async function computePaymentNoticeAmounts(
   const deductionUnregistered = deduction
   const subtotalExempt        = isExempt ? laborTaxExcluded : 0
 
+  // 手入力の調整額。明示的に渡されていなければ保存済みの値を引き継ぐ。
+  // ⚠️ 引き継がないと、一覧のライブ計算（手入力を渡さない経路）が手動調整を毎回 0 に
+  //    見せてしまい、生成済みの通知書と金額が食い違う。
+  let manualAdjustment = params.manualAdjustment
+  if (manualAdjustment === undefined) {
+    const { data: saved, error: savedErr } = await supabase
+      .from('payment_notices')
+      .select('manual_adjustment')
+      .eq('contractor_id', contractorId)
+      .eq('tenant_id', tenantId)
+      .eq('notice_month', `${yearMonth}-01`)
+      .maybeSingle()
+    // ⚠️ fail-closed。読めないまま 0 で進めると支払額が黙って変わる
+    if (savedErr) return { data: null, error: savedErr.message }
+    manualAdjustment = Number(saved?.manual_adjustment ?? 0)
+  }
+
   // 運送保険（委託先負担・非課税）。相殺額合計にだけ積む。
   // ⚠️ fail-closed。取得できなければ止める（相殺し忘れた通知書を出さないため）
   const insuranceRes = await getTransportInsuranceAmount(tenantId)
@@ -393,7 +421,7 @@ export async function computePaymentNoticeAmounts(
     expenseTaxExcluded,
     expenseTax,
     deduction,
-    adjustment: totalAdjustment,
+    adjustment: totalAdjustment + manualAdjustment,
     insuranceDeduction,
   })
 
@@ -405,7 +433,8 @@ export async function computePaymentNoticeAmounts(
       expenseTax,
       deduction,
       deductionRate,
-      adjustment: totalAdjustment,
+      adjustment: totalAdjustment + manualAdjustment,
+      manualAdjustment,
       insuranceDeduction,
       subtotalRegistered,
       taxRegistered,

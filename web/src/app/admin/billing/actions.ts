@@ -632,6 +632,8 @@ export async function fetchPaymentNoticeStatuses(
 export async function generatePaymentNotice(
   contractorId: string,
   yearMonth: string,
+  /** 親分が手で入れる調整額（±円）。未指定なら保存済みの値を引き継ぐ */
+  manualAdjustment?: number,
 ): Promise<ActionResult<{ id: string; totalAmount: number }>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
@@ -645,7 +647,7 @@ export async function generatePaymentNotice(
   //    ここに計算式を書き戻すと、また 2 経路で金額が食い違う。
   const { data: a, error: calcErr } = await computePaymentNoticeAmounts(
     supabase,
-    { tenantId, contractorId, yearMonth },
+    { tenantId, contractorId, yearMonth, manualAdjustment },
   )
   if (calcErr || !a) return { data: null, error: calcErr ?? '支払通知書の金額算出に失敗しました' }
 
@@ -692,7 +694,10 @@ export async function generatePaymentNotice(
     total_tax:              a.totalTax,
     total_deduction:        a.totalDeduction,
     insurance_deduction:    a.insuranceDeduction,
+    // ⚠️ adjustment_amount には「実際に適用した調整（自動端数補正＋手入力）」を入れる。
+    //    PDF・一覧・total_amount はこの列だけを見る。手動分の内訳は manual_adjustment。
     adjustment_amount:      a.adjustment,
+    manual_adjustment:      a.manualAdjustment,
     approval_status:        'pending',
     // ⚠️ 2026-08-02 追加。この経路は内訳列と total_amount を一切書いておらず、
     //    生成された支払通知書は DB 上 total_amount=0・内訳すべて 0 のままだった

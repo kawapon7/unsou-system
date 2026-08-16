@@ -716,6 +716,7 @@ export type Database = {
           labor_tax_excluded: number
           locked: boolean
           locked_at: string | null
+          manual_adjustment: number
           notice_month: string
           status: string
           subtotal_exempt: number
@@ -747,6 +748,7 @@ export type Database = {
           labor_tax_excluded?: number
           locked?: boolean
           locked_at?: string | null
+          manual_adjustment?: number
           notice_month?: string
           status: string
           subtotal_exempt?: number
@@ -778,6 +780,7 @@ export type Database = {
           labor_tax_excluded?: number
           locked?: boolean
           locked_at?: string | null
+          manual_adjustment?: number
           notice_month?: string
           status?: string
           subtotal_exempt?: number

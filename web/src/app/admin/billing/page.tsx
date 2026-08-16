@@ -108,10 +108,21 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
 
   useEffect(() => { load() }, [load])
 
+  // 委託先ごとの手入力調整（±円）。空欄なら未指定＝保存済みの値を引き継ぐ
+  const [adjInput, setAdjInput] = useState<Record<string, string>>({})
+
   async function handleGenerate(contractorId: string) {
     setGenerating(contractorId)
     setMessage(null)
-    const res = await generatePaymentNotice(contractorId, yearMonth)
+    // ⚠️ 空欄と 0 は別物。空欄は「触っていない」＝保存済みを引き継ぐ、0 は「調整なしにする」
+    const raw = (adjInput[contractorId] ?? '').trim()
+    const manual = raw === '' ? undefined : Number(raw)
+    if (manual !== undefined && !Number.isFinite(manual)) {
+      setMessage({ text: '調整額は数値で入力してください（マイナス可）', ok: false })
+      setGenerating(null)
+      return
+    }
+    const res = await generatePaymentNotice(contractorId, yearMonth, manual)
     if (res.error) {
       setMessage({ text: res.error, ok: false })
     } else if (res.data) {
@@ -309,6 +320,16 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
                             🔓 開発者アンロック
                           </button>
                         ) : (
+                          <>
+                          <input
+                            type="number"
+                            step={1}
+                            placeholder="調整"
+                            title="調整額（±円）。空欄なら現状のまま。生成／再生成で反映されます"
+                            value={adjInput[r.contractorId] ?? ''}
+                            onChange={e => setAdjInput(p => ({ ...p, [r.contractorId]: e.target.value }))}
+                            className="w-20 rounded-md border border-zinc-300 px-2 py-1 text-xs text-right text-zinc-900"
+                          />
                           <button
                             onClick={() => handleGenerate(r.contractorId)}
                             disabled={isBusy}
@@ -316,6 +337,7 @@ function PaymentTab({ yearMonth }: { yearMonth: string }) {
                           >
                             {isBusy ? '生成中...' : st ? '再生成' : '生成'}
                           </button>
+                          </>
                         )}
                       </div>
                     </td>
