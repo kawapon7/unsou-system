@@ -9,6 +9,7 @@ import {
 } from '@/utils/auth'
 import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
 import { closingRange } from '@/utils/closing-period'
+import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
 import {
   describeWorkAmount,
   buildPriceRuleMap,
@@ -454,4 +455,44 @@ export async function fetchMyAvailableYears(): Promise<ActionResult<number[]>> {
   if (error) return { data: null, error: error.message }
 
   return { data: availableYearsOf((data ?? []).map((r: Row) => r.notice_month as string)), error: null }
+}
+
+export type MyProfile = {
+  name:  string
+  email: string | null
+  /** 'registered' | 'unregistered' | 'exempt' などの生値 */
+  invoiceRegistrationType: string | null
+  /** 画面に出す日本語ラベル */
+  invoiceRegistrationLabel: string
+}
+
+/**
+ * マイページ用の自分の登録情報。
+ *
+ * ⚠️ 口座情報は返さないこと。復号してブラウザへ送る必要が生じ、
+ *    暗号化保存（AES-256-GCM）の意味を薄める。変更は親分側で行う運用。
+ */
+export async function fetchMyProfile(): Promise<ActionResult<MyProfile>> {
+  const ctx = await currentDriverContext()
+  if (!ctx.ok) return { data: null, error: ctx.error }
+
+  const db = looseDb()
+  const { data, error } = await db
+    .from('contractors')
+    .select('name, email, invoice_registration_type')
+    .eq('id', ctx.contractorId)
+    .maybeSingle()
+  if (error) return { data: null, error: error.message }
+  if (!data) return { data: null, error: '委託先レコードが見つかりません' }
+
+  const type = (data.invoice_registration_type ?? null) as string | null
+  return {
+    data: {
+      name:  (data.name as string) ?? '',
+      email: (data.email as string) ?? null,
+      invoiceRegistrationType: type,
+      invoiceRegistrationLabel: isQualifiedInvoiceIssuer(type) ? '適格請求書発行事業者（登録済み）' : '免税事業者（経過措置の対象）',
+    },
+    error: null,
+  }
 }
