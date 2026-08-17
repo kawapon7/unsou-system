@@ -67,14 +67,14 @@ export async function middleware(request: NextRequest) {
   // 子分が管理画面(/admin)へ到達するのをブロック（権限昇格防止）
   if (isAdminPath && user && !isOwner) {
     const url = request.nextUrl.clone()
-    url.pathname = '/driver/schedule'
+    url.pathname = '/driver/home'
     return NextResponse.redirect(url)
   }
 
   // ログイン済みでログインページに来たらロール別ダッシュボードへ
   if (isLoginPage && user) {
     const url = request.nextUrl.clone()
-    url.pathname = isOwner ? '/admin/dashboard' : '/driver/schedule'
+    url.pathname = isOwner ? '/admin/dashboard' : '/driver/home'
     return NextResponse.redirect(url)
   }
 
