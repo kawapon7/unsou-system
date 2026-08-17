@@ -9,7 +9,15 @@ jobs:
   trigger:
     runs-on: ubuntu-latest
     steps:
+      # ⚠️ 本番URLはリポジトリ変数 APP_BASE_URL で持つ。ここに直書きしないこと。
+      #    直書きだとURLを変えるたびにコード変更＋pushが要る（2026-08-17にURL変更を
+      #    検討した際、書き換えが必要な唯一の箇所がここだった）。
+      #    変更は `gh variable set APP_BASE_URL --body "https://..."` だけで済む。
+      #    未設定なら現行URLにフォールバックする（設定漏れでアラートが止まらないように）。
       - name: Call defensive-alerts cron endpoint
+        env:
+          BASE_URL: ${{ vars.APP_BASE_URL || 'https://unsou-system.kawapon7.workers.dev' }}
         run: |
+          echo "base: $BASE_URL"
           curl -f -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
-            https://unsou-system.kawapon7.workers.dev/api/cron/defensive-alerts
+            "$BASE_URL/api/cron/defensive-alerts"
