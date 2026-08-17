@@ -38,6 +38,19 @@ Redirect URLs は `https://unsou-system.hibiki-app.workers.dev/**` の形。
 ⚠️ **この前提が崩れる最大の要因は「マイグレーションを経由しないスキーマ変更」。**
 テスト環境（＝現行DB）でダッシュボードから直接列を足すと、新DBに反映されず二度と揃わなくなる。
 
+⚠️ **1行目の「再現できる」は名前の一致でしか確認していない**（2026-08-17の精査で明示）。
+過去に一度この型でズレている — `20260706000000_add_missing_users_contractor_id.sql` は
+「初期スキーマに定義があるのに本番には当たっていなかった」列を後追いで足したもので、
+**名前照合ではこの種のズレを検出できない**。
+
+ただし**この手順の順序自体がリスクを吸収している**（接続先の切替はステップ8で最後。
+`db push` が失敗しても本番は無傷）。なので **push そのものを実地検証として扱ってよい**。
+ローカルDockerが使えるなら `supabase db reset` で空振り検証をしておくとさらに安全
+（2026-08-17時点のマシンではDockerが使えず未実施）。
+
+💡 拡張機能の作成は**不要**（マイグレーションが使うのは `gen_random_uuid()` のみ＝PG本体の機能。
+`uuid_generate_v4()` は0箇所）。Storageバケットも0個なので作り直し対象なし。いずれも実測確認済み。
+
 ## 順序（厳守）
 
 ### 1. 新プロジェクト作成（ボス）
@@ -77,7 +90,23 @@ INSERT INTO tenants (id, name) VALUES ('00000000-0000-0000-0000-0000000000a1', '
 
 ⚠️ **UUIDは現行と同じ値を使う。** 変えるとローカルの検証手順や過去の記録がすべて食い違う。
 
-### 4. ユーザーを作る（ボス）
+### 4. Auth のURL設定（ボス）⚠️ ユーザー作成より前に
+
+新プロジェクトの **Authentication → URL Configuration** に本番URLを入れる。
+ここが未設定だと**ログインしても死んだURLに飛ばされる**（2026-08-17のURL変更作業で実測）。
+
+- **Site URL**: `https://unsou-system.hibiki-app.workers.dev`
+- **Redirect URLs**: `https://unsou-system.hibiki-app.workers.dev/**`
+
+⚠️ 新プロジェクトの Redirect URLs は**空が初期状態**。空でも Site URL にフォールバックするため
+「動いてしまう」が、フォールバックに頼らず両方入れておくこと。
+
+💡 メール送信のレート制限に注意。Supabase無料プランの標準メールは上限が低く、
+過去に `email rate limit exceeded` を踏んでいる（2026-07-02）。次のステップで
+**パスワードを直接設定して作る**（招待メールに頼らない）ため通常は問題にならないが、
+パスワードリセットを連続で試すと詰まる。
+
+### 5. ユーザーを作る（ボス）
 
 現行は9件だが、**デモ用アカウントは作り直さない**。実際に使う人だけ:
 
@@ -87,9 +116,29 @@ INSERT INTO tenants (id, name) VALUES ('00000000-0000-0000-0000-0000000000a1', '
 ⚠️ **作成後、各ユーザーの `app_metadata.tenant_id` に上記UUIDを必ず設定する。**
 F0以降、テナント判定の一次ソースは `app_metadata`。設定しないと**その人の書き込みが全部失敗する**。
 
+⚠️⚠️ **既存スクリプト `web/scripts/create-production-user.mjs` はF0前の実装のまま**
+（2026-08-17の精査で判明）。そのまま使うと壊れる:
+
+- `user_metadata.tenant_id` に**文字列 `'local-dev'`** を書き込む
+- `app_metadata.tenant_id` は**設定しない**
+
+そして `utils/tenant.ts` は `app_metadata` → **`user_metadata` にフォールバックする**ため、
+「未設定です」という親切なエラーにはならず、**`'local-dev'` という文字列をuuid列に流し込んで**
+落ちる。＝上の警告より発見しにくい形で失敗する。
+
+対処（どちらか）:
+1. スクリプトの `user_metadata: { tenant_id: 'local-dev' }` を
+   `app_metadata: { tenant_id: '00000000-0000-0000-0000-0000000000a1' }` に直してから使う
+2. 作成後に `node web/scripts/backfill-app-metadata-tenant.mjs` を必ず流す
+   （正準UUIDを `app_metadata` に入れる正しい実装。ただし**実行後は各ユーザーの再ログインが必要** —
+   JWTに新しい `app_metadata` が乗るのは再ログイン後）
+
+⚠️ ロールは `public.users.role` が正本（`getAuthContext` がここを読む）。
+スクリプトは `users` 行も作るので、そこまで通ること確認する。
+
 ⚠️ `provider` を消さないこと（現行DBで一度踏んだ罠）。
 
-### 5. 自社情報を登録（ボス）
+### 6. 自社情報を登録（ボス）
 
 `/admin/settings/company` から入力。**PDFは未登録だと fail-closed で出せない**ので必須。
 
@@ -102,13 +151,13 @@ F0以降、テナント判定の一次ソースは `app_metadata`。設定しな
 💡 **`ENCRYPTION_KEY` を新旧で同じにするなら**、`companies` の口座暗号文をそのままコピーしても復号できる。
 別の鍵にするなら画面から入力し直すこと（暗号文をコピーすると「（復号エラー）」になる）。
 
-### 6. A社の実マスタを投入（ボス）
+### 7. A社の実マスタを投入（ボス）
 
 荷主 → 委託先 → 案件 → 単価ルール の順。案件は荷主と委託先が先に無いと作れない。
 
 ⚠️ **デモデータ投入スクリプト（`web/scripts/seed-demo-full.mjs`）は流さない。** 新DBを汚す。
 
-### 7. 接続先を切り替える（ボス＋アシスタント）
+### 8. 接続先を切り替える（ボス＋アシスタント）
 
 **この順序を守る。逆にすると本番が壊れる。**
 
@@ -127,11 +176,28 @@ Worker secrets だけ変えてデプロイを忘れると、画面は旧DBを見
 
 ⚠️ `ALLOW_DEV_AUTH_BYPASS` は本番で設定しない（`npm run deploy` が `false` を強制している）。
 
-### 8. 検証（アシスタント）
+⚠️⚠️ **`web/.env.local` は旧プロジェクトのまま据え置く。** ここを新DBに向けてはいけない。
+現行DBがテスト環境になるので、ローカル開発（`npm run dev`）と `web/scripts/*.mjs` は
+旧プロジェクトを見るのが正しい。新DBに向けると **`npm run dev` とseedスクリプトが本番を叩く**。
+「本番を切り替えたのだから `.env.local` も揃えよう」と考えるのが自然なぶん危険。
+
+### 9. 検証（アシスタント）
 
 - [ ] `supabase_migrations.schema_migrations` が 55 件
 - [ ] `tenants` に正準UUIDの行が1件
-- [ ] FK 18本・`tenant_id` の NULL 0件・非uuid列 0件（F0の検証と同じ観点）
+- [ ] **`tenants` を参照するFKが18本**・`tenant_id` 列18本すべて uuid型・NULL 0件
+      ⚠️ 「FK 18本」は `tenants` 参照分の数。**`public` スキーマのFK総数は49本**なので、
+      総数を数えると一致せず誤判定する（2026-08-17に実測して判明）。照合用SQL:
+      ```sql
+      select
+        (select count(*) from pg_constraint c join pg_class r on r.oid=c.confrelid
+          where c.contype='f' and r.relname='tenants') as fk_to_tenants,        -- 18
+        (select count(*) from information_schema.columns
+          where table_schema='public' and column_name='tenant_id') as tenant_cols, -- 18
+        (select count(*) from information_schema.columns
+          where table_schema='public' and column_name='tenant_id'
+            and data_type<>'uuid') as non_uuid;                                  -- 0
+      ```
 - [ ] 不変トリガー4本が有効（`approval_history` / `notification_logs` の UPDATE/DELETE 拒否）
 - [ ] 本番URLでログインできる
 - [ ] 案件・委託先・荷主の一覧が出る
@@ -140,7 +206,7 @@ Worker secrets だけ変えてデプロイを忘れると、画面は旧DBを見
 - [ ] PDFが出る（自社情報が反映されている）
 - [ ] cron を手動実行して成功（`gh workflow run defensive-alerts-cron.yml`）
 
-### 9. 現行DBをテスト環境として残す（ボス）
+### 10. 現行DBをテスト環境として残す（ボス）
 
 - **消さない。** 開発・検証はこちらで行う
 - ⚠️ **今後この環境でスキーマを変えるときも必ずマイグレーションファイル経由**。

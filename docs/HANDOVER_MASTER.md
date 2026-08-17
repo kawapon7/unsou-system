@@ -1325,6 +1325,7 @@ web/
 | 🟡 中 | **源泉徴収税が支払通知書に反映されない** | `payment_notices` に源泉の列が**存在しない**。一覧 `fetchPaymentByContractor` だけが 10.21% を差し引くため、画面と通知書で金額が食い違う。⚠️**設計書 §2-3-10 で源泉徴収は「拡張用ルール（凍結中）」とされており、現在 `has_withholding` は16件すべて false のため実害なし。凍結を解除する前に必ず対応すること** |
 | ✅ 完了 2026-08-04 | **`payment_notices` の既存行取得に `tenant_id` 条件が無い** | 修正完了（`481712c`）。生成（`generatePaymentNotice`）・確定（`finalizePaymentNotice`）・一覧（`fetchPaymentNoticeStatuses`）に `tenant_id` 条件を追加し、INSERT/UPSERT に `tenant_id` を明示（従来はDBデフォルト `'local-dev'` 頼みで、F0のuuid化後に実テナントと食い違う罠だった）。一意制約 `(contractor_id, notice_month)` は tenant を含まないため `onConflict` は変更せず。tsc 0件・107テスト通過、既存20行は全て `local-dev` で挙動変化なしを確認 |
 | ✅ 完了 2026-08-17 | **AIスキャンのUI全体が未検証** | **ダミー請求書PDFを自作して通し検証を実施し、抽出は全項目一致で合格。** 実データ（`ooba/`）を使わずに済むよう、実在しない会社・口座だけのダミーを `web/scripts/fixtures/dummy-invoice.html` に置いた（PDFはChromeヘッドレスで生成。手順と期待値は同ディレクトリのREADME）。実測: `POST /api/scan/upload` が 200・`status: completed`、`issuerName`／`invoiceDate`／`subtotal` 1,024,000／`taxAmount` 102,400／`totalAmount` 1,126,400／`registrationNumber` T9876543210987／`invoiceNumber`／`dueDate`／`issuerPhone`／明細4件（396,000+329,000+279,000+20,000＝subtotalと一致）まで**すべて正確**。`scan_jobs` にも `completed` で保存された。⚠️**この検証で新たなバグを1件発見・修正**: `upsertScanJob` が渡されなかった項目を `?? null` で埋めており、同一ジョブに queued→processing→completed と3回 upsert する過程で、**最初に入れた `file_name` / `file_type` を後続がNULLで上書き**していた（取り込み履歴からファイル名が消える）。キーごと省く形に修正し、再アップロードで `dummy-invoice.pdf` / `application/pdf` が残ることを実測確認。⚠️**残る未検証**: 読み取り結果の確認フォームから保存する経路（`saveClientScanResult`）。2026-08-02にINSERTペイロード自体は実DBで検証済みだが、画面フォーム経由の通しは未実施。⚠️ファイル選択はブラウザネイティブの挙動のため自動操作から `input.files` を差し込んでもReactの `onChange` に届かない。同一オリジンのページ上から実APIを叩く方法をREADMEに記録した |
+| 🔴 高 | **ドライバーが自分の支払通知書PDFを開けない（2026-08-17発見・未修正）** | `fetchPaymentNoticePdfData`（[pdf-actions.ts:206](web/src/app/_actions/pdf-actions.ts:206)）は非ownerの認可を `auth.ctx.contractorId !== contractorId` で判定するが、`ctx.contractorId` の出どころは `public.users.contractor_id` で、**この列を書く経路が存在しない**（実測 9件中1件のみ設定済み・sub 6件はNULL）。したがってドライバーは自分の通知書でも `委託先が見つかりません` で弾かれる。呼び出し元は `driver/billing/page.tsx`（`PaymentNoticePdfModal`）。⚠️**fail-closed なので情報漏れではなく機能不全**（他人のPDFが見える類ではない）。⚠️実運用前に必ず塞ぐこと — A社のドライバーが最初に触る画面のひとつ。修正方針の候補: ①`getAuthContext` を driver 側と同じ「`contractors.email` 一致」で解決する形に寄せる（`fetchMyContractor` が既にこの実装＝**正本がすでに中にある**）②`users.contractor_id` を書く経路を作る（`createDriverUser`/`updateUser` で設定）。①のほうが二重管理を増やさない。⚠️テストを書いてから直すこと（現在この経路のテストは無い） |
 | 🟢 低 | **`status` 列の整理（`payment_notices`）** | `unapproved`/`approved`/`locked` は `approval_status` と `locked` から導ける派生値。新規に意味を持たせるのをやめ、表示専用にして最終的に廃止する。詳細は §5-4 の 2026-08-02 その8 |
 | ✅ 完了 2026-08-10 | **重複ファイル `pdfActions.ts` の整理** | `pdfActions.ts`＋レガシーPDFテンプレート2本＋`registerFonts.ts`＋依存 `@react-pdf/renderer` を削除。現役は `pdf-actions.ts`＋`components/pdf/`。詳細は §5-4 の 2026-08-10 その2 |
 | 🟢 低 | **消費税率が改正されたときに追随できない（メモ・2026-08-17）** | **ボス判断で「発表されてからでよい」。今は着手しない。** 判断根拠＝①改正は発表から施行まで通常半年〜1年あり、作業見積り2〜3日に対して余裕がある ②率を「取引日→率」の関数にすれば**過去日には旧率が返る**ため、事後に直しても過去分は自動的に正しく再計算される。「先に直さないと壊れる」性質の問題ではない。⚠️**実質の期限は施行日ではなく「施行日を含む締め期間が始まる前」**。20日締めの荷主がいるため施行日の約1か月前が実デッドライン。過ぎると発行済み書類の訂正インボイス再発行という事務コストが発生する。現状の実測: **10%が8箇所にベタ書きで散在し、共通定数が無い**（`lib/invoice.ts:11` / `utils/billing/taxCalculator.ts:85` / `utils/payment-notice-calc.ts:37-38` / `_actions/pdf-actions.ts:119,277` / `driver/dashboard/actions.ts:195` / `_actions/voice-actions.ts:186` / `admin/projects/page.tsx:568` の表示文言）。**より本質的な欠落は率の散在ではなく「施行日で率を切り替える」仕組みが無いこと** — 現在どの箇所も取引日を見ずに常に 0.1 を掛ける。⚠️ただし**同型の問題を解いた前例が中にある**: `utils/transitional-deduction.ts` が率の唯一の正本かつ稼働日ごとに率を引く形になっており、消費税率もここに合流させればよい。想定手順: ①`utils/consumption-tax.ts` を新設し `(取引日)=>率` に一本化 ②上記8箇所を差し替え、日付を引数に通す ③`invoices`/`payment_notices` に適用税率をスナップショット保存（運送保険と同じ考え方）。**率の一本化だけは改正の有無に関わらず先にやる価値がある**（常に0.1を返す関数への置換なので既存の計算結果を変えず、テストで同値を確認しながら進められる。改正時の作業が「1行足す」に縮む）。⚠️発表内容が「複数税率が増える」「旧税率が使える経過措置が付く」型なら見積りは増える。なお**食料品の軽減税率は本システムの対象外**（運送役務・高速代等はすべて標準税率） |
@@ -2556,7 +2557,7 @@ web/src/
 | `invoices` | 請求書 | **一意性は部分索引2本**（2026-08-03張り替え）: 部署ありは (client_id, department_id, invoice_month)、部署なしは (client_id, invoice_month)。書き込みは必ず `utils/invoice-writer.ts` 経由 |
 | `approval_history` | 承認履歴 | UPDATE/DELETE 全ロール禁止（不変ログ） |
 | `notification_logs` | アラート送信ログ | INSERT-only RLS |
-| `users` | ユーザーロール管理 | `public.users(id, email, role)`。`contractor_id` カラムは**存在しない**（紐づけは `contractors.email` で行う） |
+| `users` | ユーザーロール管理 | `public.users(id, email, role, created_at, contractor_id)`。⚠️**2026-08-17訂正: `contractor_id` は存在する**（uuid・nullable・`contractors(id)` へFK）。以前ここに「存在しない」と書いていたのは誤り。`20260706000000_add_missing_users_contractor_id.sql` で追加済みで、`getAuthContext()` が `select('role, contractor_id')` で読んでいる。**この列を消すと本番の権限誤判定が再発する**（列欠落でクエリ全体が失敗し role が常に `contractor` にフォールバックした事故が実際にあった）。なお**ドライバーとの紐づけ自体は `contractors.email` 一致方式が正本**で、下記5-8の説明はそのまま有効 |
 
 ### 5-8. 認証・権限のルール
 
@@ -2566,12 +2567,19 @@ web/src/
 - ログイン後: admin → `/admin/dashboard`、driver → `/driver/schedule`
 - DBアクセスは必ず **サービスロール** 経由（RLS回避）＋ `tenant_id` or `contractor_id` でフィルタ
 
-#### ユーザーとドライバーの紐づけ方法（重要）
-`public.users` テーブルに `contractor_id` カラムは**存在しない**。
-紐づけは `contractors.email = auth.users.email` のメール一致で行う。
+#### ユーザーとドライバーの紐づけ方法（重要・2026-08-17に実装と突き合わせて訂正）
+**運用上の紐づけは `contractors.email = auth.users.email` のメール一致で行う。**
 - ドライバーアカウント作成時: `contractors.email` に新アカウントのメールを書き込む
 - ドライバーログイン後: `contractors WHERE email = 自分のメール` でcontractor_idを取得
 - `users/actions.ts` の `createDriverUser` / `updateUser` がこのロジックを実装
+- ユーザー一覧の「担当委託先」も**読み取り時にメールで突き合わせて算出**している（`users/actions.ts:41-62`）
+
+⚠️ **`public.users.contractor_id` 列は存在する**（以前ここに「存在しない」と書いていたのは誤り）。
+ただし**書き込む経路が無い**: 上記フローは列を更新せず、実測でも 9件中1件しか埋まっていない
+（master 2件・sub 6件がNULL、sub 1件のみ設定済み）。にもかかわらず `getAuthContext()` は
+この列を読んで `ctx.contractorId` を作っている。**「列は読まれるが誰も書かない」状態**であることを
+理解しておくこと。列自体は消してはいけない（消すとクエリが失敗し role が常に `contractor` に
+フォールバックする事故が再発する。`20260706000000_add_missing_users_contractor_id.sql` 参照）。
 
 ### 5-9. やってはいけないこと
 
