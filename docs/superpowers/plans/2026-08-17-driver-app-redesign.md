@@ -1,6 +1,6 @@
 # ドライバーアプリ機能拡充 実装計画
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** ドライバーが「今月いくらか」「何をやったか」「過去いくら支払われたか」を自分で確認できるようにし、料金をいただける水準にする。
 
@@ -35,7 +35,7 @@
 - Consumes: `resolveContractorId(service, usersContractorId, email)` from `@/utils/auth`
 - Produces: なし（内部ヘルパーの差し替えのみ）
 
-- [ ] **Step 1: 既存ヘルパーを正本呼び出しに置き換える**
+- [x] **Step 1: 既存ヘルパーを正本呼び出しに置き換える**
 
 ```ts
 import {
@@ -59,12 +59,12 @@ async function resolveContractorId(userId: string, email?: string): Promise<stri
 }
 ```
 
-- [ ] **Step 2: 検証**
+- [x] **Step 2: 検証**
 
 Run: `npx tsc --noEmit && npx vitest run`
 Expected: tsc 0件 / 全passed
 
-- [ ] **Step 3: コミット**
+- [x] **Step 3: コミット**
 
 ```bash
 git add web/src/app/_actions/scheduleActions.ts
@@ -97,7 +97,7 @@ export function describeWorkAmount(
 ): AmountBreakdown
 ```
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 ```ts
 describe('describeWorkAmount', () => {
@@ -127,9 +127,9 @@ describe('describeWorkAmount', () => {
 })
 ```
 
-- [ ] **Step 2: 失敗を確認** — Run: `npx vitest run src/utils/work-amount.test.ts` / Expected: FAIL（describeWorkAmount is not a function）
+- [x] **Step 2: 失敗を確認** — Run: `npx vitest run src/utils/work-amount.test.ts` / Expected: FAIL（describeWorkAmount is not a function）
 
-- [ ] **Step 3: 実装**
+- [x] **Step 3: 実装**
 
 ```ts
 const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
@@ -169,9 +169,9 @@ export function describeWorkAmount(
 }
 ```
 
-- [ ] **Step 4: 通過を確認** — Run: `npx vitest run src/utils/work-amount.test.ts` / Expected: PASS
+- [x] **Step 4: 通過を確認** — Run: `npx vitest run src/utils/work-amount.test.ts` / Expected: PASS
 
-- [ ] **Step 5: コミット**
+- [x] **Step 5: コミット**
 
 ```bash
 git add web/src/utils/work-amount.ts web/src/utils/work-amount.test.ts
@@ -214,7 +214,7 @@ export type AnnualSummary = {
 export function summarizeAnnual(year: number, rows: readonly PaymentHistoryRow[]): AnnualSummary
 ```
 
-- [ ] **Step 1: 失敗するテストを書く**
+- [x] **Step 1: 失敗するテストを書く**
 
 ```ts
 import { describe, it, expect } from 'vitest'
@@ -248,9 +248,9 @@ describe('summarizeAnnual', () => {
 })
 ```
 
-- [ ] **Step 2: 失敗を確認** — Run: `npx vitest run src/utils/driver-summary.test.ts` / Expected: FAIL（モジュールが無い）
+- [x] **Step 2: 失敗を確認** — Run: `npx vitest run src/utils/driver-summary.test.ts` / Expected: FAIL（モジュールが無い）
 
-- [ ] **Step 3: 実装**
+- [x] **Step 3: 実装**
 
 ```ts
 /**
@@ -275,8 +275,8 @@ export function summarizeAnnual(year: number, rows: readonly PaymentHistoryRow[]
 }
 ```
 
-- [ ] **Step 4: 通過を確認** — Run: `npx vitest run src/utils/driver-summary.test.ts` / Expected: PASS
-- [ ] **Step 5: コミット**
+- [x] **Step 4: 通過を確認** — Run: `npx vitest run src/utils/driver-summary.test.ts` / Expected: PASS
+- [x] **Step 5: コミット**
 
 ```bash
 git add web/src/utils/driver-summary.ts web/src/utils/driver-summary.test.ts
@@ -314,16 +314,16 @@ export async function fetchMyPaymentHistory(year: number): Promise<ActionResult<
 export async function fetchMyAvailableYears(): Promise<ActionResult<number[]>>
 ```
 
-- [ ] **Step 1: `fetchMyPaymentNotices` の `limit(12)` を外す**
+- [x] **Step 1: `fetchMyPaymentNotices` の `limit(12)` を外す**
 
 現在 `.limit(12)` で直近12件に切っている。確定申告で過去を遡れないため撤廃する。年フィルタは `fetchMyPaymentHistory` 側で行う。
 
-- [ ] **Step 2: 5つのアクションを実装する**
+- [x] **Step 2: 5つのアクションを実装する**
 
 金額は `computePaymentNoticeAmounts` に委譲すること。失敗時は `estimatedAmount: null` を返し、画面で「取得できませんでした」と出す（0円を出さない）。
 
-- [ ] **Step 3: 検証** — Run: `npx tsc --noEmit && npx vitest run && npm run build`
-- [ ] **Step 4: コミット**
+- [x] **Step 3: 検証** — Run: `npx tsc --noEmit && npx vitest run && npm run build`
+- [x] **Step 4: コミット**
 
 ---
 
@@ -334,11 +334,11 @@ export async function fetchMyAvailableYears(): Promise<ActionResult<number[]>>
 - Modify: `web/src/app/driver/shell.tsx`（BOTTOM_NAV に ホーム / マイページ を追加。現在マイページはリンクの無い飾り）
 - Modify: `web/src/middleware.ts:70,77`（ドライバーのログイン後遷移先を `/driver/schedule` → `/driver/home` へ）
 
-- [ ] **Step 1: `shell.tsx` の BOTTOM_NAV を4件にする**（ホーム・予定・実績・支払・マイページ）
-- [ ] **Step 2: ホーム画面を作る**（見込み金額32px太字・「※確定前の見込みです」・稼働日数/個数・未承認警告・直近予定3件）
-- [ ] **Step 3: middleware のリダイレクト先を変更**
-- [ ] **Step 4: 検証** — tsc / vitest / build / `read_page` で `/driver/home` を確認
-- [ ] **Step 5: コミット**
+- [x] **Step 1: `shell.tsx` の BOTTOM_NAV を4件にする**（ホーム・予定・実績・支払・マイページ）
+- [x] **Step 2: ホーム画面を作る**（見込み金額32px太字・「※確定前の見込みです」・稼働日数/個数・未承認警告・直近予定3件）
+- [x] **Step 3: middleware のリダイレクト先を変更**
+- [x] **Step 4: 検証** — tsc / vitest / build / `read_page` で `/driver/home` を確認
+- [x] **Step 5: コミット**
 
 ---
 
@@ -347,10 +347,10 @@ export async function fetchMyAvailableYears(): Promise<ActionResult<number[]>>
 **Files:**
 - Modify: `web/src/app/driver/schedule/page.tsx`（上部にセグメント切替を足す。既存カレンダーの実装は変更しない）
 
-- [ ] **Step 1: セグメント切替 `[カレンダー][予定][実績]` を足す**
-- [ ] **Step 2: 予定リスト（今日以降・日付順）**
-- [ ] **Step 3: 実績リスト（月切替・行タップで単価内訳を展開・月合計）**
-- [ ] **Step 4: 検証・コミット**
+- [x] **Step 1: セグメント切替 `[カレンダー][予定][実績]` を足す**
+- [x] **Step 2: 予定リスト（今日以降・日付順）**
+- [x] **Step 3: 実績リスト（月切替・行タップで単価内訳を展開・月合計）**
+- [x] **Step 4: 検証・コミット**
 
 ---
 
@@ -359,11 +359,11 @@ export async function fetchMyAvailableYears(): Promise<ActionResult<number[]>>
 **Files:**
 - Modify: `web/src/app/driver/billing/page.tsx`
 
-- [ ] **Step 1: 年セレクタを足す**（`fetchMyAvailableYears` の結果だけを選択肢にする）
-- [ ] **Step 2: 年間サマリーカード**（報酬合計・立替経費・経過措置控除・運送保険・差引支給合計）
-- [ ] **Step 3: 「対象月」ラベルを「立替金の対象月」に改める**（画面全体のフィルタに見えて誤解を招いていた）
-- [ ] **Step 4: PDFモーダルに「確定申告用に保存してください」を追記**
-- [ ] **Step 5: 検証・コミット**
+- [x] **Step 1: 年セレクタを足す**（`fetchMyAvailableYears` の結果だけを選択肢にする）
+- [x] **Step 2: 年間サマリーカード**（報酬合計・立替経費・経過措置控除・運送保険・差引支給合計）
+- [x] **Step 3: 「対象月」ラベルを「立替金の対象月」に改める**（画面全体のフィルタに見えて誤解を招いていた）
+- [x] **Step 4: PDFモーダルに「確定申告用に保存してください」を追記**
+- [x] **Step 5: 検証・コミット**
 
 ---
 
@@ -376,11 +376,17 @@ export async function fetchMyAvailableYears(): Promise<ActionResult<number[]>>
 
 ⚠️ 口座情報は**表示しない**。復号してブラウザへ送る必要が生じ、暗号化保存の意味を薄める。
 
-- [ ] **Step 1: 画面を作る** / **Step 2: 検証・コミット**
+- [x] **Step 1: 画面を作る** / **Step 2: 検証・コミット**
 
 ---
 
-### Task 8: アプリ内お知らせ（マイグレーション含む・本番適用は承認後）
+### Task 8: アプリ内お知らせ（⛔ 停止中・ボス判断待ち）
+
+⚠️ **2026-08-18 停止。** 実データを確認したところ `notification_logs` は
+**メール送信の記録のみで本文の列を持たない**（`type` / `destination` / `status` / `alert_key`）。
+「親分からの連絡」を出すには本文を持つ新テーブルと、それを書く管理画面が要る＝スコープが1段階大きくなる。
+設計時の前提が実データと違ったため、着手せずボスの判断を待つ。
+なお未承認バッジ（当初の狙いの半分）はホームで実装済み。
 
 **Files:**
 - Create: `supabase/migrations/<timestamp>_notification_reads.sql`
