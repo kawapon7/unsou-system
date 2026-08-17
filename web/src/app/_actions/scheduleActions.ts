@@ -4,7 +4,11 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
-import { requireOwner } from '@/utils/auth'
+import {
+  requireOwner,
+  resolveContractorId as sharedResolveContractorId,
+  type ContractorLookupClient,
+} from '@/utils/auth'
 import { fetchMissingInputs, type MissingInputRow } from './defensiveAlertQueries'
 
 type ActionResult<T = void> =
@@ -13,25 +17,25 @@ type ActionResult<T = void> =
 
 // ── 認証ヘルパー ────────────────────────────────────────────
 
+// ⚠️ 解決ロジックの正本は utils/auth.ts の resolveContractorId。
+//    ここは userId から users 行を引いて正本に渡すだけの薄いラッパー。
+//    旧実装は contractors.user_id を一次ソースにしていたが、この列は本番で
+//    1件も設定されておらず（実測 16件中0件）、users.contractor_id を無視して
+//    常に email フォールバックへ落ちていた。独自実装に戻さないこと。
 async function resolveContractorId(userId: string, email?: string): Promise<string | null> {
-  const db = createServiceClient() as any
+  const service = createServiceClient()
 
-  const { data: row } = await db
-    .from('contractors')
-    .select('id')
-    .eq('user_id', userId)
+  const { data: userRow } = await service
+    .from('users')
+    .select('contractor_id')
+    .eq('id', userId)
     .maybeSingle()
-  if (row?.id) return row.id
 
-  if (email) {
-    const { data: byEmail } = await db
-      .from('contractors')
-      .select('id')
-      .eq('email', email)
-      .maybeSingle()
-    if (byEmail?.id) return byEmail.id
-  }
-  return null
+  return sharedResolveContractorId(
+    service as unknown as ContractorLookupClient,
+    userRow?.contractor_id,
+    email ?? null,
+  )
 }
 
 // ── 型定義 ──────────────────────────────────────────────────
