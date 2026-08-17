@@ -3,6 +3,7 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { resolveContractorId, type ContractorLookupClient } from '@/utils/auth'
 import type { Database } from '@/types/supabase'
 
 type ProjectRow    = Database['public']['Tables']['projects']['Row']
@@ -40,30 +41,26 @@ export async function fetchMyContractor(): Promise<ActionResult<Pick<ContractorR
     const { data: { user }, error: authErr } = await supabase.auth.getUser()
     if (authErr || !user) return { data: null, error: '未ログインです' }
 
-    // users テーブル経由で contractor_id を取得
-    const { data: userRow, error: userErr } = await supabase
+    // ⚠️ 解決ロジックは utils/auth.ts の resolveContractorId が正本。
+    //    ここで別実装を持つと、PDF等の他経路（getAuthContext 側）と判定がずれる。
+    const service = createServiceClient()
+    const { data: userRow } = await service
       .from('users')
       .select('contractor_id')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
 
-    if (userErr || !userRow?.contractor_id) {
-      // フォールバック: email で contractors を直接検索（service_role 必須）
-      const service = createServiceClient()
-      const { data: contractor, error: cErr } = await service
-        .from('contractors')
-        .select('id')
-        .eq('email', user.email ?? '')
-        .single()
-      if (cErr || !contractor) return { data: null, error: '委託先レコードが見つかりません' }
-      return { data: contractor, error: null }
-    }
+    const contractorId = await resolveContractorId(
+      service as unknown as ContractorLookupClient,
+      userRow?.contractor_id,
+      user.email ?? null,
+    )
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
-    const service = createServiceClient()
     const { data: contractor, error: cErr } = await service
       .from('contractors')
       .select('id')
-      .eq('id', userRow.contractor_id)
+      .eq('id', contractorId)
       .single()
 
     if (cErr || !contractor) return { data: null, error: '委託先レコードが見つかりません' }

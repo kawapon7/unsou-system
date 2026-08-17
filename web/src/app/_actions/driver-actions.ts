@@ -3,6 +3,10 @@
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import {
+  resolveContractorId as sharedResolveContractorId,
+  type ContractorLookupClient,
+} from '@/utils/auth'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
@@ -13,29 +17,23 @@ const DEV_CONTRACTOR_ID = 'cc31ee16-660a-42db-acb4-05f148a3fce8'
 
 // ── ログイン中の子分に紐づく contractor_id を取得 ─────────
 
+// ⚠️ 解決ロジックの正本は utils/auth.ts の resolveContractorId。
+//    ここは userId から users 行を引いて正本に渡すだけの薄いラッパー。
+//    独自実装に戻さないこと（同じ解決が3箇所に散っていたのが 2026-08-17 の不具合の温床）。
 async function resolveContractorId(userId: string, userEmail: string | undefined): Promise<string | null> {
   const service = createServiceClient()
 
-  // users テーブルの contractor_id を優先
   const { data: userRow } = await service
     .from('users')
     .select('contractor_id')
     .eq('id', userId)
     .maybeSingle()
 
-  if (userRow?.contractor_id) return userRow.contractor_id
-
-  // フォールバック: email で contractors を直接検索
-  if (userEmail) {
-    const { data: contractor } = await service
-      .from('contractors')
-      .select('id')
-      .eq('email', userEmail)
-      .maybeSingle()
-    if (contractor?.id) return contractor.id
-  }
-
-  return null
+  return sharedResolveContractorId(
+    service as unknown as ContractorLookupClient,
+    userRow?.contractor_id,
+    userEmail ?? null,
+  )
 }
 
 // ── 支払通知書一覧取得（自分のものだけ） ─────────────────
