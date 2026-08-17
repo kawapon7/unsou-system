@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import {
   fetchMyMonthSummary,
@@ -36,24 +36,27 @@ export default function DriverHomePage() {
   const [upcoming, setUpcoming] = useState<UpcomingSchedule[]>([])
   const [pendingCount, setPendingCount] = useState(0)
 
-  // ⚠️ 冒頭で setState を同期的に呼ばないこと（cascading renders になる）。
-  //    初期値が読み込み中なので、完了時に false にするだけでよい。
-  const load = useCallback(async () => {
-    const [s, u, n] = await Promise.all([
-      fetchMyMonthSummary(yearMonth),
-      fetchMyUpcomingSchedules(3),
-      fetchMyPaymentNotices(),
-    ])
+  // ⚠️ effect の中で setState を同期的に呼ばないこと（cascading renders になる）。
+  //    await を挟んでから更新し、アンマウント後の更新は alive で止める。
+  useEffect(() => {
+    let alive = true
+    ;(async () => {
+      const [s, u, n] = await Promise.all([
+        fetchMyMonthSummary(yearMonth),
+        fetchMyUpcomingSchedules(3),
+        fetchMyPaymentNotices(),
+      ])
+      if (!alive) return
 
-    if (s.error) setSumErr(s.error)
-    else { setSummary(s.data); setSumErr(null) }
-    setSumLoad(false)
+      if (s.error) setSumErr(s.error)
+      else { setSummary(s.data); setSumErr(null) }
+      setSumLoad(false)
 
-    if (!u.error && u.data) setUpcoming(u.data)
-    if (!n.error && n.data) setPendingCount(n.data.filter(x => x.approvalStatus !== 'approved').length)
+      if (!u.error && u.data) setUpcoming(u.data)
+      if (!n.error && n.data) setPendingCount(n.data.filter(x => x.approvalStatus !== 'approved').length)
+    })()
+    return () => { alive = false }
   }, [yearMonth])
-
-  useEffect(() => { load() }, [load])
 
   const [, month] = yearMonth.split('-')
 
