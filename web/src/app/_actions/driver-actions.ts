@@ -7,10 +7,37 @@ import {
   resolveContractorId as sharedResolveContractorId,
   type ContractorLookupClient,
 } from '@/utils/auth'
+import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
+import { closingRange } from '@/utils/closing-period'
+import {
+  describeWorkAmount,
+  buildPriceRuleMap,
+  WORK_RECORD_AMOUNT_COLUMNS,
+  PRICE_RULE_COLUMNS,
+  type PriceRuleRecord,
+  type RawWorkRecord,
+} from '@/utils/work-amount'
+import {
+  summarizeAnnual,
+  availableYearsOf,
+  type PaymentHistoryRow,
+  type AnnualSummary,
+} from '@/utils/driver-summary'
 
 type ActionResult<T = void> =
   | { data: T; error: null }
   | { data: null; error: string }
+
+/**
+ * ⚠️ 生成SDKの型は列の増減に追従していないため、DB呼び出しは緩い型で扱う。
+ *    any をこの1箇所に閉じ込め、各所に散らさないこと。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type LooseDb = any
+const looseDb = (): LooseDb => createServiceClient()
+
+/** 素の行（列の型は呼び出し側で絞る） */
+type Row = Record<string, unknown>
 
 // dev bypass 用テスト委託先ID（鈴木次郎・免税）
 const DEV_CONTRACTOR_ID = 'cc31ee16-660a-42db-acb4-05f148a3fce8'
@@ -65,8 +92,7 @@ export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNot
     if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
   }
 
-  const service = createServiceClient()
-  const db = service as any
+  const db = looseDb()
 
   const { data, error } = await db
     .from('payment_notices')
@@ -74,12 +100,13 @@ export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNot
       'id, notice_month, subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction, approval_status',
     )
     .eq('contractor_id', contractorId)
+    // ⚠️ limit を付けないこと。確定申告・税務調査で過去を遡る必要があり、
+    //    直近12件で切ると古い年が見えなくなる（1人あたり月1行なので件数は問題にならない）。
     .order('notice_month', { ascending: false })
-    .limit(12)
 
   if (error) return { data: null, error: error.message }
 
-  const rows: MyPaymentNotice[] = (data ?? []).map((r: any) => {
+  const rows: MyPaymentNotice[] = (data ?? []).map((r: Row) => {
     const laborNet  = Number(r.subtotal_registered ?? 0) + Number(r.subtotal_unregistered ?? 0) + Number(r.subtotal_exempt ?? 0)
     const laborTax  = Number(r.tax_registered ?? 0) + Number(r.tax_unregistered ?? 0)
     const totalEx   = Number(r.total_excluding_tax ?? 0)
@@ -130,8 +157,7 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
     userId = user.id
   }
 
-  const service = createServiceClient()
-  const db = service as any
+  const db = looseDb()
 
   // 所有権バリデーション（自分の notice だけ操作可能）
   const { data: notice, error: fetchErr } = await db
@@ -185,4 +211,247 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
     })
 
   return { data: undefined, error: null }
+}
+
+// ── ドライバー画面の読み取り系 ─────────────────────────────
+//
+// ⚠️ 金額は例外なく computePaymentNoticeAmounts（正本）を通す。
+//    ここで独自計算を書かないこと。2026-08-10 に支払通知書一覧が独自計算
+//    （暦月固定）を持っていたために、親分の一覧とPDFで金額が食い違う事故が起きている。
+// ⚠️ 集計期間は暦月ではなく委託先ごとの締め期間（closingRange）。
+//    実績リストと見込み金額で期間がずれると、明細を足しても合計に一致しない。
+
+/** ログイン中のドライバーの委託先ID・テナントIDをまとめて解決する */
+type DriverContext =
+  | { ok: true;  contractorId: string; tenantId: string }
+  | { ok: false; error: string }
+
+async function currentDriverContext(): Promise<DriverContext> {
+  try {
+    if (process.env.ALLOW_DEV_AUTH_BYPASS === 'true') {
+      return { ok: true, contractorId: DEV_CONTRACTOR_ID, tenantId: await getCurrentTenantId() }
+    }
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { ok: false, error: '未ログインです' }
+
+    const contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { ok: false, error: '委託先レコードが見つかりません' }
+
+    return { ok: true, contractorId, tenantId: await getCurrentTenantId() }
+  } catch (e) {
+    // getCurrentTenantId は本番で fail-closed に throw する
+    return { ok: false, error: e instanceof Error ? e.message : 'テナントが解決できません' }
+  }
+}
+
+/** 委託先の締め日から対象月の集計期間を出す */
+async function periodOf(db: LooseDb, contractorId: string, yearMonth: string): Promise<{ from: string; to: string }> {
+  const { data } = await db.from('contractors').select('closing_day').eq('id', contractorId).maybeSingle()
+  return closingRange(yearMonth, data?.closing_day ?? null)
+}
+
+export type MonthSummary = {
+  yearMonth:  string
+  workDays:   number
+  pieceTotal: number
+  /** 差引支給額の見込み。⚠️ null は「取得できなかった」。0 と区別すること */
+  estimatedAmount: number | null
+  /** true = 支払通知書が生成済み（＝確定値） */
+  isConfirmed: boolean
+  period: { from: string; to: string }
+}
+
+export async function fetchMyMonthSummary(yearMonth: string): Promise<ActionResult<MonthSummary>> {
+  const ctx = await currentDriverContext()
+  if (!ctx.ok) return { data: null, error: ctx.error }
+
+  const db = looseDb()
+  const period = await periodOf(db, ctx.contractorId, yearMonth)
+
+  const [workRes, noticeRes, calc] = await Promise.all([
+    db.from('work_records')
+      .select('work_date, piece_count')
+      .eq('contractor_id', ctx.contractorId)
+      .gte('work_date', period.from).lte('work_date', period.to),
+    db.from('payment_notices')
+      .select('id')
+      .eq('contractor_id', ctx.contractorId)
+      .eq('notice_month', `${yearMonth}-01`)
+      .maybeSingle(),
+    computePaymentNoticeAmounts(looseDb(), {
+      tenantId:     ctx.tenantId,
+      contractorId: ctx.contractorId,
+      yearMonth,
+    }),
+  ])
+
+  const rows = (workRes.data ?? []) as { work_date: string; piece_count: number | null }[]
+
+  return {
+    data: {
+      yearMonth,
+      workDays:   new Set(rows.map(r => r.work_date)).size,
+      pieceTotal: rows.reduce((s, r) => s + (r.piece_count ?? 0), 0),
+      // ⚠️ 算出に失敗したら null。ここで 0 を返すと「働いたのに報酬0」と読めてしまう
+      estimatedAmount: calc.data ? calc.data.totalAmount : null,
+      isConfirmed:     Boolean(noticeRes.data),
+      period,
+    },
+    error: null,
+  }
+}
+
+export type MyWorkRecordRow = {
+  id:          string
+  workDate:    string
+  projectName: string
+  pieceCount:  number
+  amount:      number
+  /** 金額の根拠（例: '380個 × ¥85'） */
+  formula:     string
+}
+
+export async function fetchMyWorkRecords(yearMonth: string): Promise<ActionResult<MyWorkRecordRow[]>> {
+  const ctx = await currentDriverContext()
+  if (!ctx.ok) return { data: null, error: ctx.error }
+
+  const db = looseDb()
+  const period = await periodOf(db, ctx.contractorId, yearMonth)
+
+  const { data: works, error: workErr } = await db
+    .from('work_records')
+    .select(`id, work_date, ${WORK_RECORD_AMOUNT_COLUMNS}`)
+    .eq('contractor_id', ctx.contractorId)
+    .gte('work_date', period.from).lte('work_date', period.to)
+    .order('work_date')
+  if (workErr) return { data: null, error: workErr.message }
+
+  const rows = (works ?? []) as (RawWorkRecord & { id: string; work_date: string })[]
+  const projIds = Array.from(new Set(rows.map(r => r.project_id).filter((v): v is string => !!v)))
+
+  // price_rules には tenant_id 列が無いため、出てきた案件IDだけを引く
+  const [{ data: rules }, { data: projects }] = await Promise.all([
+    projIds.length
+      ? db.from('price_rules').select(PRICE_RULE_COLUMNS).in('project_id', projIds)
+      : Promise.resolve({ data: [] }),
+    projIds.length
+      ? db.from('projects').select('id, project_name').in('id', projIds)
+      : Promise.resolve({ data: [] }),
+  ])
+
+  const ruleMap = buildPriceRuleMap(rules as PriceRuleRecord[])
+  const projMap = new Map<string, string>((projects ?? []).map((p: Row) => [p.id as string, p.project_name as string]))
+
+  return {
+    data: rows.map(r => {
+      // 支払通知書は「買値」side。請求書（selling）と取り違えないこと
+      const b = describeWorkAmount(r, r.project_id ? ruleMap.get(r.project_id) : undefined, 'buying')
+      return {
+        id:          r.id,
+        workDate:    r.work_date,
+        projectName: r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）',
+        pieceCount:  r.piece_count ?? 0,
+        amount:      b.amount,
+        formula:     b.formula,
+      }
+    }),
+    error: null,
+  }
+}
+
+export type UpcomingSchedule = {
+  date:        string
+  projectName: string
+  status:      string
+}
+
+export async function fetchMyUpcomingSchedules(limit = 5): Promise<ActionResult<UpcomingSchedule[]>> {
+  const ctx = await currentDriverContext()
+  if (!ctx.ok) return { data: null, error: ctx.error }
+
+  const db = looseDb()
+  // 今日を含む以降。JSTのローカル日付で比較する（UTC変換すると日付が1日ずれる）
+  const today = new Date()
+  const iso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+  const { data, error } = await db
+    .from('schedules')
+    .select('date, status, project_id')
+    .eq('contractor_id', ctx.contractorId)
+    .gte('date', iso)
+    .order('date')
+    .limit(limit)
+  if (error) return { data: null, error: error.message }
+
+  const rows = (data ?? []) as { date: string; status: string; project_id: string | null }[]
+  const projIds = Array.from(new Set(rows.map(r => r.project_id).filter((v): v is string => !!v)))
+  const { data: projects } = projIds.length
+    ? await db.from('projects').select('id, project_name').in('id', projIds)
+    : { data: [] }
+  const projMap = new Map<string, string>((projects ?? []).map((p: Row) => [p.id as string, p.project_name as string]))
+
+  return {
+    data: rows.map(r => ({
+      date:        r.date,
+      status:      r.status,
+      projectName: r.status === 'absent'
+        ? '休み'
+        : (r.project_id ? (projMap.get(r.project_id) ?? '（案件未設定）') : '（案件未設定）'),
+    })),
+    error: null,
+  }
+}
+
+/** 支払通知書の行を年でまとめて返す（確定申告用の年計つき） */
+export async function fetchMyPaymentHistory(
+  year: number,
+): Promise<ActionResult<{ rows: PaymentHistoryRow[]; summary: AnnualSummary }>> {
+  const ctx = await currentDriverContext()
+  if (!ctx.ok) return { data: null, error: ctx.error }
+
+  const db = looseDb()
+  const { data, error } = await db
+    .from('payment_notices')
+    .select('notice_month, subtotal_registered, subtotal_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction, insurance_deduction, total_amount, approval_status')
+    .eq('contractor_id', ctx.contractorId)
+    .gte('notice_month', `${year}-01-01`)
+    .lte('notice_month', `${year}-12-01`)
+    .order('notice_month', { ascending: false })
+  if (error) return { data: null, error: error.message }
+
+  const rows: PaymentHistoryRow[] = (data ?? []).map((r: Row) => {
+    const laborNet = Number(r.subtotal_registered ?? 0) + Number(r.subtotal_unregistered ?? 0) + Number(r.subtotal_exempt ?? 0)
+    const totalEx  = Number(r.total_excluding_tax ?? 0)
+    const insurance = Number(r.insurance_deduction ?? 0)
+    return {
+      noticeMonth:    r.notice_month,
+      laborNet,
+      // 立替経費 = 税抜合計 − 労務報酬（マイナスにはしない）
+      expenseNet:     Math.max(0, totalEx - laborNet),
+      totalTax:       Number(r.total_tax ?? 0),
+      // ⚠️ total_deduction は経過措置＋運送保険の合計。経過措置だけを取り出す
+      deduction:      Math.max(0, Number(r.total_deduction ?? 0) - insurance),
+      insurance,
+      totalAmount:    Number(r.total_amount ?? 0),
+      approvalStatus: r.approval_status ?? 'unapproved',
+    }
+  })
+
+  return { data: { rows, summary: summarizeAnnual(year, rows) }, error: null }
+}
+
+/** 年セレクタの選択肢（通知書が存在する年だけ・新しい順） */
+export async function fetchMyAvailableYears(): Promise<ActionResult<number[]>> {
+  const ctx = await currentDriverContext()
+  if (!ctx.ok) return { data: null, error: ctx.error }
+
+  const db = looseDb()
+  const { data, error } = await db
+    .from('payment_notices')
+    .select('notice_month')
+    .eq('contractor_id', ctx.contractorId)
+  if (error) return { data: null, error: error.message }
+
+  return { data: availableYearsOf((data ?? []).map((r: Row) => r.notice_month as string)), error: null }
 }
