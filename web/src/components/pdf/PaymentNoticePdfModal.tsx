@@ -10,11 +10,14 @@ export function PaymentNoticePdfModal({
   yearMonth,
   contractorName,
   onClose,
+  showSaveHint = false,
 }: {
   contractorId:   string
   yearMonth:      string
   contractorName: string
   onClose:        () => void
+  /** ドライバー画面から開いたときに保存を促す一文を出す（確定申告の証憑用） */
+  showSaveHint?:  boolean
 }) {
   const [data, setData]   = useState<PaymentNoticePdfData | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -41,7 +44,17 @@ export function PaymentNoticePdfModal({
           <p className="text-zinc-400 text-sm">読み込み中...</p>
         </div>
       ) : (
-        <PaymentNoticeDocument data={data} />
+        <>
+          {/* ⚠️ PDFは都度生成でDBに保存しない（HANDOVER §2-2）。単価や自社情報を
+              後から変えると過去分の見た目が変わり得るため、証憑として残すには
+              ドライバー自身の保存が要る。印刷ボタンの近くで明示する。 */}
+          {showSaveHint && (
+            <p className="mb-3 rounded-lg bg-blue-50 border border-blue-200 px-4 py-2.5 text-xs text-blue-800 print:hidden">
+              確定申告で使う場合は、この画面から「印刷・PDF保存」でご自身の端末に保存してください。
+            </p>
+          )}
+          <PaymentNoticeDocument data={data} />
+        </>
       )}
     </PrintModal>
   )

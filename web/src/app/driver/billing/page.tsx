@@ -5,8 +5,11 @@ import { fetchMyContractor, fetchMyExpenses, type ExpenseRow } from '../dashboar
 import {
   fetchMyPaymentNotices,
   approvePaymentNotice,
+  fetchMyPaymentHistory,
+  fetchMyAvailableYears,
   type MyPaymentNotice,
 } from '@/app/_actions/driver-actions'
+import type { PaymentHistoryRow, AnnualSummary } from '@/utils/driver-summary'
 import { PaymentNoticePdfModal } from '@/components/pdf/PaymentNoticePdfModal'
 import type { Database } from '@/types/supabase'
 
@@ -126,6 +129,7 @@ function PaymentNoticeCard({
           contractorId={contractorId}
           yearMonth={yearMonth}
           contractorName="（自分）"
+          showSaveHint
           onClose={() => setPdfOpen(false)}
         />
       )}
@@ -149,6 +153,136 @@ const EXPENSE_STATUS_STYLE: Record<string, { label: string; cls: string }> = {
 function currentYearMonth() {
   const now = new Date()
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+// ── 過去の支払履歴（年別・確定申告用） ─────────────────────
+//
+// ⚠️ 年の区切りは暦年。締め日ベースにしない（確定申告が暦年のため）。
+// ⚠️ 年の選択肢は通知書が存在する年だけ。データの無い年を選べると
+//    「0円」の画面が出て、ドライバーには不具合と区別がつかない。
+
+function PaymentHistorySection({ contractorId }: { contractorId: string }) {
+  const [years,   setYears]   = useState<number[]>([])
+  const [year,    setYear]    = useState<number | null>(null)
+  const [rows,    setRows]    = useState<PaymentHistoryRow[]>([])
+  const [summary, setSummary] = useState<AnnualSummary | null>(null)
+  const [error,   setError]   = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [pdfMonth, setPdfMonth] = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+    fetchMyAvailableYears().then(res => {
+      if (!alive) return
+      if (res.error) { setError(res.error); setLoading(false); return }
+      const list = res.data ?? []
+      setYears(list)
+      setYear(list[0] ?? null)
+      if (list.length === 0) setLoading(false)
+    })
+    return () => { alive = false }
+  }, [])
+
+  useEffect(() => {
+    if (year === null) return
+    let alive = true
+    fetchMyPaymentHistory(year).then(res => {
+      if (!alive) return
+      if (res.error || !res.data) { setError(res.error ?? '取得できませんでした'); setRows([]); setSummary(null) }
+      else { setRows(res.data.rows); setSummary(res.data.summary); setError(null) }
+      setLoading(false)
+    })
+    return () => { alive = false }
+  }, [year])
+
+  return (
+    <section>
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="text-sm font-bold text-zinc-900">過去の支払履歴</h2>
+        {years.length > 0 && (
+          <select
+            value={year ?? ''}
+            onChange={e => { setLoading(true); setYear(Number(e.target.value)) }}
+            className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 text-sm text-zinc-900 outline-none focus:border-zinc-500"
+          >
+            {years.map(y => <option key={y} value={y}>{y}年</option>)}
+          </select>
+        )}
+      </div>
+
+      {error ? (
+        <div className="rounded-lg bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{error}</div>
+      ) : loading ? (
+        <div className="py-8 text-center text-sm text-zinc-400">読み込み中...</div>
+      ) : years.length === 0 ? (
+        <div className="py-10 text-center text-sm text-zinc-400 rounded-xl border border-dashed border-zinc-200 bg-white">
+          まだ支払通知書がありません
+        </div>
+      ) : (
+        <>
+          {/* 年間サマリー（確定申告用） */}
+          {summary && (
+            <div className="rounded-2xl border border-zinc-200 bg-white p-5 mb-3">
+              <p className="text-xs text-zinc-500">{summary.year}年の合計（{summary.monthCount}ヶ月分）</p>
+              <p className="mt-1 text-3xl font-bold tracking-tight text-zinc-900 tabular-nums">{yen(summary.paidTotal)}</p>
+              <dl className="mt-4 space-y-2 border-t border-zinc-100 pt-4 text-sm">
+                <Line label="労務報酬（税抜）" value={yen(summary.laborNetTotal)} />
+                <Line label="立替経費（税抜）" value={yen(summary.expenseNetTotal)} />
+                <Line label="消費税" value={yen(summary.taxTotal)} />
+                {summary.deductionTotal > 0 && <Line label="経過措置控除" value={`−${yen(summary.deductionTotal)}`} amber />}
+                {summary.insuranceTotal > 0 && <Line label="運送保険" value={`−${yen(summary.insuranceTotal)}`} amber />}
+              </dl>
+              <p className="mt-3 text-[11px] leading-relaxed text-zinc-400">
+                ※ 未承認の月も含みます。確定申告にお使いの際は、各月のPDFをご自身の端末に保存してください。
+              </p>
+            </div>
+          )}
+
+          {/* 月別 */}
+          <ul className="rounded-2xl border border-zinc-200 bg-white divide-y divide-zinc-100 overflow-hidden">
+            {rows.map(r => (
+              <li key={r.noticeMonth} className="flex items-center justify-between gap-3 px-4 py-4">
+                <div className="min-w-0">
+                  <p className="text-base font-medium text-zinc-900">{monthLabel(r.noticeMonth)}</p>
+                  <p className="text-xs text-zinc-500">
+                    {r.approvalStatus === 'approved' ? '✅ 承認済み' : '未承認'}
+                  </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <span className="text-lg font-bold text-zinc-900 tabular-nums">{yen(r.totalAmount)}</span>
+                  <button
+                    onClick={() => setPdfMonth(r.noticeMonth.slice(0, 7))}
+                    className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2.5 text-xs font-medium text-blue-700 active:bg-blue-100"
+                  >
+                    PDF
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+
+      {pdfMonth && (
+        <PaymentNoticePdfModal
+          contractorId={contractorId}
+          yearMonth={pdfMonth}
+          contractorName="（自分）"
+          showSaveHint
+          onClose={() => setPdfMonth(null)}
+        />
+      )}
+    </section>
+  )
+}
+
+function Line({ label, value, amber = false }: { label: string; value: string; amber?: boolean }) {
+  return (
+    <div className={`flex justify-between ${amber ? 'text-amber-600' : 'text-zinc-600'}`}>
+      <dt>{label}</dt>
+      <dd className="tabular-nums font-medium text-zinc-900">{value}</dd>
+    </div>
+  )
 }
 
 export default function DriverBillingPage() {
@@ -270,11 +404,13 @@ export default function DriverBillingPage() {
               )}
             </section>
 
+            <PaymentHistorySection contractorId={contractor.id} />
+
             <section>
               <div className="flex items-center justify-between mb-3">
                 <h2 className="text-sm font-bold text-zinc-900">立替金の申請履歴</h2>
                 <div className="flex items-center gap-2">
-                  <label className="text-xs text-zinc-500">対象月</label>
+                  <label className="text-xs text-zinc-500">立替金の対象月</label>
                   <input
                     type="month"
                     value={yearMonth}
