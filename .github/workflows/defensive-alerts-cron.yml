@@ -16,7 +16,7 @@ jobs:
       #    未設定なら現行URLにフォールバックする（設定漏れでアラートが止まらないように）。
       - name: Call defensive-alerts cron endpoint
         env:
-          BASE_URL: ${{ vars.APP_BASE_URL || 'https://unsou-system.kawapon7.workers.dev' }}
+          BASE_URL: ${{ vars.APP_BASE_URL || 'https://unsou-system.hibiki-app.workers.dev' }}
         run: |
           echo "base: $BASE_URL"
           curl -f -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
