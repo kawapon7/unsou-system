@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { todayYearMonthJST } from '@/utils/date'
+import { useMonth } from '@/contexts/MonthContext'
 import {
   fetchDashboardData,
   type ScheduleSummary,
@@ -15,17 +16,9 @@ import {
 const yen = (n: number) =>
   `¥${Math.round(n).toLocaleString('ja-JP')}`
 
-function prevYM(ym: string) {
-  const [y, m] = ym.split('-').map(Number)
-  const d = new Date(y, m - 2, 1)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-}
-
-function nextYM(ym: string) {
-  const [y, m] = ym.split('-').map(Number)
-  const d = new Date(y, m, 1)
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
-}
+// ⚠️ 月送りの自前実装（prevYM / nextYM）は削除した。表示月はサイドバーと共有する
+//    MonthContext が唯一の正本で、月送りは context の prevMonth / nextMonth を使う。
+//    自前state に戻すとサイドバーの「対象年月」と食い違う（2026-08-17に直した不具合）。
 
 function ymLabel(ym: string) {
   const [y, m] = ym.split('-')
@@ -317,7 +310,8 @@ export default function DashboardPage() {
   const tab          = (searchParams.get('tab') as Tab | null) ?? 'summary'
   const setTab       = (t: Tab) => router.replace(`${pathname}?tab=${t}`)
 
-  const [yearMonth, setYearMonth] = useState(todayYearMonthJST())
+  // 表示月はサイドバーの「対象年月」と共有する（自前stateを持つと連動しない）
+  const { yearMonth, setYearMonth, prevMonth, nextMonth } = useMonth()
   const [summary,   setSummary]   = useState<ScheduleSummary | null>(null)
   const [projects,  setProjects]  = useState<ProjectBreakdownRow[]>([])
   const [trend,     setTrend]     = useState<ScheduleTrendRow[]>([])
@@ -351,7 +345,7 @@ export default function DashboardPage() {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => setYearMonth(ym => prevYM(ym))}
+              onClick={prevMonth}
               className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 text-sm"
             >‹</button>
             <span className="text-sm font-semibold text-zinc-900 tabular-nums min-w-[100px] text-center">
@@ -359,7 +353,7 @@ export default function DashboardPage() {
             </span>
             <button
               type="button"
-              onClick={() => setYearMonth(ym => nextYM(ym))}
+              onClick={nextMonth}
               className="h-8 w-8 flex items-center justify-center rounded-full border border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50 text-sm"
             >›</button>
             <button

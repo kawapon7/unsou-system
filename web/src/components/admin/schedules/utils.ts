@@ -30,6 +30,21 @@ export function yearMonthOf(date: string) {
   return date.slice(0, 7)
 }
 
+/**
+ * サイドバーの「対象年月」が変わったときに、カレンダーが表示すべき日付を返す。
+ *
+ * - 同じ月なら現在の日付を維持する（週・日表示で見ている日を奪わない）
+ * - 別の月なら、その月の1日へ移動する
+ * - ただし選ばれた月が今日の月なら「今日」へ移動する（「今月に戻す」操作の自然な期待）
+ *
+ * ⚠️ today を引数で受けるのはテストを実時刻に依存させないため。呼び出し側は todayISO() を渡す。
+ */
+export function dateForYearMonth(yearMonth: string, currentDate: string, today: string): string {
+  if (yearMonthOf(currentDate) === yearMonth) return currentDate
+  if (yearMonthOf(today) === yearMonth) return today
+  return `${yearMonth}-01`
+}
+
 export function fmtMonth(ym: string) {
   const [y, m] = ym.split('-')
   return `${y}年${Number(m)}月`

@@ -13,6 +13,7 @@ import {
   ScheduleEditDialog,
   ViewModeTabs,
   WeekView,
+  dateForYearMonth,
   groupEntriesByDate,
   navigateDate,
   todayISO,
@@ -21,16 +22,25 @@ import {
   yearMonthsInRange,
   type ViewMode,
 } from '@/components/admin/schedules'
+import { useMonth } from '@/contexts/MonthContext'
 
 export default function AdminSchedulesPage() {
+  // サイドバーの「対象年月」と双方向で同期する（片方向だと画面を移った瞬間に月が戻って見える）。
+  const { yearMonth, setYearMonth } = useMonth()
   const [viewMode,    setViewMode]    = useState<ViewMode>('month')
-  const [currentDate, setCurrentDate] = useState(todayISO)
+  const [pickedDate,  setPickedDate]  = useState(todayISO)
   const [entries,     setEntries]     = useState<AdminScheduleEntry[]>([])
   const [loading,     setLoading]     = useState(true)
   const [error,       setError]       = useState<string | null>(null)
   const [selected,    setSelected]    = useState<AdminScheduleEntry | null>(null)
 
   const today = todayISO()
+
+  // 表示日付はサイドバーの対象年月から**派生**させる（stateを2つ持って同期させない）。
+  // ⚠️ useEffect でstateを書き換える形にすると、React が警告するカスケード再描画になり、
+  //    さらに「押し戻し」と往復して日付が1日に戻る事故が起きる。派生ならその余地が無い。
+  //    月が一致していれば pickedDate がそのまま返るので、週・日表示で見ている日は保たれる。
+  const currentDate = dateForYearMonth(yearMonth, pickedDate, today)
   const range = useMemo(
     () => visibleRange(currentDate, viewMode),
     [currentDate, viewMode],
@@ -74,8 +84,15 @@ export default function AdminSchedulesPage() {
 
   const missingCount = visibleEntries.filter(e => e.isMissingInput).length
 
+  // カレンダー → サイドバー。日付を動かす経路はすべてここを通す
+  // （setPickedDate を直接呼ぶとサイドバーへの押し戻しが漏れ、月表示が食い違う）。
+  function goToDate(next: string) {
+    setPickedDate(next)
+    setYearMonth(yearMonthOf(next))
+  }
+
   function handleNavigate(delta: -1 | 1) {
-    setCurrentDate(d => navigateDate(d, viewMode, delta))
+    goToDate(navigateDate(currentDate, viewMode, delta))
   }
 
   function handleUpdated() {
@@ -99,7 +116,7 @@ export default function AdminSchedulesPage() {
           viewMode={viewMode}
           onPrev={() => handleNavigate(-1)}
           onNext={() => handleNavigate(1)}
-          onToday={() => setCurrentDate(todayISO())}
+          onToday={() => goToDate(todayISO())}
         />
 
         <div className="flex flex-wrap gap-3 mb-6">
