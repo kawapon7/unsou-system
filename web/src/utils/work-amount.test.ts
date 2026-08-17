@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   calcWorkAmount,
+  describeWorkAmount,
   WORK_RECORD_AMOUNT_COLUMNS,
   type PriceRuleRecord,
   type RawWorkRecord,
@@ -96,5 +97,47 @@ describe('calcWorkAmount', () => {
   it('単価が null なら 0 として扱う', () => {
     const r = rule({ calculation_type: 'piece', selling_price: null })
     expect(calcWorkAmount(rec({ piece_count: 10 }), r, 'selling')).toBe(0)
+  })
+})
+
+describe('describeWorkAmount', () => {
+  it('個数建は「N個 × ¥単価」を返す', () => {
+    const r = rule({ calculation_type: 'piece', buying_price: 85 })
+    expect(describeWorkAmount(rec({ piece_count: 380 }), r, 'buying'))
+      .toEqual({ formula: '380個 × ¥85', amount: 32300 })
+  })
+
+  it('固定建は単価そのものを出す', () => {
+    const r = rule({ calculation_type: 'fixed', buying_price: 12000 })
+    expect(describeWorkAmount(rec(), r, 'buying'))
+      .toEqual({ formula: '固定 ¥12,000', amount: 12000 })
+  })
+
+  it('時間建は休憩を引いた稼働時間を出す', () => {
+    const r = rule({ calculation_type: 'hourly', buying_price: 2000 })
+    const w = rec({ start_time: '2026-07-01T09:00:00Z', end_time: '2026-07-01T18:00:00Z', break_minutes: 60 })
+    expect(describeWorkAmount(w, r, 'buying')).toEqual({ formula: '8時間 × ¥2,000', amount: 16000 })
+  })
+
+  it('時間建で時刻が欠けていれば理由を出す', () => {
+    const r = rule({ calculation_type: 'hourly', buying_price: 2000 })
+    expect(describeWorkAmount(rec(), r, 'buying')).toEqual({ formula: '時間未入力', amount: 0 })
+  })
+
+  it('複合建は固定と歩合を両方出す', () => {
+    const r = rule({ calculation_type: 'hybrid', buying_price: 8000, margin_fixed: 50 })
+    expect(describeWorkAmount(rec({ piece_count: 20 }), r, 'buying'))
+      .toEqual({ formula: '固定 ¥8,000 + 20個 × ¥50', amount: 9000 })
+  })
+
+  it('単価ルールが無い場合は「単価未設定」と言う（黙って0円にしない）', () => {
+    expect(describeWorkAmount(rec({ piece_count: 10 }), undefined, 'buying'))
+      .toEqual({ formula: '単価未設定', amount: 0 })
+  })
+
+  it('式と金額は必ず calcWorkAmount と一致する', () => {
+    const r = rule({ calculation_type: 'piece', buying_price: 85 })
+    const w = rec({ piece_count: 7 })
+    expect(describeWorkAmount(w, r, 'buying').amount).toBe(calcWorkAmount(w, r, 'buying'))
   })
 })

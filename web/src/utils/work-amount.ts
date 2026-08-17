@@ -81,3 +81,54 @@ export function buildPriceRuleMap(
 ): Map<string, PriceRuleRecord> {
   return new Map((rows ?? []).map(r => [r.project_id, r]))
 }
+
+/** 金額の「根拠」を人が読める式にしたもの */
+export type AmountBreakdown = {
+  /** 画面にそのまま出す式（例: '380個 × ¥85'）。算出できない場合は理由を入れる */
+  formula: string
+  amount:  number
+}
+
+const yen = (n: number) => `¥${n.toLocaleString('ja-JP')}`
+
+/**
+ * calcWorkAmount と同じ計算の根拠を式にして返す（ドライバー画面の内訳表示用）。
+ *
+ * ⚠️ 金額は必ず calcWorkAmount に委譲する。ここで再計算しないこと。
+ *    式と金額が食い違うと、根拠として見せる意味が無くなるどころか不信を招く。
+ * ⚠️ 算出できないときは 0 円だけを返さず、必ず理由（単価未設定・時間未入力）を出す。
+ *    ドライバーの報酬画面で理由なしの 0 円は「働いたのにタダ」に読める。
+ */
+export function describeWorkAmount(
+  r:    RawWorkRecord,
+  rule: PriceRuleRecord | undefined,
+  side: 'selling' | 'buying',
+): AmountBreakdown {
+  const amount = calcWorkAmount(r, rule, side)
+  if (!rule) return { formula: '単価未設定', amount }
+
+  const price = side === 'selling'
+    ? Number(rule.selling_price ?? 0)
+    : Number(rule.buying_price  ?? 0)
+
+  switch (rule.calculation_type) {
+    case 'piece':
+      return { formula: `${r.piece_count ?? 0}個 × ${yen(price)}`, amount }
+    case 'hourly': {
+      if (!r.start_time || !r.end_time) return { formula: '時間未入力', amount }
+      const ms    = new Date(r.end_time).getTime() - new Date(r.start_time).getTime()
+      const hours = ms / 3_600_000 - (r.break_minutes ?? 0) / 60
+      const shown = Number.isInteger(hours) ? String(hours) : hours.toFixed(1)
+      return { formula: `${shown}時間 × ${yen(price)}`, amount }
+    }
+    case 'fixed':
+      return { formula: `固定 ${yen(price)}`, amount }
+    case 'hybrid':
+      return {
+        formula: `固定 ${yen(price)} + ${r.piece_count ?? 0}個 × ${yen(Number(rule.margin_fixed ?? 0))}`,
+        amount,
+      }
+    default:
+      return { formula: '単価未設定', amount }
+  }
+}
