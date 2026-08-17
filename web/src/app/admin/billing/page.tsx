@@ -505,7 +505,11 @@ export default function BillingPage() {
           ))}
         </div>
 
-        {tab === 'payment' && <PaymentTab yearMonth={yearMonth} />}
+        {/* ⚠️ key に yearMonth を渡してタブごと作り直す。調整欄（adjInput）は委託先IDをキーに
+            持つ state で、月をまたいでも残ってしまう。7月に入れた +500 が表示されたまま
+            8月で「生成」を押すと、入力した覚えのない調整が8月分に適用される。
+            admin/sales/page.tsx が同じ理由で同じ対策を取っている。 */}
+        {tab === 'payment' && <PaymentTab key={yearMonth} yearMonth={yearMonth} />}
       </div>
     </div>
   )

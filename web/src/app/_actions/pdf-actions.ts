@@ -15,6 +15,7 @@ import {
 import { closingRange, computeDueDate } from '@/utils/closing-period'
 import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
 import { getDeductionRate } from '@/utils/transitional-deduction'
+import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -286,19 +287,41 @@ export async function fetchPaymentNoticePdfData(
     : null
   const laborNet    = laborNetFromNotice ?? laborLines.reduce((s, l) => s + l.netAmount, 0)
   const laborTax    = laborTaxFromNotice ?? 0
-  const totalEx     = n ? Number(n.total_excluding_tax ?? 0) : laborNet + expenseLines.reduce((s, l) => s + l.netAmount, 0)
-  const totalTax    = n ? Number(n.total_tax ?? 0) : laborTax
-  const expenseNet  = Math.max(0, totalEx - laborNet)
-  const expenseTax  = Math.max(0, totalTax - laborTax)
+  let totalEx     = n ? Number(n.total_excluding_tax ?? 0) : laborNet + expenseLines.reduce((s, l) => s + l.netAmount, 0)
+  let totalTax    = n ? Number(n.total_tax ?? 0) : laborTax
   // ⚠️ total_deduction は相殺額合計（経過措置＋運送保険）。経過措置だけを取り出して表示する。
   //    ここを分けずに全額を「経過措置控除（税込額の2%）」と印字すると、金額と率が合わない
   //    通知書を委託先に渡すことになる。
   const extra = n as { insurance_deduction?: number | null; adjustment_amount?: number | null } | null
-  const insuranceDeduction = Number(extra?.insurance_deduction ?? 0)
-  const totalDeduction     = n ? Number(n.total_deduction ?? 0) : 0
-  const deduction          = Math.max(0, totalDeduction - insuranceDeduction)
-  // 税込思考業者の端数補正。DB の total_amount と食い違わないよう、ここでも加算する
-  const adjustment         = Number(extra?.adjustment_amount ?? 0)
+  // ⚠️ 通知書が未生成の月は、以前ここで相殺を一律 0 にしていた。その結果、画面の一覧は
+  //    「運送保険 ▲1,000 / 経過措置 ▲x」を出しているのに、同じ行の「プレビュー・出力」から
+  //    出る PDF は満額を印字する、という食い違いが起きていた（委託先に渡す紙が狂う）。
+  //    未生成のときは金額の正本（computePaymentNoticeAmounts）にライブ計算させる。
+  let insuranceDeduction = Number(extra?.insurance_deduction ?? 0)
+  let totalDeduction     = n ? Number(n.total_deduction ?? 0) : 0
+  let adjustment         = Number(extra?.adjustment_amount ?? 0)
+  if (!n) {
+    const live = await computePaymentNoticeAmounts(service, {
+      tenantId:     (contractor as { tenant_id?: string }).tenant_id ?? '',
+      contractorId,
+      yearMonth,
+    })
+    // ⚠️ fail-closed。計算できないまま満額の通知書を出さない
+    if (live.error || !live.data) {
+      return { data: null, error: live.error ?? '支払通知書の金額算出に失敗しました' }
+    }
+    // 相殺だけ正本から取って合計は自前計算、では辻褄が合わない。合計もまとめて置き換える
+    totalEx            = live.data.totalExcludingTax
+    totalTax           = live.data.totalTax
+    insuranceDeduction = live.data.insuranceDeduction
+    totalDeduction     = live.data.totalDeduction
+    adjustment         = live.data.adjustment
+  }
+  // ⚠️ 立替の内訳は合計の確定後に出す。上の !n ブロックで totalEx / totalTax を
+  //    正本の値へ差し替えるため、先に計算すると差し替え前の値が残る。
+  const expenseNet = Math.max(0, totalEx - laborNet)
+  const expenseTax = Math.max(0, totalTax - laborTax)
+  const deduction  = Math.max(0, totalDeduction - insuranceDeduction)
   // ⚠️ 以前は `deduction / laborTax` を率としていたため「20%」と表示され、画面の
   //    「現在フェーズ 2%」と食い違っていた（消費税額に対する割合を出していたのが原因）。
   // ⚠️ `payment_notices.deduction_rate` は**単位が混在**していて使えない。

@@ -668,10 +668,15 @@ export async function fetchPaymentNoticeSummary(
 
       // 未確定 → 正本のライブ計算（締め期間・payee ルール・調整金・稼働日別の率まで
       // 通知書の生成とまったく同じ計算）で表示する
+      // ⚠️ manualAdjustment を明示的に 0 で渡す。このブランチに入るのは noticeMap に
+      //    行が無いとき＝保存済みの手動調整が存在しないと確定しているときだけなので、
+      //    省略すると payment_notices を必ず null が返る条件で読みに行くだけの無駄になる
+      //    （委託先の件数だけ発生する）。
       const { data: a, error } = await computePaymentNoticeAmounts(supabase, {
         tenantId,
         contractorId: contractor.id,
         yearMonth,
+        manualAdjustment: 0,
       })
       // ⚠️ 1件の失敗で行を黙って落とすと支払漏れにつながるため fail-closed
       if (error || !a) throw new Error(`${contractor.name}: ${error ?? '計算結果が空です'}`)
@@ -750,9 +755,11 @@ export async function computeManualInvoicePreview(params: {
   if (!auth.ok) return { data: null, error: auth.error }
   const { calculateInvoiceTax, calculatePaymentTax } = await import('@/utils/billing/taxCalculator')
 
+  // ⚠️ 明細ごとの日付をそのまま渡す。経過措置の率は稼働日ごとに決まるため、
+  //    代表日1つで一括判定すると 2026-10-01 をまたぐ締め期間で通知書本体と食い違う。
   const items = params.lines
     .filter(l => l.checked)
-    .map(l => ({ amount: l.amount, isTaxable: l.isTaxable }))
+    .map(l => ({ amount: l.amount, isTaxable: l.isTaxable, date: l.date || undefined }))
 
   const result =
     params.mode === 'out'

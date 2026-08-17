@@ -75,3 +75,33 @@ describe('calculatePaymentTax（支払請求書＝自社が買い手）', () => 
     expect(result.deductionAmount).toBe(2_465) // (74,700 + 7,470) × 3%
   })
 })
+
+/**
+ * 率の切替（2026-10-01）をまたぐ明細では、稼働日ごとに率を分けて差し引く。
+ * ⚠️ 代表日1つで一括判定すると、支払通知書本体（日別バケットで calcTransitionalDeduction
+ *    を使う）と差し引き額が食い違う。率の判定は utils/transitional-deduction.ts が唯一の正本。
+ */
+describe('calculatePaymentTax（率の切替をまたぐ場合）', () => {
+  it('9月分は2%、10月分は3%で別々に差し引く', () => {
+    const result = calculatePaymentTax(
+      [
+        { amount: 100_000, isTaxable: true, date: '2026-09-25' },
+        { amount: 100_000, isTaxable: true, date: '2026-10-05' },
+      ],
+      false,
+    )
+
+    // 9月分 110,000×2% = 2,200 ／ 10月分 110,000×3% = 3,300
+    expect(result.deductionAmount).toBe(5_500)
+  })
+
+  it('日付を持たない明細は従来どおり targetDate の率で判定する', () => {
+    const result = calculatePaymentTax(
+      [{ amount: 100_000, isTaxable: true }],
+      false,
+      new Date('2026-09-25'),
+    )
+
+    expect(result.deductionAmount).toBe(2_200)
+  })
+})

@@ -641,6 +641,19 @@ export async function generatePaymentNotice(
   const supabase = createServiceClient()
   const targetMonth = `${yearMonth}-01`
 
+  // ⚠️ Server Action は画面を介さず直接呼べるため、検証をクライアント側に置かない。
+  //    未検証だと 0.5 のような小数がそのまま numeric 列に入り金額に小数が乗るほか、
+  //    大きな負値で「差引支給額がマイナスの支払通知書」を作れてしまう。
+  const MAX_MANUAL_ADJUSTMENT = 1_000_000
+  if (manualAdjustment !== undefined) {
+    if (!Number.isInteger(manualAdjustment)) {
+      return { data: null, error: '調整額は整数で指定してください。' }
+    }
+    if (Math.abs(manualAdjustment) > MAX_MANUAL_ADJUSTMENT) {
+      return { data: null, error: `調整額は ±${MAX_MANUAL_ADJUSTMENT.toLocaleString()} 円以内で指定してください。` }
+    }
+  }
+
   // ── 金額算出は共通モジュールへ集約（utils/payment-notice-calc.ts） ──
   // ⚠️ 同じ計算が _actions/billing-actions.ts の finalizePaymentNotice にも重複しており、
   //    そちらが劣化コピーになっていた（2026-08-02 に一本化）。
@@ -650,6 +663,14 @@ export async function generatePaymentNotice(
     { tenantId, contractorId, yearMonth, manualAdjustment },
   )
   if (calcErr || !a) return { data: null, error: calcErr ?? '支払通知書の金額算出に失敗しました' }
+
+  // ⚠️ 差引支給額がマイナスの通知書は作らせない。調整額の符号ミスをここで止める。
+  if (a.totalAmount < 0) {
+    return {
+      data: null,
+      error: `差引支給額がマイナス（${a.totalAmount.toLocaleString()}円）になります。調整額を見直してください。`,
+    }
+  }
 
   const db = supabase as any
 

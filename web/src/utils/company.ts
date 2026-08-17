@@ -140,13 +140,19 @@ export async function getTransportInsuranceAmount(
   //    金額が変わる項目なので、確認できないなら止める。
   if (error) return { amount: null, error: `自社設定の取得に失敗しました: ${error.message}` }
 
-  return {
-    amount: Number(
-      (data as { transport_insurance_amount?: number } | null)?.transport_insurance_amount
-        ?? DEFAULT_TRANSPORT_INSURANCE,
-    ),
-    error: null,
+  // ⚠️ 自社情報が未登録なら既定値で通さない。ユーザーが一度も設定していない金額で
+  //    支払額を減らすことになるため（B社をオンボードして自社情報を登録する前に
+  //    支払通知書を生成すると、全委託先へ一律で過少支払いになる）。
+  //    PDF 側も未登録は fail-closed なので、生成だけ通る不整合も解消する。
+  if (!data) {
+    return {
+      amount: null,
+      error: '自社情報が未登録です。「マスタ・設定 → 自社情報」で運送保険料を含む自社情報を登録してください。',
+    }
   }
+
+  const raw = (data as { transport_insurance_amount?: number | null }).transport_insurance_amount
+  return { amount: Number(raw ?? DEFAULT_TRANSPORT_INSURANCE), error: null }
 }
 
 /**

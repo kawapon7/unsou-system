@@ -5,11 +5,17 @@
  * 明細行ごとの丸めは行わず、カテゴリ別の合計値に対して一括で Math.round する。
  */
 
-import { getDeductionRate } from '../transitional-deduction'
+import { getDeductionRate, calcTransitionalDeduction, type TransitionalPurchase } from '../transitional-deduction'
 
 export interface TaxItem {
   amount: number    // 税抜き金額
   isTaxable: boolean
+  /**
+   * 課税仕入れを行った日（'YYYY-MM-DD'）。支払側（OUT）の経過措置は**稼働日ごと**に
+   * 率が決まるため（消基通 11-3-1）、明細ごとに持てるようにしてある。
+   * 省略時は calculatePaymentTax の targetDate を使う。
+   */
+  date?: string
 }
 
 export interface TaxCalculationResult {
@@ -110,16 +116,40 @@ export function calculatePaymentTax(
 ): PaymentTaxCalculationResult {
   const base = calculateInvoiceTax(items)
 
-  const deductionRate = getDeductionRate(targetDate, isRegistered)
-  const deductionAmount =
-    !isRegistered && base.taxableSubtotal > 0
-      ? Math.round((base.taxableSubtotal + base.taxAmount) * deductionRate)
-      : 0
+  // ⚠️ 率の判定と按分は utils/transitional-deduction.ts の calcTransitionalDeduction が唯一の正本。
+  //    ここで「代表日1つ × 合計額」で計算してはならない。率が切り替わる 2026-10-01 をまたぐ
+  //    締め期間（例 2026-09-21〜10-20）で、支払通知書本体（日別バケット）と食い違うため。
+  const fallbackDate = toLocalDateString(targetDate)
+  const netByDate = new Map<string, number>()
+  for (const item of items) {
+    if (!item.isTaxable) continue
+    const date = item.date ?? fallbackDate
+    netByDate.set(date, (netByDate.get(date) ?? 0) + item.amount)
+  }
+
+  const purchases: TransitionalPurchase[] = [...netByDate.entries()].map(([date, net]) => ({
+    date,
+    taxIncludedAmount: net + Math.round(net * 0.1),
+  }))
+
+  const { deduction, breakdown } = calcTransitionalDeduction(purchases, isRegistered)
+  const deductionBase = breakdown.reduce((s, b) => s + b.taxIncludedAmount, 0)
+  // ⚠️ 率が混在する期間は「単一の正しい％」が存在しない。差し引き額と辻褄が合う実効率を返す
+  //    （payment-notice-calc.ts と同じ方針）。率が 1 つの通常月はその率と一致する。
+  const deductionRate = deductionBase > 0 ? deduction / deductionBase : 0
 
   return {
     ...base,
     deductionRate,
-    deductionAmount,
-    finalAmount: base.finalAmount - deductionAmount,
+    deductionAmount: deduction,
+    finalAmount: base.finalAmount - deduction,
   }
+}
+
+/** Date を TZ に依存せずローカル日付の 'YYYY-MM-DD' にする */
+function toLocalDateString(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
 }
