@@ -10,6 +10,7 @@ import {
 import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
 import { closingRange } from '@/utils/closing-period'
 import { getDeductionRate } from '@/utils/transitional-deduction'
+import { parseAlertKey, isDriverFacing, buildDriverNotice } from '@/utils/driver-notice'
 import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
 import {
   describeWorkAmount,
@@ -502,4 +503,104 @@ export async function fetchMyProfile(): Promise<ActionResult<MyProfile>> {
     },
     error: null,
   }
+}
+
+// ── アプリ内お知らせ ───────────────────────────────────────
+//
+// ⚠️ notification_logs は「メールを送った記録」で本文の列を持たない。文面は
+//    utils/driver-notice.ts で組み立てる（親分の自由入力の連絡は現状扱えない）。
+// ⚠️ 送信 status が failed の記録も出す。メールが届かなかった分こそアプリで見せる意味がある。
+// ⚠️ 既読は notification_reads（別表）。notification_logs は不変ログなので更新できない。
+
+export type MyNotice = {
+  id:      string
+  title:   string
+  body:    string
+  href:    string
+  /** 'YYYY-MM-DD' */
+  date:    string
+  isRead:  boolean
+}
+
+export async function fetchMyNotices(): Promise<ActionResult<MyNotice[]>> {
+  const ctx = await currentDriverContext()
+  if (!ctx.ok) return { data: null, error: ctx.error }
+
+  const db = looseDb()
+  const { data: logs, error } = await db
+    .from('notification_logs')
+    .select('id, alert_key, created_at')
+    .eq('contractor_id', ctx.contractorId)
+    .order('created_at', { ascending: false })
+    .limit(50)
+  if (error) return { data: null, error: error.message }
+
+  const rows = (logs ?? []) as { id: string; alert_key: string | null; created_at: string }[]
+  const refs = rows.map(r => ({ row: r, ref: parseAlertKey(r.alert_key) }))
+    .filter(x => isDriverFacing(x.ref.kind))
+
+  // 未入力の催促は対象の予定を引いて日付・案件名を出す（無ければ日付なしの文面になる）
+  const scheduleIds = refs.filter(x => x.ref.kind === 'missing_input').map(x => x.ref.targetId).filter(Boolean)
+  const detailByTarget = new Map<string, { date?: string; projectName?: string }>()
+  if (scheduleIds.length > 0) {
+    const { data: schedules } = await db
+      .from('schedules').select('id, date, project_id').in('id', scheduleIds)
+    const projIds = [...new Set(((schedules ?? []) as Row[]).map(s => s.project_id as string).filter(Boolean))]
+    const { data: projects } = projIds.length
+      ? await db.from('projects').select('id, project_name').in('id', projIds)
+      : { data: [] }
+    const pm = new Map<string, string>(((projects ?? []) as Row[]).map(p => [p.id as string, p.project_name as string]))
+    for (const s of ((schedules ?? []) as Row[])) {
+      detailByTarget.set(s.id as string, {
+        date: s.date as string,
+        projectName: s.project_id ? pm.get(s.project_id as string) : undefined,
+      })
+    }
+  }
+
+  // ⚠️ 既読表が本番未適用のあいだはクエリが失敗する。そのときは全件を未読として出す
+  //    （お知らせ自体を消すと、催促が届かないまま気づけない状態に戻ってしまう）。
+  const readIds = new Set<string>()
+  const { data: reads, error: readErr } = await db
+    .from('notification_reads').select('notification_id').eq('contractor_id', ctx.contractorId)
+  if (readErr) console.warn('[fetchMyNotices] 既読表を読めません（未適用の可能性）:', readErr.message)
+  else for (const r of ((reads ?? []) as Row[])) readIds.add(r.notification_id as string)
+
+  return {
+    data: refs.map(({ row, ref }) => {
+      const n = buildDriverNotice(ref.kind, detailByTarget.get(ref.targetId) ?? {})
+      return {
+        id:     row.id,
+        title:  n.title,
+        body:   n.body,
+        href:   n.href,
+        date:   String(row.created_at).slice(0, 10),
+        isRead: readIds.has(row.id),
+      }
+    }),
+    error: null,
+  }
+}
+
+/** お知らせを既読にする。⚠️ notification_logs 側は一切更新しない（不変ログ） */
+export async function markNoticeRead(notificationId: string): Promise<ActionResult> {
+  const ctx = await currentDriverContext()
+  if (!ctx.ok) return { data: null, error: ctx.error }
+
+  const db = looseDb()
+  // 他人の通知を既読にできないよう、自分宛であることを確認してから入れる
+  const { data: own } = await db
+    .from('notification_logs').select('id')
+    .eq('id', notificationId).eq('contractor_id', ctx.contractorId).maybeSingle()
+  if (!own) return { data: null, error: '対象のお知らせが見つかりません' }
+
+  // ⚠️ F0 で tenant_id の DEFAULT を撤去済み。明示的に渡さないと NOT NULL 違反になる
+  const { error } = await db.from('notification_reads').insert({
+    tenant_id:       ctx.tenantId,
+    notification_id: notificationId,
+    contractor_id:   ctx.contractorId,
+  })
+  // 二重タップは UNIQUE 違反になるが、利用者にとっては成功と同じ
+  if (error && !String(error.message).includes('duplicate')) return { data: null, error: error.message }
+  return { data: undefined, error: null }
 }

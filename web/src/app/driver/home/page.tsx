@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import Link from 'next/link'
+import NoticeList from '@/components/driver/NoticeList'
 import {
   fetchMyMonthSummary,
   fetchMyUpcomingSchedules,
@@ -108,6 +109,9 @@ export default function DriverHomePage() {
           </p>
         )}
       </section>
+
+      {/* ── お知らせ（未読のみ） ───────────────────── */}
+      <NoticeList />
 
       {/* ── 未承認の通知書 ─────────────────────────── */}
       {pendingCount > 0 && (
