@@ -9,6 +9,7 @@ import {
 } from '@/utils/auth'
 import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
 import { closingRange } from '@/utils/closing-period'
+import { getDeductionRate } from '@/utils/transitional-deduction'
 import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
 import {
   describeWorkAmount,
@@ -113,8 +114,14 @@ export async function fetchMyPaymentNotices(): Promise<ActionResult<MyPaymentNot
     const totalEx   = Number(r.total_excluding_tax ?? 0)
     const totalTax  = Number(r.total_tax ?? 0)
     const deduction = Number(r.total_deduction ?? 0)
-    // 経過措置控除率: deduction / laborTax から逆算（0除算ガード）
-    const deductionRate = laborTax > 0 ? Math.round((deduction / laborTax) * 100) / 100 : 0
+    // ⚠️ 率を deduction / laborTax から逆算しないこと。それは「消費税額に対する割合」で、
+    //    2% の月でも 22% と表示されてしまう（ドライバーには「22%も引かれた」と読める）。
+    //    制度上の率＝**税込額に対する差し引き率**なので、PDF と同じく正本から対象月の率を引く。
+    //    同型の誤りは 2026-08-02 に PDF 側で修正済み（HANDOVER §5-4）。
+    const [ny, nm] = String(r.notice_month ?? '').split('-').map(Number)
+    const deductionRate = (ny && nm)
+      ? getDeductionRate(new Date(ny, nm, 0), false)
+      : 0
 
     return {
       id:             r.id,

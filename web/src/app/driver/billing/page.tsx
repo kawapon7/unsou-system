@@ -89,7 +89,9 @@ function PaymentNoticeCard({
         )}
         {notice.deduction > 0 && (
           <div className="flex justify-between text-amber-600">
-            <span>経過措置控除（{(notice.deductionRate * 100).toFixed(0)}%）</span>
+            {/* ⚠️ 率は「税込額に対する差し引き率」（2026年9月まで2%）。消費税額に対する
+                割合（22%など）と混同しないこと。端数の出る実効率もあるため小数1桁まで見る */}
+            <span>経過措置控除（税込額の{Number((notice.deductionRate * 100).toFixed(1))}%）</span>
             <span className="tabular-nums">−{yen(notice.deduction)}</span>
           </div>
         )}
