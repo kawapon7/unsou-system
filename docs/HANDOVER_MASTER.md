@@ -132,7 +132,7 @@
 
 > **重要：Pages から Workers に移行済み。** `@opennextjs/cloudflare` v1.20.1 は **Workers 専用アダプタ**で、Pages 形式（`_worker.js` ディレクトリ）を出力しない。Pages で運用していたため全ルート404になっていた。
 
-* **本番URL**：`https://unsou-system.kawapon7.workers.dev`（旧 `*.pages.dev` は404のまま）
+* **本番URL**：`https://unsou-system.hibiki-app.workers.dev`（旧 `*.pages.dev` は404のまま）
 * **デプロイ**：`web/` で `npm run deploy`（＝`ALLOW_DEV_AUTH_BYPASS=false opennextjs-cloudflare build && opennextjs-cloudflare deploy`）。要 `CLOUDFLARE_API_TOKEN`（Workers Scripts:Edit）＋`CLOUDFLARE_ACCOUNT_ID`。
 * **ローカルプレビュー**：`npm run preview`（＝`opennextjs-cloudflare build && wrangler dev`）
 * **設定**：`web/wrangler.toml` に `main=.open-next/worker.js` と `[assets] directory=.open-next/assets, binding=ASSETS`。
@@ -1283,7 +1283,7 @@ web/
 | ✅ 完了 2026-06-20 | 承認フロー UI 実機テスト | 全4項目 PASS。開発者アンロックUI（モーダル）を `/admin/billing` ② タブに追加。billing-actions.ts のバグ4件修正（カラム名・TZ・dev認証・未存在カラム） |
 | ✅ 完了 2026-06-21 | ドライバー案件フィルターのフィールドテスト | 別セッションで解決済み |
 | ✅ 完了 2026-06-30 | RLS/不変トリガー 本番適用（step③） | 2本とも本番DB適用済み |
-| ✅ 完了 2026-07-01 | 本番環境構築 | **Cloudflare Workers** にデプロイ（Pagesは404のため移行）。`https://unsou-system.kawapon7.workers.dev`。シークレット6つ投入済み。詳細は §2-2-2b |
+| ✅ 完了 2026-07-01 | 本番環境構築 | **Cloudflare Workers** にデプロイ（Pagesは404のため移行）。`https://unsou-system.kawapon7.workers.dev`（当時。2026-08-17に `https://unsou-system.hibiki-app.workers.dev` へ変更）。シークレット6つ投入済み。詳細は §2-2-2b |
 | ✅ 完了 2026-07-01 | main統合 | `fix/p0-security-hardening` を main へマージ済み（`eb749a5`）。Workers移行修正は `bf648f4` |
 | ✅ 完了 2026-07-02 | superpowers / context-mode プラグイン復旧 | CLAUDE.mdのスキル宣言可視化ルール修正＋`~/.claude/settings.json` の `enabledPlugins` を両方 `true` に修正。詳細は5-4参照 |
 | ✅ 完了 2026-07-02 | security-reviewスキルによるP0-P2セキュリティ監査・修正 | 認可ガード欠落・クロステナントIDOR等7件修正（`a7d937d`）。詳細は5-4参照 |
@@ -1367,7 +1367,7 @@ web/
 | **ユーザー管理画面** | ✅ 完了 | admin/driver アカウント作成・編集・削除。`/admin/users` |
 | **ドライバー別案件フィルター** | ✅ 完了 2026-07-26 | 管理者が✅でドライバーごとに表示案件を設定。⚠️2026-07-26まで`tenant_id`の型不一致(uuid)で**保存が必ず失敗していた**。text統一で修正済み（§5-4参照） |
 | **自社マスタ（請求書発行元）** | ✅ 完了 2026-07-26 | `companies`拡張＋`/admin/settings/company`。PDFは未登録時fail-closed（§5-4参照） |
-| 本番デプロイ（Cloudflare Workers） | ✅ 完了 2026-07-01 | `https://unsou-system.kawapon7.workers.dev`。Pagesから移行（§2-2-2b） |
+| 本番デプロイ（Cloudflare Workers） | ✅ 完了 2026-07-01 | `https://unsou-system.hibiki-app.workers.dev`。Pagesから移行（§2-2-2b） |
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
@@ -2253,7 +2253,7 @@ push してもデプロイは失敗する。ローカル `npm run dev` では確
 
 **3. 本番URLの誤認識を解消**
 - `unsou-system.pages.dev`（旧Pages URL）は7/1のWorkers移行以降404が正常な状態と再確認。混同しやすいため要注意。
-- 正しい本番URL: `https://unsou-system.kawapon7.workers.dev`
+- 正しい本番URL: `https://unsou-system.hibiki-app.workers.dev`
 
 **4. admin@hibiki.com のパスワード不明問題を解消**
 - パスワードリセットメールがSupabaseのレート制限で送信不可（実在しないダミーメールのため）。
