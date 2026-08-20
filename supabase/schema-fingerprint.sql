@@ -22,6 +22,13 @@ with sig as (
     from pg_proc p join pg_namespace n on n.oid=p.pronamespace where n.nspname in ('public','internal')
   union all
   select 'TBL', schemaname||'.'||tablename from pg_tables where schemaname in ('public','internal')
+  union all
+  -- GRA: Data API 経由のアクセス権。ここがズレると「指紋は一致するのにアプリが動かない」が起きる。
+  -- 新プロジェクト作成時の "Automatically expose new tables" の設定に左右されるため必ず照合する。
+  select 'GRA', grantee||' '||table_schema||'.'||table_name||' '||privilege_type
+    from information_schema.role_table_grants
+    where table_schema in ('public','internal')
+      and grantee in ('anon','authenticated','service_role')
 )
 select k, count(*) n, md5(string_agg(s, E'\n' order by s)) fingerprint
 from sig group by k order by k;

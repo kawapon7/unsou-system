@@ -23,6 +23,44 @@
 - 組織名の既定値: `hibiki-production-org` / プロジェクト名の既定値: `hibiki-production` / リージョン: `ap-northeast-1`（東京）/ プランは Free で作成する。
 - ボスの手作業が必要な箇所は **🙋 ボス作業** と明記してある。そこで実装者の手は止まる。勝手に代替手段へ回らない。
 
+## 2026-08-20 実測で確定した前提の変更（計画作成時からの差分）
+
+Task 1 は完了済み。以下は実行中に判明した事実で、**Task 2 以降の手順を変更する**。
+
+| 項目 | 確定値 |
+|---|---|
+| 新組織 | `hibiki-production-org`（Free） |
+| 新プロジェクト名 | `kawapon7's Project`（⚠️既定名のまま。`hibiki-production` へのリネームは任意・未実施） |
+| project ref | `lsgvnxiuidvwefihjbcu`（要確認: link 実行時にrefが違えばエラーになるので、そこで確定する） |
+| Region | `ap-northeast-1`（Northeast Asia (Tokyo)）✅ 現行と同一 |
+| Status | Healthy / マイグレーション0件 |
+
+### ⚠️ 変更1: MCPから新プロジェクトが見えない
+
+`list_projects` が現行の `unsou-system` 1件しか返さない（2026-08-20実測）。MCPトークンが旧組織にスコープされているため。**Task 2 Step 5・6 と Task 3 の「MCPツール `execute_sql` / `list_migrations` を新プロジェクトに対して実行」は使えない。**
+
+代替手段（動作確認済み）:
+
+```bash
+# 任意のSQLを新DBへ流す（--linked は Management API 経由）
+npx supabase db query --linked -f supabase/schema-fingerprint.sql
+
+# マイグレーション一覧
+npx supabase migration list --linked
+```
+
+### ⚠️ 変更2: 先に `supabase login` が要る
+
+CLIが未認証（`LegacyPlatformAuthRequiredError`）。`link` も `db push` も Management API を使うため、ログインが前提になる。
+
+🙋 **ボス作業**: ターミナルで `npx supabase login` を実行する（ブラウザ認証）。アクセストークンはCLIがローカルに保存し、チャットには出ない。
+
+### ⚠️ 変更3: GRANT（GRA）を照合対象に追加した
+
+指紋クエリが**テーブル権限を見ていなかった**。プロジェクト作成時の "Automatically expose new tables" 設定が権限に効くため、ここがズレると**指紋は一致するのにアプリが動かない**。`supabase/schema-fingerprint.sql` に `GRA` カテゴリを追加し、現行DBの基準値（441件）を実測済み。照合カテゴリは7→**8**になった。
+
+---
+
 ## 現行本番DBの基準値（2026-08-19 実測・照合の期待値）
 
 | カテゴリ | 件数 | 指紋 (md5) |
@@ -34,6 +72,7 @@
 | POL | 28 | `76355f392068b638b9c6f20c74bf755e` |
 | TRG | 7 | `bf6a3e93dd5166dae9db254bdd3ddd8a` |
 | FN | 6 | `f702cb6786c0a6d150107408bcb3ea0d` |
+| GRA | 441 | `11f1c70a4e78f5a7edabe0dc97d4486b` |
 
 ⚠️ この基準値は**現行DBが変わらない限り不変**。もし Task 3 の実行前に現行DBのスキーマを触った場合は、基準値を取り直すこと。
 
@@ -217,7 +256,7 @@ cat supabase/schema-fingerprint.sql
 
 Task 1〜2 で作った新DBの結果と、Global Constraints の「現行本番DBの基準値」表を比較する。
 
-**7カテゴリすべてで「件数」と「指紋」が一致すれば完了。**
+**8カテゴリすべてで「件数」と「指紋」が一致すれば完了。**
 
 | カテゴリ | 期待件数 | 期待指紋 |
 |---|---|---|
@@ -228,6 +267,7 @@ Task 1〜2 で作った新DBの結果と、Global Constraints の「現行本番
 | POL | 28 | `76355f392068b638b9c6f20c74bf755e` |
 | TRG | 7 | `bf6a3e93dd5166dae9db254bdd3ddd8a` |
 | FN | 6 | `f702cb6786c0a6d150107408bcb3ea0d` |
+| GRA | 441 | `11f1c70a4e78f5a7edabe0dc97d4486b` |
 
 - [ ] **Step 3: 一致した場合 — 不変トリガーとFKを個別に確認する**
 
