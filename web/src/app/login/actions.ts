@@ -35,7 +35,7 @@ export async function login(formData: FormData) {
   const role = userData?.role ?? user.user_metadata?.role
 
   if (role === 'master') {
-    redirect('/admin/dashboard')
+    redirect('/admin')
   } else {
     redirect('/driver/schedule')
   }

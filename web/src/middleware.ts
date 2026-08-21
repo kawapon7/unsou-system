@@ -74,7 +74,7 @@ export async function middleware(request: NextRequest) {
   // ログイン済みでログインページに来たらロール別ダッシュボードへ
   if (isLoginPage && user) {
     const url = request.nextUrl.clone()
-    url.pathname = isOwner ? '/admin/dashboard' : '/driver/home'
+    url.pathname = isOwner ? '/admin' : '/driver/home'
     return NextResponse.redirect(url)
   }
 
