@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useRouter, usePathname } from 'next/navigation'
 import { todayYearMonthJST } from '@/utils/date'
 import { useMonth } from '@/contexts/MonthContext'
+import TabNav from '@/app/admin/_components/TabNav'
 import {
   fetchDashboardData,
   type ScheduleSummary,
@@ -53,18 +54,19 @@ function KpiCard({
   return (
     <div className={`rounded-xl bg-white border border-zinc-200 ${accent} px-5 py-4`}>
       <p className="text-xs text-zinc-500 mb-3">{label}</p>
-      <div className="grid grid-cols-3 gap-2">
+      {/* 月末着地が主役。実績・予定残は補助情報としてトーンを一段落とす */}
+      <div className="grid grid-cols-3 gap-2 items-end">
         <div>
           <p className="text-[10px] text-zinc-500 mb-0.5">実績（今日まで）</p>
-          <p className="text-base font-bold text-zinc-900 tabular-nums">{yen(confirmed)}</p>
+          <p className="text-base font-semibold text-zinc-700 tabular-nums">{yen(confirmed)}</p>
         </div>
         <div>
-          <p className="text-[10px] text-zinc-500 mb-0.5">予定残</p>
-          <p className="text-base font-semibold text-zinc-500 tabular-nums">{yen(projected)}</p>
+          <p className="text-[10px] text-zinc-400 mb-0.5">予定残</p>
+          <p className="text-base font-medium text-zinc-400 tabular-nums">{yen(projected)}</p>
         </div>
         <div>
           <p className="text-[10px] text-zinc-600 mb-0.5 font-semibold">月末着地</p>
-          <p className="text-base font-bold text-zinc-900 tabular-nums">{yen(landing)}</p>
+          <p className="text-xl font-bold text-zinc-900 tracking-tight tabular-nums">{yen(landing)}</p>
           {rate != null && (
             <p className="text-[10px] text-zinc-500 mt-0.5 tabular-nums">{rate}%</p>
           )}
@@ -184,10 +186,10 @@ function SummaryTab({
       />
       <div className="rounded-xl bg-white border border-zinc-200 border-l-4 border-l-violet-400 px-5 py-4">
         <p className="text-xs text-zinc-500 mb-3">粗利</p>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-3 gap-2 items-end">
           <div>
             <p className="text-[10px] text-zinc-400 mb-0.5">実績（今日まで）</p>
-            <p className={`text-base font-bold tabular-nums ${confirmedProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+            <p className={`text-base font-semibold tabular-nums ${confirmedProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
               {yen(confirmedProfit)}
             </p>
             {grossProfitRate(summary.confirmedSales, summary.confirmedCost) != null && (
@@ -203,8 +205,8 @@ function SummaryTab({
             </p>
           </div>
           <div>
-            <p className="text-[10px] text-zinc-400 mb-0.5 font-medium">月末着地</p>
-            <p className={`text-base font-bold tabular-nums ${landingProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+            <p className="text-[10px] text-zinc-600 mb-0.5 font-semibold">月末着地</p>
+            <p className={`text-xl font-bold tracking-tight tabular-nums ${landingProfit >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
               {yen(landingProfit)}
             </p>
             {grossProfitRate(landingSales, landingCost) != null && (
@@ -365,22 +367,7 @@ export default function DashboardPage() {
         </div>
 
         {/* タブ */}
-        <div className="flex gap-1 border-b border-zinc-200 mb-6">
-          {TABS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setTab(key)}
-              className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
-                tab === key
-                  ? 'border-zinc-900 text-zinc-900'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <TabNav tabs={TABS} active={tab} onSelect={setTab} />
 
         {error && (
           <p className="rounded-lg bg-red-50 px-4 py-2 text-sm text-red-600 mb-4">{error}</p>

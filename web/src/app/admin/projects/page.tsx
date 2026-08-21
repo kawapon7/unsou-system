@@ -18,6 +18,7 @@ import {
 } from './actions'
 import { fetchClientDepartments } from '@/app/admin/partners/actions'
 import type { Database } from '@/types/supabase'
+import { CATEGORY_STYLES } from '@/app/admin/nav'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -806,7 +807,7 @@ export default function ProjectsPage() {
           <div className="flex gap-1 flex-wrap">
             <button
               onClick={() => setFilterStatus('all')}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition ${filterStatus === 'all' ? 'bg-zinc-900 text-white' : 'bg-white border border-zinc-300 text-zinc-600 hover:bg-zinc-50'}`}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition ${filterStatus === 'all' ? CATEGORY_STYLES.slate.pillActive : 'bg-white border border-zinc-300 text-zinc-600 hover:bg-zinc-50'}`}
             >
               すべて
             </button>
@@ -814,7 +815,7 @@ export default function ProjectsPage() {
               <button
                 key={s.value}
                 onClick={() => setFilterStatus(s.value)}
-                className={`rounded-full px-3 py-1 text-xs font-medium transition ${filterStatus === s.value ? 'bg-zinc-900 text-white' : 'bg-white border border-zinc-300 text-zinc-600 hover:bg-zinc-50'}`}
+                className={`rounded-full px-3 py-1 text-xs font-medium transition ${filterStatus === s.value ? CATEGORY_STYLES.slate.pillActive : 'bg-white border border-zinc-300 text-zinc-600 hover:bg-zinc-50'}`}
               >
                 {s.label}
                 {filterStatus !== s.value && (

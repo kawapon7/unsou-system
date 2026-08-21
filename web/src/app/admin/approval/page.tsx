@@ -23,6 +23,7 @@ import {
   reviewThresholdRecord,
   deleteAlertRecord,
 } from '@/app/_actions/defensiveAlertActions'
+import TabNav from '@/app/admin/_components/TabNav'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -528,21 +529,7 @@ export default function ApprovalPage() {
           </div>
         </div>
 
-        <div className="flex gap-1 border-b border-zinc-200 mb-6 overflow-x-auto">
-          {TABS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition whitespace-nowrap ${
-                tab === key
-                  ? 'border-zinc-900 text-zinc-900'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <TabNav tabs={TABS} active={tab} onSelect={setTab} />
 
         {tab === 'payment' && <PendingPaymentNoticesTab />}
         {tab === 'work'    && <PendingWorkRecordsTab />}

@@ -37,6 +37,8 @@ import { EmergencyImportTab }    from './EmergencyImportTab'
 import { ManualInvoiceTab }      from './ManualInvoiceTab'
 import { VoiceButton }           from '@/components/voice/VoiceButton'
 import { invoiceRegistrationLabel } from '@/utils/invoice-registration'
+import TabNav from '@/app/admin/_components/TabNav'
+import { CATEGORY_STYLES } from '@/app/admin/nav'
 import {
   CONFIRMATION_METHODS,
   CONFIRMED_PARTIES,
@@ -1484,7 +1486,7 @@ function InvoiceGenerateTabWithSections({ yearMonth }: { yearMonth: string }) {
             onClick={() => setSection(s.key)}
             className={`rounded-full px-3 py-1 text-xs font-medium transition ${
               section === s.key
-                ? 'bg-zinc-900 text-white'
+                ? CATEGORY_STYLES.emerald.pillActive
                 : 'bg-zinc-100 text-zinc-600 hover:bg-zinc-200'
             }`}
           >
@@ -1534,21 +1536,7 @@ export default function SalesPage() {
         </div>
 
         {/* タブ（最大3個） */}
-        <div className="flex gap-1 border-b border-zinc-200 mb-6">
-          {TABS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
-                tab === key
-                  ? 'border-zinc-900 text-zinc-900'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <TabNav tabs={TABS} active={tab} onSelect={setTab} />
 
         {tab === 'list'     && <SalesListTab                 yearMonth={yearMonth} />}
         {tab === 'generate' && <InvoiceGenerateTabWithSections yearMonth={yearMonth} />}

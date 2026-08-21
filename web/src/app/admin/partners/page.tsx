@@ -18,6 +18,7 @@ import {
   countUnassignedProjects,
 } from './actions'
 import type { Database } from '@/types/supabase'
+import TabNav from '@/app/admin/_components/TabNav'
 
 type ClientRow = Database['public']['Tables']['clients']['Row']
 type ContractorRow = Database['public']['Tables']['contractors']['Row']
@@ -1077,26 +1078,14 @@ export default function PartnersPage() {
         <h1 className="text-xl font-semibold text-zinc-900 mb-6">取引先マスタ</h1>
 
         {/* タブ */}
-        <div className="flex gap-1 border-b border-zinc-200 mb-6">
-          {(
-            [
-              { key: 'clients' as Tab, label: '荷主マスタ' },
-              { key: 'contractors' as Tab, label: '委託先マスタ' },
-            ] as const
-          ).map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
-                tab === key
-                  ? 'border-zinc-900 text-zinc-900'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <TabNav
+          tabs={[
+            { key: 'clients' as Tab, label: '荷主マスタ' },
+            { key: 'contractors' as Tab, label: '委託先マスタ' },
+          ]}
+          active={tab}
+          onSelect={setTab}
+        />
 
         {tab === 'clients' ? <ClientsTab /> : <ContractorsTab />}
       </div>
