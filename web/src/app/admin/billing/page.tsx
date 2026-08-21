@@ -14,6 +14,7 @@ import {
   type FiscalTotalsResult,
 } from './actions'
 import { finalizeInvoiceAndNotice } from '@/app/_actions/billing-actions'
+import TabNav from '@/app/admin/_components/TabNav'
 
 // ── ユーティリティ ────────────────────────────────────────
 
@@ -489,21 +490,7 @@ export default function BillingPage() {
         </div>
 
         {/* タブ */}
-        <div className="flex gap-1 border-b border-zinc-200 mb-6">
-          {TABS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
-                tab === key
-                  ? 'border-zinc-900 text-zinc-900'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <TabNav tabs={TABS} active={tab} onSelect={setTab} />
 
         {/* ⚠️ key に yearMonth を渡してタブごと作り直す。調整欄（adjInput）は委託先IDをキーに
             持つ state で、月をまたいでも残ってしまう。7月に入れた +500 が表示されたまま

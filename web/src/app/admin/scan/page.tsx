@@ -11,6 +11,7 @@ import {
   type ClientScanSaveParams,
 } from '@/app/_actions/scan-actions'
 import { fetchClientOptions } from '@/app/admin/sales/actions'
+import TabNav from '@/app/admin/_components/TabNav'
 
 // ── 型 ───────────────────────────────────────────────────
 
@@ -406,21 +407,7 @@ export default function ScanPage() {
         </div>
 
         {/* タブ（最大3個） */}
-        <div className="flex gap-1 border-b border-zinc-200 mb-6">
-          {TABS.map(({ key, label }) => (
-            <button
-              key={key}
-              onClick={() => setTab(key)}
-              className={`px-5 py-2.5 text-sm font-medium border-b-2 -mb-px transition ${
-                tab === key
-                  ? 'border-zinc-900 text-zinc-900'
-                  : 'border-transparent text-zinc-500 hover:text-zinc-700'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
+        <TabNav tabs={TABS} active={tab} onSelect={setTab} />
 
         {tab === 'in'      && <ScanCore mode="in" />}
         {tab === 'out'     && <ScanCore mode="out" />}
