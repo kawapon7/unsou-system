@@ -1385,7 +1385,8 @@ web/
 3. **③共通TabNav**（`a767d5c`）: 下線式タブ7画面（dashboard/sales/cashflow/approval/scan/partners/billing）を `admin/_components/TabNav.tsx` に集約。パスからカテゴリ自動判定・下線600。URLパラメータ挙動は不変（お気に入り互換）。
 4. **④-1 ピル**（`ce00a4d`）: projects ステータスフィルタ・sales 請求書生成サブナビを `pillActive`（背景600+白文字）に。**④-2 KPI階層**（`1a4b7f7`）: dashboard の月末着地を text-xl/bold で主役化。**プライマリアクション＝黒維持**をルール化（カテゴリ色と役割分離）。
 5. ⚠️ 遠隔確認用の静的プレビューを Artifact として発行（claude.ai/code/artifact/fc90683b-…）。実アプリではなく見た目の再現。
-6. 残タスク: ④の続き（scan/sales/billing のテーブル細部・dashboard グラフ配色は dataviz ルールで別途）→ 実データ確認 → main へマージ判断。
+6. **同日夜、Mac mini の実データで①〜④-2を一巡確認し指摘なし → A社フィールドテストのベースとして採用をボスが決定**。④の残り（scan/sales/billing テーブル細部・グラフ配色）はテストの感想待ち。
+7. ⚠️ 確認中に React の duplicate key 警告（`<tr>`・UUID重複）を1回観測。**ブランチ切替前の main 表示中に発生した可能性が高く、UI刷新ブランチでは全画面一巡で未再現**。再発したら画面名・タブ名を記録して調査（候補: clientId/contractorId を行キーにするテーブル）。
 
 #### 2026-08-16（支払通知書一覧の画面確認・残タスク棚卸し）
 
