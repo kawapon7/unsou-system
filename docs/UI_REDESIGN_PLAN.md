@@ -1,8 +1,8 @@
 # HIBIKI UI刷新 計画書
 
 作成日: 2026-08-20 ／ 対象: 親分アプリ（/admin）
-進捗: ステップ①② 確認済み ／ **ステップ③ 実装済み（人間確認待ち）** ／ ④ 未着手
-（③の対象は下線式タブの7画面: dashboard / sales / cashflow / approval / scan / partners / billing。projects の status フィルタは④で対応）
+進捗: ステップ①②③ 確認済み ／ **ステップ④ 進行中**
+④-1 完了: ピルサブナビのカテゴリ色化（projects ステータスフィルタ=slate、sales 請求書生成サブナビ=emerald。`CATEGORY_STYLES.pillActive` = 背景600+白文字）
 目的: フィールドテスト前に「AI臭い・素朴」な見た目を、Linear を参考にした白ベースのスタイリッシュなUIへ引き上げる。
 
 ---

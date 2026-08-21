@@ -20,6 +20,8 @@ export type CategoryStyle = {
   activeText: string
   /** アクティブタブ（下線600・文字700） */
   tabActive: string
+  /** アクティブなピル（背景600・白文字） */
+  pillActive: string
 }
 
 export const CATEGORY_STYLES: Record<CategoryAccent, CategoryStyle> = {
@@ -31,6 +33,7 @@ export const CATEGORY_STYLES: Record<CategoryAccent, CategoryStyle> = {
     activeBg:  'bg-blue-50',
     activeText: 'text-blue-700',
     tabActive: 'border-blue-600 text-blue-700',
+    pillActive: 'bg-blue-600 text-white',
   },
   emerald: {
     dot:       'bg-emerald-600',
@@ -40,6 +43,7 @@ export const CATEGORY_STYLES: Record<CategoryAccent, CategoryStyle> = {
     activeBg:  'bg-emerald-50',
     activeText: 'text-emerald-700',
     tabActive: 'border-emerald-600 text-emerald-700',
+    pillActive: 'bg-emerald-600 text-white',
   },
   slate: {
     dot:       'bg-slate-600',
@@ -49,6 +53,7 @@ export const CATEGORY_STYLES: Record<CategoryAccent, CategoryStyle> = {
     activeBg:  'bg-slate-100',
     activeText: 'text-slate-700',
     tabActive: 'border-slate-600 text-slate-700',
+    pillActive: 'bg-slate-600 text-white',
   },
 }
 
