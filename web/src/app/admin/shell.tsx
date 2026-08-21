@@ -8,7 +8,7 @@ import { handleLogout } from '@/app/auth/actions'
 import { useFavorites } from '@/hooks/useFavorites'
 import { MonthProvider, useMonth } from '@/contexts/MonthContext'
 
-import { NAV_GROUPS, ALL_NAV_ITEMS } from './nav'
+import { NAV_GROUPS, ALL_NAV_ITEMS, CATEGORY_STYLES, type CategoryAccent } from './nav'
 
 // ── ページラベル定義（星ボタン用） ───────────────────────
 // 新しいメニューを追加したら、ここに1行足すだけで自動対応
@@ -143,32 +143,80 @@ function StarButton() {
   )
 }
 
+// ── パンくず（現在地表示: 大メニュー › 画面名 › タブ名） ──
+// ラベルは PAGE_DEFS / NAV_GROUPS を再利用（二重管理しない）
+
+function BreadcrumbInner() {
+  const pathname     = usePathname()
+  const searchParams = useSearchParams()
+
+  const def = PAGE_DEFS[pathname]
+  if (!def) return null
+
+  const group = NAV_GROUPS.find(g =>
+    g.items.some(item => pathname.startsWith(item.href.split('?')[0]))
+  )
+  const paramVal = def.paramKey ? (searchParams.get(def.paramKey) ?? null) : null
+  const tabLabel = paramVal && def.tabs ? (def.tabs[paramVal] ?? null) : null
+
+  return (
+    <div className="flex items-center gap-2 border-b border-zinc-100 bg-white px-4 lg:px-6 py-2.5 text-xs font-medium text-zinc-500">
+      {group && (
+        <>
+          <span className={`h-2 w-2 rounded-full ${CATEGORY_STYLES[group.accent].dot}`} />
+          <span>{group.cardTitle}</span>
+          <span className="text-zinc-300">›</span>
+        </>
+      )}
+      <span className={tabLabel ? undefined : 'text-zinc-900'}>{def.label}</span>
+      {tabLabel && (
+        <>
+          <span className="text-zinc-300">›</span>
+          <span className="text-zinc-900">{tabLabel}</span>
+        </>
+      )}
+    </div>
+  )
+}
+
+function Breadcrumb() {
+  return (
+    <Suspense fallback={null}>
+      <BreadcrumbInner />
+    </Suspense>
+  )
+}
+
 // ── NavLink ───────────────────────────────────────────────
 
 function NavLink({
   href,
   label,
   icon,
+  accent,
   active,
   onClick,
 }: {
   href: string
   label: string
   icon: React.ReactNode
+  accent: CategoryAccent
   active: boolean
   onClick?: () => void
 }) {
+  const s = CATEGORY_STYLES[accent]
   return (
     <Link
       href={href}
       onClick={onClick}
       className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
         active
-          ? 'bg-zinc-900 text-white'
+          ? `${s.activeBg} ${s.activeText}`
           : 'text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900'
       }`}
     >
-      {icon}
+      {/* アイコンは常時カテゴリ色（「アイコンのみ色」方式） */}
+      <span className={s.iconText}>{icon}</span>
       {label}
     </Link>
   )
@@ -180,11 +228,13 @@ function NavLinkInner({
   href,
   label,
   icon,
+  accent,
   onClick,
 }: {
   href: string
   label: string
   icon: React.ReactNode
+  accent: CategoryAccent
   onClick?: () => void
 }) {
   const pathname    = usePathname()
@@ -211,14 +261,14 @@ function NavLinkInner({
     active = !hasMoreSpecific
   }
 
-  return <NavLink href={href} label={label} icon={icon} active={active} onClick={onClick} />
+  return <NavLink href={href} label={label} icon={icon} accent={accent} active={active} onClick={onClick} />
 }
 
-function NavLinkSuspended(props: { href: string; label: string; icon: React.ReactNode; onClick?: () => void }) {
+function NavLinkSuspended(props: { href: string; label: string; icon: React.ReactNode; accent: CategoryAccent; onClick?: () => void }) {
   return (
     <Suspense fallback={
       <span className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm font-medium text-zinc-600">
-        {props.icon}{props.label}
+        <span className={CATEGORY_STYLES[props.accent].iconText}>{props.icon}</span>{props.label}
       </span>
     }>
       <NavLinkInner {...props} />
@@ -345,7 +395,7 @@ function SidebarContent({
 
         {NAV_GROUPS.map((group, gi) => (
           <div key={group.groupLabel} className={gi > 0 ? 'mt-4' : undefined}>
-            <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-zinc-400">
+            <p className={`px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest ${CATEGORY_STYLES[group.accent].labelText}`}>
               {group.groupLabel}
             </p>
             <div className="space-y-0.5">
@@ -355,6 +405,7 @@ function SidebarContent({
                   href={item.href}
                   label={item.label}
                   icon={item.icon}
+                  accent={group.accent}
                   onClick={onNavClick}
                 />
               ))}
@@ -446,6 +497,9 @@ export default function OyabunShell({
             </button>
           </form>
         </header>
+
+        {/* パンくず（現在地表示） */}
+        <Breadcrumb />
 
         {/* ページコンテンツ */}
         <main className="flex-1 overflow-y-auto">

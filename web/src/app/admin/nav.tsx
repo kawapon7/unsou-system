@@ -8,27 +8,42 @@ export type CategoryAccent = 'blue' | 'emerald' | 'slate'
 export type CategoryStyle = {
   /** カテゴリ識別ドット（大メニュー = 600） */
   dot: string
-  /** メニューアイコンの色（600） */
+  /** メニューアイコンの色（600・常時。「アイコンのみ色」方式 2026-08-21確定） */
   iconText: string
   /** リンクホバー（背景50・文字700） */
   itemHover: string
+  /** サイドバーのグループ見出し色（600） */
+  labelText: string
+  /** 選択中メニューの背景（50） */
+  activeBg: string
+  /** 選択中メニューの文字色（700） */
+  activeText: string
 }
 
 export const CATEGORY_STYLES: Record<CategoryAccent, CategoryStyle> = {
   blue: {
-    dot:      'bg-blue-600',
-    iconText: 'text-blue-600',
+    dot:       'bg-blue-600',
+    iconText:  'text-blue-600',
     itemHover: 'hover:bg-blue-50 hover:text-blue-700',
+    labelText: 'text-blue-600',
+    activeBg:  'bg-blue-50',
+    activeText: 'text-blue-700',
   },
   emerald: {
-    dot:      'bg-emerald-600',
-    iconText: 'text-emerald-600',
+    dot:       'bg-emerald-600',
+    iconText:  'text-emerald-600',
     itemHover: 'hover:bg-emerald-50 hover:text-emerald-700',
+    labelText: 'text-emerald-600',
+    activeBg:  'bg-emerald-50',
+    activeText: 'text-emerald-700',
   },
   slate: {
-    dot:      'bg-slate-600',
-    iconText: 'text-slate-600',
+    dot:       'bg-slate-600',
+    iconText:  'text-slate-600',
     itemHover: 'hover:bg-slate-100 hover:text-slate-700',
+    labelText: 'text-slate-600',
+    activeBg:  'bg-slate-100',
+    activeText: 'text-slate-700',
   },
 }
 
