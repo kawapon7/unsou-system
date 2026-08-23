@@ -18,15 +18,27 @@ export async function getCurrentTenantId(): Promise<string> {
   }
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
-  // app_metadata（service_roleのみ設定可・本人改変不能）を一次ソースにする。
-  // ⚠️ user_metadata へのフォールバックは移行期間中の保険。F1のRLS導入前に必ず撤去すること
-  //    （残すと利用者が自分で tenant_id を書き換えられ、テナント分離が破れる）。
-  const tenantId =
-    (user?.app_metadata as { tenant_id?: string } | undefined)?.tenant_id
-    ?? user?.user_metadata?.tenant_id
-  if (typeof tenantId === 'string' && tenantId) return tenantId
+  if (!user) {
+    throw new Error('テナントが解決できません（未ログインです）。')
+  }
+  // 1. app_metadata（service_role のみ設定可・本人改変不能）を一次ソースにする。
+  const fromClaims = (user.app_metadata as { tenant_id?: string } | undefined)?.tenant_id
+  if (typeof fromClaims === 'string' && fromClaims) return fromClaims
+
+  // 2. public.users.tenant_id（service_role でしか書けない）を二次ソースにする。
+  //    2026-08-23 P0: app_metadata を書かずに作られた既存ユーザー・移行中ユーザーの受け皿。
+  // ⚠️ 旧 user_metadata.tenant_id フォールバックは撤去した（利用者本人が書き換えられるため、
+  //    テナント分離が破れる。RLS 棚卸し 2026-08-23 参照）。
+  const service = createServiceClient()
+  const { data: row } = await service
+    .from('users')
+    .select('tenant_id')
+    .eq('id', user.id)
+    .maybeSingle()
+  if (row?.tenant_id) return row.tenant_id
+
   // ⚠️ フォールバック禁止: 本番ではテナント未解決を明示エラーにして fail-closed。
-  throw new Error('テナントが解決できません（app_metadata.tenant_id が未設定です）。')
+  throw new Error('テナントが解決できません（app_metadata.tenant_id / users.tenant_id が未設定です）。')
 }
 
 /**

@@ -1295,6 +1295,7 @@ export type Database = {
           email: string
           id: string
           role: string
+          tenant_id: string | null
         }
         Insert: {
           contractor_id?: string | null
@@ -1302,6 +1303,7 @@ export type Database = {
           email: string
           id: string
           role: string
+          tenant_id?: string | null
         }
         Update: {
           contractor_id?: string | null
@@ -1309,6 +1311,7 @@ export type Database = {
           email?: string
           id?: string
           role?: string
+          tenant_id?: string | null
         }
         Relationships: [
           {
