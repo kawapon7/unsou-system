@@ -21,6 +21,7 @@ import {
 } from '@/utils/transitional-deduction'
 import { isQualifiedInvoiceIssuer, normalizeInvoiceRegistration } from '@/utils/invoice-registration'
 import { getTransportInsuranceAmount } from '@/utils/company'
+import { decideInsuranceDeduction } from '@/utils/transport-insurance'
 import { assemblePaymentTotals } from '@/utils/payment-notice-totals'
 import {
   calcWorkAmount,
@@ -201,7 +202,7 @@ export async function computePaymentNoticeAmounts(
   // 委託先マスタ
   const { data: c, error: cErr } = await supabase
     .from('contractors')
-    .select('tax_category, invoice_registration_type, has_withholding, closing_day, is_internal')
+    .select('tax_category, invoice_registration_type, has_withholding, closing_day, is_internal, apply_transport_insurance')
     .eq('id', contractorId)
     .eq('tenant_id', tenantId)
     .single()
@@ -413,9 +414,16 @@ export async function computePaymentNoticeAmounts(
   // ⚠️ fail-closed。取得できなければ止める（相殺し忘れた通知書を出さないため）
   const insuranceRes = await getTransportInsuranceAmount(tenantId)
   if (insuranceRes.error !== null) return { data: null, error: insuranceRes.error }
-  // 稼働も立替も無い月は保険だけを相殺してマイナス支給にしない
+  // 稼働も立替も無い月は保険だけを相殺してマイナス支給にしない。
+  // 委託先ごとの適用有無（作業系は無し）は contractors.apply_transport_insurance。
+  // ⚠️ 列が読めていない（undefined）場合は fail-closed で止める。黙って 0 にしない。
+  if (typeof contractor.apply_transport_insurance !== 'boolean') {
+    return { data: null, error: '委託先の運送保険設定（apply_transport_insurance）が読めません' }
+  }
   const hasActivity = laborTaxExcluded > 0 || expenseTaxExcluded > 0
-  const insuranceDeduction = hasActivity ? insuranceRes.amount : 0
+  const insuranceDeduction = decideInsuranceDeduction({
+    hasActivity, applies: contractor.apply_transport_insurance, amount: insuranceRes.amount,
+  })
 
   // 差引支給額の組み立ては utils/payment-notice-totals.ts が正本。ここで式を再現しないこと
   const { totalExcludingTax, totalTax, totalDeduction, totalAmount } = assemblePaymentTotals({

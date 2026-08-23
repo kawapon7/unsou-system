@@ -29,3 +29,25 @@ describe('computePaymentNoticeAmounts / is_internal', () => {
     expect(db.touched).toEqual(['contractors'])
   })
 })
+
+describe('computePaymentNoticeAmounts / apply_transport_insurance', () => {
+  it('contractors から apply_transport_insurance を読む', async () => {
+    let selected = ''
+    const db = {
+      from: (table: string) => {
+        const q: any = {
+          select: (cols: string) => { if (table === 'contractors') selected = cols; return q },
+          eq: () => q, gte: () => q, lte: () => q, in: () => q, order: () => q,
+          single: async () => ({ data: table === 'contractors'
+            ? { tax_category: 'exclusive', invoice_registration_type: '免税', has_withholding: false, closing_day: '月末', is_internal: true, apply_transport_insurance: false }
+            : null, error: null }),
+          maybeSingle: async () => ({ data: null, error: null }),
+          then: (resolve: (v: unknown) => void) => resolve({ data: [], error: null }),
+        }
+        return q
+      },
+    }
+    await computePaymentNoticeAmounts(db as any, { tenantId: 't', contractorId: 'c', yearMonth: '2026-08' })
+    expect(selected).toContain('apply_transport_insurance')
+  })
+})
