@@ -1089,4 +1089,4 @@ git commit -m "docs: 帳票発行の土台（採番・控え・取消再発行�
 
 - 要件 §4 電帳法（控え保存・日付/相手先/金額で検索）→ Task 1, 4, 7。§5 確定/再発行・採番規則・様式の版管理・権限 → Task 1, 2, 4, 6, 7。§5 端数処理・締め日・送付方法は計画③④へ（本計画スコープ外と Global Constraints に明記）。§6 印影の Storage 隔離は計画③（本計画で Storage を触らない）。
 - 型の整合: `IssuedDocumentSummary`/`Detail`/`Filter` は `document-search.ts` に一元定義し、actions/UI から import。`DocumentKind` は `document-formats.ts`。
-- 未検証事項: DB 未適用のため画面動作は未検証。tsc / vitest / build を各タスクで通す。
+- 未検証事項: ~~DB 未適用のため画面動作は未検証~~ → 2026-08-23 夜にローカル Supabase で画面検証済み（`docs/HANDOVER_MASTER.md` §5-4 2026-08-23 の 6）。tsc / vitest / build を各タスクで通す。
