@@ -36,6 +36,8 @@
 
 ## 5分で分かる要点
 
+- **様式の登録主体（2026-08-23 決定）**: 現段階はシステム側のみで作る。将来は利用者アップロード方式も選べるようにし、開発側作成は初期費用として請求する位置づけ。詳細は要件定義 §2-2
+
 - 既存の PDF 生成は `web/src/components/pdf/InvoiceDocument.tsx` と `PaymentNoticeDocument.tsx`、データ取得は `web/src/app/_actions/pdf-actions.ts`、PDF 化は `PrintModal.tsx`（HTML をブラウザ印刷）。これらは「標準様式」として残す
 - 新機能は「様式を導入先ごと・荷主ごとに持ち、PDF と Excel の両方で出す」。**Excel→PDF の自動変換は不可**（Workers 上に Excel が無い）ので PDF は様式ごとに HTML を1回組む
 - 束ね方・呼び名・経費/控除の扱いは出力側で定義。**DB の計算は1本のまま変えない**
