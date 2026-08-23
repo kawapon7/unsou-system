@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { PrintModal } from './PrintModal'
-import { InvoiceDocument } from './InvoiceDocument'
+import { DocumentRenderer } from './DocumentRenderer'
 import { IssueButton } from './IssueButton'
 import { fetchInvoicePdfData, type InvoicePdfData } from '@/app/_actions/pdf-actions'
 import { issueInvoiceDocument } from '@/app/_actions/document-actions'
+import { DOCUMENT_FORMATS } from '@/utils/document-formats'
 
 export function InvoicePdfModal({
   clientId,
@@ -66,7 +67,12 @@ export function InvoicePdfModal({
           <p className="text-zinc-400 text-sm">読み込み中...</p>
         </div>
       ) : (
-        <InvoiceDocument data={data} />
+        <DocumentRenderer
+          kind="invoice"
+          formatKey={data.formatKey ?? 'standard'}
+          formatVersion={DOCUMENT_FORMATS[data.formatKey ?? 'standard']?.version ?? 1}
+          data={data}
+        />
       )}
     </PrintModal>
   )

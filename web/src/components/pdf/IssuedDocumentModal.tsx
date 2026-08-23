@@ -2,27 +2,19 @@
 
 import { useState, useEffect } from 'react'
 import { PrintModal } from './PrintModal'
-import { InvoiceDocument } from './InvoiceDocument'
-import { PaymentNoticeDocument } from './PaymentNoticeDocument'
+import { DocumentRenderer } from './DocumentRenderer'
 import type { InvoicePdfData, PaymentNoticePdfData } from '@/app/_actions/pdf-actions'
 import { getIssuedDocument } from '@/app/_actions/document-actions'
 import type { IssuedDocumentDetail } from '@/utils/document-search'
 
 /**
  * 発行控えを「発行当時の様式・版」で再表示する。
- * ⚠️ 様式が増えたら format_key × format_version で分岐を足す。旧版の描画を消さない（要件 §5 様式の版管理）。
+ * ⚠️ 描画の分岐は DocumentRenderer に集約している。旧版の描画を消さない（要件 §5 様式の版管理）。
  */
 function renderSnapshot(d: IssuedDocumentDetail) {
-  if (d.formatKey === 'standard' && d.formatVersion === 1) {
-    return d.kind === 'invoice'
-      ? <InvoiceDocument data={d.snapshot as InvoicePdfData} />
-      : <PaymentNoticeDocument data={d.snapshot as PaymentNoticePdfData} />
-  }
-  return (
-    <div className="a4-page w-[794px] bg-white p-12 flex items-center justify-center">
-      <p className="text-red-600 text-sm">未対応の様式です: {d.formatKey} v{d.formatVersion}</p>
-    </div>
-  )
+  return d.kind === 'invoice'
+    ? <DocumentRenderer kind="invoice"        formatKey={d.formatKey} formatVersion={d.formatVersion} data={d.snapshot as InvoicePdfData} />
+    : <DocumentRenderer kind="payment_notice" formatKey={d.formatKey} formatVersion={d.formatVersion} data={d.snapshot as PaymentNoticePdfData} />
 }
 
 export function IssuedDocumentModal({ id, onClose }: { id: string; onClose: () => void }) {

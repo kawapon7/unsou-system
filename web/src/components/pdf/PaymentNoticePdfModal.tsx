@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { PrintModal } from './PrintModal'
-import { PaymentNoticeDocument } from './PaymentNoticeDocument'
+import { DocumentRenderer } from './DocumentRenderer'
 import { IssueButton } from './IssueButton'
 import { fetchPaymentNoticePdfData, type PaymentNoticePdfData } from '@/app/_actions/pdf-actions'
 import { issuePaymentNoticeDocument } from '@/app/_actions/document-actions'
+import { DOCUMENT_FORMATS } from '@/utils/document-formats'
 
 export function PaymentNoticePdfModal({
   contractorId,
@@ -81,7 +82,12 @@ export function PaymentNoticePdfModal({
               確定申告で使う場合は、この画面から「印刷・PDF保存」でご自身の端末に保存してください。
             </p>
           )}
-          <PaymentNoticeDocument data={data} />
+          <DocumentRenderer
+            kind="payment_notice"
+            formatKey={data.formatKey ?? 'standard'}
+            formatVersion={DOCUMENT_FORMATS[data.formatKey ?? 'standard']?.version ?? 1}
+            data={data}
+          />
         </>
       )}
     </PrintModal>
