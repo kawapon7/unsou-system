@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { PrintModal } from './PrintModal'
 import { DocumentRenderer } from './DocumentRenderer'
 import { IssueButton } from './IssueButton'
+import { ExcelDownloadButton } from './ExcelDownloadButton'
 import { fetchInvoicePdfData, type InvoicePdfData } from '@/app/_actions/pdf-actions'
 import { issueInvoiceDocument } from '@/app/_actions/document-actions'
 import { DOCUMENT_FORMATS } from '@/utils/document-formats'
@@ -43,14 +44,24 @@ export function InvoicePdfModal({
       isOpen
       onClose={onClose}
       title={`請求書 — ${clientName} ${yearMonth}`}
-      actions={canIssue && data ? (
-        <IssueButton
-          label="請求書"
-          alreadyIssued={alreadyIssued}
-          issue={() => issueInvoiceDocument(clientId, yearMonth)}
-          onIssued={() => { setMsg(null); load() }}
-          onError={setMsg}
-        />
+      actions={(data && (data.formatKey === 'ooba' || canIssue)) ? (
+        <div className="flex items-center gap-2">
+          {data.formatKey === 'ooba' && (
+            <ExcelDownloadButton
+              fileName={`請求書_${clientName}_${yearMonth}.xlsx`}
+              build={async () => (await import('@/utils/ooba-excel')).buildOobaInvoiceWorkbook(data)}
+            />
+          )}
+          {canIssue && (
+            <IssueButton
+              label="請求書"
+              alreadyIssued={alreadyIssued}
+              issue={() => issueInvoiceDocument(clientId, yearMonth)}
+              onIssued={() => { setMsg(null); load() }}
+              onError={setMsg}
+            />
+          )}
+        </div>
       ) : null}
     >
       {msg && (

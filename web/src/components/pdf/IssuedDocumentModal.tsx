@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { PrintModal } from './PrintModal'
 import { DocumentRenderer } from './DocumentRenderer'
+import { ExcelDownloadButton } from './ExcelDownloadButton'
 import type { InvoicePdfData, PaymentNoticePdfData } from '@/app/_actions/pdf-actions'
 import { getIssuedDocument } from '@/app/_actions/document-actions'
 import type { IssuedDocumentDetail } from '@/utils/document-search'
@@ -34,6 +35,17 @@ export function IssuedDocumentModal({ id, onClose }: { id: string; onClose: () =
       isOpen
       onClose={onClose}
       title={doc ? `${kindLabel}控え ${doc.documentNumber} — ${doc.partyName}` : '発行控え'}
+      actions={doc && doc.formatKey === 'ooba' ? (
+        <ExcelDownloadButton
+          fileName={`${kindLabel}_${doc.documentNumber}.xlsx`}
+          build={async () => {
+            const m = await import('@/utils/ooba-excel')
+            return doc.kind === 'invoice'
+              ? m.buildOobaInvoiceWorkbook(doc.snapshot as InvoicePdfData)
+              : m.buildOobaPaymentNoticeWorkbook(doc.snapshot as PaymentNoticePdfData)
+          }}
+        />
+      ) : null}
     >
       {error ? (
         <div className="a4-page w-[794px] bg-white p-12 flex items-center justify-center">
