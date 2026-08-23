@@ -17,14 +17,17 @@
 
 **未実施（人間の作業に委譲）**: 画面確認（ログイン要）。チェックリストは `task-9-report.md`・`task-11-report.md` を参照（自社情報で様式を「おおば運送様式」に切替→請求書/支払通知書プレビュー→Excelボタン→発行控え再表示→標準に戻す）。運送保険OFFの実機確認はマイグレーション適用後。
 
-**本番適用手順（ボス作業・1つずつ）**:
-1. ブランチをマージ
-2. SQL Editorで `20260824000000_contractors_apply_transport_insurance.sql` を全文実行
-3. `INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('20260824000000','contractors_apply_transport_insurance');`
-4. デプロイ
-5. 委託先マスタで作業系委託先の「運送保険」チェックを外す
-6. おおばテナントの自社情報で様式を「おおば運送様式」に変更
-7. 画面一巡確認
+**本番適用手順（ボス作業・1つずつ・順番厳守）**:
+
+0. 前提: `20260823150000_document_issuance_foundation.sql` と `20260823180000_users_tenant_id.sql`（土台①・RLS P0。下記「土台①の状態」節）が未適用なら先にそちらの本番適用手順で適用する。この2本は様式②より前提。
+1. SQL Editorで `supabase/migrations/20260824000000_contractors_apply_transport_insurance.sql` を全文実行
+2. `INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('20260824000000','contractors_apply_transport_insurance');`
+3. `git checkout main && git merge --no-ff feat/document-issuance-foundation && git push`（**push した時点で `.github/workflows/deploy.yml` が `web/` の変更を検知して自動で本番デプロイする**。必ず手順1・2の後に行う）
+4. 委託先マスタで作業系委託先の「運送保険」チェックを外す
+5. おおばテナントの自社情報で様式を「おおば運送様式」に変更
+6. 画面一巡確認
+
+⚠️ **順番を逆にする（マイグレーション未適用のまま3を先に実行する）と、デプロイされたコードが `contractors.apply_transport_insurance` 列を前提に計算するため、列が無くて支払通知書の計算が全停止する（ダッシュボードも空白になる）。**
 
 **既知の制限**: 走行距離は列が無く空欄／作業系判定は案件名ベース（次版で `projects` にカテゴリ列）／人員結果表（別紙）は次版／相殺額ラベルは適格事業者でも「0%分」と出る／明細シート合計は行の合計、本票はDB値のため `work_records` を後から直すとズレうる。
 
