@@ -1390,7 +1390,8 @@ web/
 2. **`main` へ merge＆push → Actions run `32636229135` success**（マージ `c2f2140`、60 ファイル）。DB → コードの順番どおり。
 3. **本番ログイン不能の切り分け**: Chrome・Claude ブラウザとも「正しくありません」。Supabase auth ログで Worker 経由の試行が `invalid_credentials` と判明（複数ログインの制限ではない。Safari は Cookie が生きていただけ）。ダッシュボードの recovery メールは `admin@hibiki.com` が invalid 扱いで送れない。**`web/scripts/reset-user-password.mjs` で再設定して復旧**（確認プロンプトは `y` ではなく `yes`）。
 4. ローカル検証環境: `web/.env.local` は本番向けに戻した。ローカル DB 向けは `web/.env.local.local-dev`（gitignore）。戻すときは `cp web/.env.local.local-dev web/.env.local` → dev サーバー再起動。ローカル Supabase は `supabase stop` でメモリ解放。
-5. **本番画面の一巡をボスが確認済み**（自社情報の新項目・請求/支払管理・発行控え、いずれも正常）。**次**: 見本の①②＝担当者の確認 → おおば運送テナント作成＋角印登録 → RLS テナント基準化（10/1）。
+5. **本番画面の一巡をボスが確認済み**（自社情報の新項目・請求/支払管理・発行控え、いずれも正常）。
+6. **配員表は別アプリ `~/Claude/shift-app-1t-van`（Next.js＋Prisma/Neon、岩国・徳山コースのドライバーシフト管理、PDF/JPEG 出力）で作る予定（ボス記憶・2026-08-24）。** 実物 `おおば運送 配員表 2026.7月.xlsx` は同アプリ直下と `oobaunsou_mihon/` にある。HIBIKI との連携（配員表→稼働実績の取り込み等）は未設計。⚠️ 同アプリも dev サーバーが port 3000 を使うため、HIBIKI と同時起動時は `Next.js dev (3001)` を使うこと。**次**: 見本の①②＝担当者の確認（配員表 xlsx と照合） → おおば運送テナント作成＋角印登録 → RLS テナント基準化（10/1）。
 
 #### 2026-08-23（帳票様式再現の要件定義／リモート開発環境の整備）
 
