@@ -43,6 +43,8 @@
 
 ## 5分で分かる要点
 
+- **用語の注意**: おおば運送は**ボスの会社の荷主（委託元）**であり、システムの利用者（テナント）ではない。おおば様式は「荷主指定様式」（`clients.document_format_key`）として実装する。テナントは引き続きボスの会社1社のみ
+
 - **様式の登録主体（2026-08-23 決定）**: 現段階はシステム側のみで作る。将来は利用者アップロード方式も選べるようにし、開発側作成は初期費用として請求する位置づけ。詳細は要件定義 §2-2
 
 - 既存の PDF 生成は `web/src/components/pdf/InvoiceDocument.tsx` と `PaymentNoticeDocument.tsx`、データ取得は `web/src/app/_actions/pdf-actions.ts`、PDF 化は `PrintModal.tsx`（HTML をブラウザ印刷）。これらは「標準様式」として残す
