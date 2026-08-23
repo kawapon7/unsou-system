@@ -110,6 +110,7 @@ type ContractorForm = {
   account_holder: string
   parent_contractor_id: string
   is_internal: boolean
+  apply_transport_insurance: boolean
 }
 
 const defaultContractorForm = (): ContractorForm => ({
@@ -132,6 +133,7 @@ const defaultContractorForm = (): ContractorForm => ({
   account_holder: '',
   parent_contractor_id: '',
   is_internal: false,
+  apply_transport_insurance: true,
 })
 
 // ── 共通コンポーネント ────────────────────────────────────
@@ -391,6 +393,22 @@ function ContractorFormFields({
               自社（代表者・従業員）
               <span className="block text-xs text-zinc-500">
                 チェックすると支払通知書・インボイス警告・支払(OUT)集計の対象外になります。予定・実績・売上(IN)には通常どおり載ります。
+              </span>
+            </span>
+          </label>
+        </Field>
+        <Field label="運送保険">
+          <label className="flex items-start gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={form.apply_transport_insurance}
+              onChange={e => set('apply_transport_insurance', e.target.checked)}
+            />
+            <span>
+              運送保険（荷物保険）を支払明細で控除する
+              <span className="block text-xs text-zinc-500">
+                作業系（デバンニング等）で荷物を運ばない委託先は外してください。金額は「自社情報」の設定値（既定 1,000 円）です。
               </span>
             </span>
           </label>
@@ -913,6 +931,7 @@ function ContractorsTab() {
       account_holder: row.account_holder ?? '',
       parent_contractor_id: (row as any).parent_contractor_id ?? '',
       is_internal: Boolean((row as any).is_internal),
+      apply_transport_insurance: (row as any).apply_transport_insurance !== false,
     })
     setFormError(null)
     setIsDirty(false)
@@ -952,6 +971,7 @@ function ContractorsTab() {
       show_detail_switch: true,
       parent_contractor_id: form.parent_contractor_id || null,
       is_internal: form.is_internal,
+      apply_transport_insurance: form.apply_transport_insurance,
     }
 
     const result = editTarget
@@ -1011,6 +1031,9 @@ function ContractorsTab() {
                     {row.name}
                     {(row as any).is_internal && (
                       <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-normal text-zinc-600">自社</span>
+                    )}
+                    {(row as any).apply_transport_insurance === false && (
+                      <span className="ml-2 text-xs text-zinc-500">保険なし</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-zinc-600">{row.email ?? '—'}</td>
