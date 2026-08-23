@@ -31,7 +31,9 @@
 **進捗(2026-08-23, Air):** A=本番DBに `contractors.is_internal BOOLEAN NOT NULL DEFAULT false` 適用済み（マイグレーション `20260823100000_contractors_is_internal.sql`）。B=通知書生成/確定/PDF・一括生成・支払一覧/OUT集計・承認待ち/承認進捗・アラート④⑤・OUT手入力宛先から除外済み。委託先フォームに「自社（代表者・従業員）」チェック追加。
 - 判断: 5大アラートのうち除外は④インボイス警告・⑤長期未承認のみ。①未入力②重複③しきい値は売上(IN)側の品質チェックなので代表者分も対象のまま。
 - 未了: dashboard の OUT 集計 (`admin/dashboard/actions.ts` fetchCashflowSummary 等) は payment_notices 直読みで contractors 結合なし。内部区分の通知書はそもそも生成されないため実害なし。ただし過去に作られた通知書行があれば残る（現在0行）。
-- 未了: 本番での画面確認（委託先に自社チェックを付けて通知書一覧から消えること）。
+- 本番デプロイ済み（2026-08-23, main `8bf39d0`）。本番 /admin/partners の委託先フォームに「区分: 自社（代表者・従業員）」チェックが表示されることを確認。
+- 未了: C（運用）＝代表者本人を委託先登録＋自社チェック → 別メールの子分アカウント発行・紐づけ。通知書一覧から消える動作は委託先登録後に確認。
+- 検証時の注意: Chrome拡張の裏タブではSuspense内容が表示されず操作不能に見える（アプリのバグではない）。詳細は自動メモリ hibiki_ui_verification_blocked。
 
 A. `contractors` に区分列を追加（例: `contractor_kind` = 'external' | 'internal'。内部=代表者・従業員）
    - ⚠️ 列追加前に既存列・CHECK制約を確認すること（同型事故3回の教訓）
