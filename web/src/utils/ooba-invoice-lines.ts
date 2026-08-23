@@ -1,7 +1,16 @@
 // ── おおば運送様式の請求書明細を組み立てる補助関数 ──────────────────
 //
 // ⚠️ このファイルに 'use server' を付けてはならない（純粋関数を export しているため）。
-// Task 5 でここに明細の集計関数を追加する。
+
+import type { InvoicePdfLine } from '@/app/_actions/pdf-actions'
+
+export type OobaInvoiceRow = {
+  no: number
+  description: string
+  quantityLabel: string
+  unitPrice: number
+  amount: number
+}
 
 /** 西暦年を令和年に変換する。例: 2026 → 8 */
 export function toReiwa(year: number): number {
@@ -22,4 +31,30 @@ const WORK_TYPE_WORDS = ['作業', 'デバンニング', '荷役']
 /** 案件が作業系（デバンニング等）か。おおば様式で「※人員結果は別紙参照」を出す判定に使う */
 export function isWorkTypeProject(name: string): boolean {
   return WORK_TYPE_WORDS.some(w => name.includes(w))
+}
+
+/**
+ * おおば様式の請求書明細: 案件（＋本数）ごとに束ね、数量は「○月度 ○日」。
+ * ⚠️ 単価は 金額÷日数 の割り戻し（price_rules を直接見ない）。日によって単価が違う案件は
+ *    割り切れない単価になる → その場合は Math.round し、amount は実額を保つ（合計が狂わない）。
+ */
+export function aggregateOobaInvoiceRows(lines: InvoicePdfLine[], yearMonth: string): OobaInvoiceRow[] {
+  const month = Number(yearMonth.split('-')[1])
+  const groups = new Map<string, { description: string; dates: Set<string>; totalQuantity: number; amount: number }>()
+  for (const l of lines) {
+    const suffix = l.pieceCount && l.pieceCount > 0 ? ` ${l.pieceCount}本` : ''
+    const description = `${l.projectName}${suffix}`
+    const g = groups.get(description) ?? { description, dates: new Set(), totalQuantity: 0, amount: 0 }
+    g.dates.add(l.workDate)
+    g.totalQuantity += l.quantity
+    g.amount += l.netAmount
+    groups.set(description, g)
+  }
+  return [...groups.values()].map((g, i) => ({
+    no: i + 1,
+    description: g.description,
+    quantityLabel: `${month}月度 ${g.dates.size} 日`,
+    unitPrice: g.totalQuantity > 0 ? Math.round(g.amount / g.totalQuantity) : 0,
+    amount: g.amount,
+  }))
 }
