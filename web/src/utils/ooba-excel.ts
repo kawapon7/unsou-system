@@ -67,7 +67,11 @@ export function buildOobaInvoiceWorkbook(data: InvoicePdfData): ExcelJS.Workbook
 
   const rows = aggregateOobaInvoiceRows(data.lines, data.yearMonth)
   const MARK = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩']
-  for (let i = 0; i < 10; i++) {
+  // ⚠️ 明細が10件を超える荷主もいる。固定10行にすると11件目以降が印字から消え、
+  //    小計/合計は正しい値のまま「合計と明細の合計が合わない」誤発行になる。
+  //    最低10行は確保しつつ、明細数に応じて行数を伸ばす。
+  const slots = Math.max(10, rows.length)
+  for (let i = 0; i < slots; i++) {
     const r = 9 + i
     const row = rows[i]
     text(ws, `A${r}`, row ? (MARK[i] ?? i + 1) : '')
@@ -82,16 +86,17 @@ export function buildOobaInvoiceWorkbook(data: InvoicePdfData): ExcelJS.Workbook
     }
   }
 
-  text(ws, 'D19', '小計')
-  money(ws, 'E19', data.netTotal)
-  text(ws, 'D20', '消費税')
-  money(ws, 'E20', data.taxAmount)
-  text(ws, 'D21', '合計')
-  money(ws, 'E21', data.totalAmount)
-  ws.getCell('E21').font = { bold: true }
+  const totalRow = 9 + slots
+  text(ws, `D${totalRow}`, '小計')
+  money(ws, `E${totalRow}`, data.netTotal)
+  text(ws, `D${totalRow + 1}`, '消費税')
+  money(ws, `E${totalRow + 1}`, data.taxAmount)
+  text(ws, `D${totalRow + 2}`, '合計')
+  money(ws, `E${totalRow + 2}`, data.totalAmount)
+  ws.getCell(`E${totalRow + 2}`).font = { bold: true }
 
-  data.noteLines.forEach((n, i) => { ws.getCell(`A${22 + i}`).value = n })
-  const b = 24 + data.noteLines.length
+  data.noteLines.forEach((n, i) => { ws.getCell(`A${totalRow + 3 + i}`).value = n })
+  const b = totalRow + 5 + data.noteLines.length
   ws.getCell(`A${b}`).value = 'お振込先'
   ws.getCell(`A${b}`).font = { bold: true }
   ws.getCell(`A${b + 1}`).value = `${c.bank.bankName} ${c.bank.bankBranch}　${c.bank.accountType}　${c.bank.accountNumber}`
@@ -232,7 +237,8 @@ export function buildOobaPaymentNoticeWorkbook(data: PaymentNoticePdfData): Exce
   text(p, 'C3', '作業時間合計')
   text(p, 'D3', '売上（１０％分）')
   const minutes = data.laborLines.reduce((s, l) => s + (workMinutesFromHHMM(l.startTime, l.endTime, l.breakMinutes) ?? 0), 0)
-  text(p, 'B4', data.laborLines.length)
+  const workDayCount = new Set(data.laborLines.map(l => l.workDate)).size
+  text(p, 'B4', workDayCount)
   text(p, 'C4', formatHHMM(minutes))
   money(p, 'D4', Math.round(data.laborLines.reduce((s, l) => s + l.sellingAmount, 0) * 0.1))
 
