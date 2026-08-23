@@ -1384,6 +1384,14 @@ web/
 
 ### 5-4. 直近の作業履歴（新しい順）
 
+#### 2026-08-24 未明（帳票発行土台①＋おおば様式②を本番適用・デプロイ）
+
+1. **本番 DB にマイグレーション 4 本を適用**（MCP `execute_sql` で各ファイル全文＋`schema_migrations` INSERT を 1 トランザクションずつ。ファイル名どおりの version で記録）: `20260823150000_document_issuance_foundation` / `20260823180000_users_tenant_id` / `20260824000000_contractors_apply_transport_insurance` / `20260824010000_companies_seal_image`。各適用後に SQL で検証（テーブル3・関数1・ポリシー3・users 1件に tenant_id・列存在）。⚠️ `contractors_is_internal` は以前 MCP `apply_migration` で入れたため version が `20260823010356`（ファイルは `20260823100000`）とズレて記録されている。新本番DB構築時（`supabase db push`）はこの1本だけ重複適用に注意（`IF NOT EXISTS` なので実害なし）。
+2. **`main` へ merge＆push → Actions run `32636229135` success**（マージ `c2f2140`、60 ファイル）。DB → コードの順番どおり。
+3. **本番ログイン不能の切り分け**: Chrome・Claude ブラウザとも「正しくありません」。Supabase auth ログで Worker 経由の試行が `invalid_credentials` と判明（複数ログインの制限ではない。Safari は Cookie が生きていただけ）。ダッシュボードの recovery メールは `admin@hibiki.com` が invalid 扱いで送れない。**`web/scripts/reset-user-password.mjs` で再設定して復旧**（確認プロンプトは `y` ではなく `yes`）。
+4. ローカル検証環境: `web/.env.local` は本番向けに戻した。ローカル DB 向けは `web/.env.local.local-dev`（gitignore）。戻すときは `cp web/.env.local.local-dev web/.env.local` → dev サーバー再起動。ローカル Supabase は `supabase stop` でメモリ解放。
+5. **次**: 本番画面の一巡（自社情報の新項目・請求/支払管理・発行控え）→ 見本の①②＝担当者の確認 → おおば運送テナント作成＋角印登録 → RLS テナント基準化（10/1）。
+
 #### 2026-08-23（帳票様式再現の要件定義／リモート開発環境の整備）
 
 1. **導入先ごとの帳票様式（請求書・支払明細書）再現機能の要件をボスと合意し、要件定義を作成**（`docs/superpowers/specs/2026-08-23-client-format-documents-design.md`）。合意5点: ①PDF+Excel 両方（スプレッドシートは .xlsx 経由）②様式は導入先ごと＋荷主ごと（未設定は標準様式）③束ね方・呼び名・経費/控除の扱いは出力側で定義、DB計算は1本のまま ④印鑑・ロゴは会社設定に画像登録（Storage でテナント隔離）⑤1社目はおおば運送の実物、全パターンの作り込みはしない。⚠️**Excel→PDF の自動変換は不可**（Cloudflare Workers 上に Excel/LibreOffice が無い）。PDF は様式ごとに HTML を1回組む。法的要件（インボイス記載事項の補完・電子帳簿保存法の発行控え保存）を様式より先の土台として位置づけた。**実装は未着手**。実物（雛形 Excel・見本）の入手待ち。
