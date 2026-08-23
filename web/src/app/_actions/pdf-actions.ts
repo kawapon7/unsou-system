@@ -16,6 +16,7 @@ import { closingRange, computeDueDate } from '@/utils/closing-period'
 import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
 import { getDeductionRate } from '@/utils/transitional-deduction'
 import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
+import { toHHMM } from '@/utils/time-format'
 import { resolveDocumentFormat } from '@/utils/document-formats'
 import { buildOobaSubject, isWorkTypeProject } from '@/utils/ooba-invoice-lines'
 
@@ -129,12 +130,16 @@ export async function fetchInvoicePdfData(
 
   const lines: InvoicePdfLine[] = rawRows.map(r => {
     const projectName = r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）'
+    const rule         = r.project_id ? ruleMap.get(r.project_id) : undefined
+    // 個数制（piece/hybrid）以外は日数制扱い。calculation_type を見ずに piece_count を
+    // そのまま出すと、日数制の案件でも「○本」と誤表記されるため rule で判定する。
+    const isPieceBased = rule?.calculation_type === 'piece' || rule?.calculation_type === 'hybrid'
     return {
       workDate:    r.work_date,
       projectName,
       quantity:    r.piece_count ?? 0,
-      netAmount:   calcWorkAmount(r, r.project_id ? ruleMap.get(r.project_id) : undefined, 'selling'),
-      pieceCount:  r.piece_count ?? null,
+      netAmount:   calcWorkAmount(r, rule, 'selling'),
+      pieceCount:  isPieceBased ? (r.piece_count ?? null) : null,
       isWorkType:  isWorkTypeProject(projectName),
     }
   })
@@ -195,7 +200,7 @@ export type LaborPdfLine = {
   projectName:   string
   quantity:      number
   netAmount:     number
-  /** 勤務報告書シート用。work_records.start_time / end_time / break_minutes */
+  /** 勤務報告書シート用。'HH:MM'（JST）に正規化済み。work_records は timestamptz のため toHHMM で変換する */
   startTime:     string | null
   endTime:       string | null
   breakMinutes:  number | null
@@ -321,8 +326,8 @@ export async function fetchPaymentNoticePdfData(
       quantity:      r.piece_count ?? 0,
       // 支払通知書は「買値」side。請求書（selling）と取り違えないこと
       netAmount:     calcWorkAmount(r, rule, 'buying'),
-      startTime:     r.start_time,
-      endTime:       r.end_time,
+      startTime:     toHHMM(r.start_time),
+      endTime:       toHHMM(r.end_time),
       breakMinutes:  r.break_minutes,
       sellingAmount: calcWorkAmount(r, rule, 'selling'),
     }
