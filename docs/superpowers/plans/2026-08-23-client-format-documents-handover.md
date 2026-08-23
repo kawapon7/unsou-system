@@ -33,6 +33,37 @@
 - 事前に決めること: (1) 9月の試験データを10月前に消すか残すか（不変トリガは DELETE を拒否するため、消すならテナント単位の消去手順を別途設計） (2) おおばの決算月設定（10月新年度なら `fiscal_year_end_month=9`。採番書式に `{FY}` を使う場合は必須） (3) 9月中旬に RLS を再見積もりし、間に合わない場合は早めに報告
 
 
+## 2026-08-23 夜 — 帰宅後にボスがパソコンで行うこと（試験運用前の必須4項目）
+
+こちらで済ませた分: P0（`cd7b298`）と P1 の高 5 箇所（`fb5b5ba`）。ブランチ `feat/document-issuance-foundation`（土台①と同じブランチ）。
+
+1. **ブランチ確認とマージ**
+   ```
+   git log main..feat/document-issuance-foundation --oneline
+   git checkout main && git merge --no-ff feat/document-issuance-foundation
+   ```
+2. **バックアップ確認**（項目3）: Supabase ダッシュボード > Project Settings > Database > Backups で日次バックアップが有効か確認。可能なら Point-in-time Recovery の有無も。**復元手順（どこを押すか）を本書に 3 行で書き残す**。本番でリストアは試さない
+3. **マイグレーション適用（SQL Editor・1 ファイルずつ・順番厳守）**
+   1. `supabase/migrations/20260823150000_document_issuance_foundation.sql` 全文（土台①）
+   2. `INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('20260823150000','document_issuance_foundation');`
+   3. `supabase/migrations/20260823180000_users_tenant_id.sql` 全文（P0）
+   4. `INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('20260823180000','users_tenant_id');`
+   5. 確認: `SELECT email, role, tenant_id FROM public.users WHERE tenant_id IS NULL;` → **0 行**（admin@hibiki.com が A社 `…00a1` に紐づく）
+4. **本番 admin の app_metadata 確認**: Authentication > Users > admin@hibiki.com > Raw App Meta Data に `"tenant_id": "00000000-0000-0000-0000-0000000000a1"` があるか。無ければ `node web/scripts/set-production-tenant.mjs admin@hibiki.com 00000000-0000-0000-0000-0000000000a1`。P0 以降は users.tenant_id でも解決できるので無くても落ちないが、揃えておく
+5. **デプロイ**: `cd web && npm run deploy`
+6. **画面一巡**: ログイン → ダッシュボード（数字が出る）→ 設定 > 自社情報（「請求書番号の書式」が出る・保存できる）→ 売上・請求管理 → 請求書 PDF → 「確定発行」→ 発行控え一覧で表示・取消・再発行
+7. **おおば運送テナント作成**（試験運用の準備。様式②は見本入手後に別途）
+   ```
+   cd web && set -a && source .env.local && set +a
+   node scripts/create-tenant.mjs "おおば運送" <おおば社長のメール> '<初期パスワード>'
+   ```
+   出力の tenant_id を控える。その master でログインし 設定 > 自社情報 を登録してもらう
+8. **ボスがおおばテナントの委託先として入る場合**: おおば側 取引先マスタでボスの会社を委託先登録 → ユーザー管理 > ドライバー作成（別メールアドレス・別アカウント方式）
+
+残り（並行で進める）: P1 の中・低、P2（tenantScoped ラッパ＋番人テスト）、P4（分離テスト）、P3（DB ポリシー）、様式②。
+
+## 商用化（他社導入）前の必須3項目（2026-08-23 ボス決定）
+
 「SaaS として他社に売る」前に最低限済ませる。様式②の前後で計画に組み込む。
 
 1. **RLS のテナント基準化**: 棚卸し完了（2026-08-23）→ `docs/superpowers/specs/2026-08-23-rls-tenant-inventory.md`。結論: アプリは 100% service_role なので DB の RLS だけでは守れない。P0（users.tenant_id＋app_metadata 書き込み＋テナント作成）→ P1（無絞りクエリ修正）→ P2（tenantScoped ラッパ＋番人テスト）→ P4（2テナント分離テスト）→ P3（DB ポリシー）の順、合計 13〜18h。**P0 は様式②より先**（おおば運送のアカウントを作ると getCurrentTenantId が throw するため）。
@@ -40,6 +71,8 @@
 2. **バックアップ・復旧の確認**: Supabase の自動バックアップ設定と復元手順を確認し、実際に1回リストアを試して手順書化する。障害時の連絡・監視も決める
 3. **利用規約・料金・オンボーディング**: 利用規約・プライバシーポリシー（ドライバー口座情報の取扱い含む）、料金プラン、申込→テナント作成→初期設定の手順を整備する
 
+
+## 次のセッションで最初にやること（この順）
 
 1. `ls ~/dev/unsou-system/ooba/` — おおば運送の雛形 Excel と印字済み見本が置かれているか確認
    - 無ければボスに依頼。Air にある場合は Air 側で `scp -r ~/dev/unsou-system/ooba mini:~/dev/unsou-system/`
