@@ -4,6 +4,8 @@ import { createServiceClient } from '@/utils/supabase/service'
 import { requireOwner } from '@/utils/auth'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { encryptBankFields, decryptBankFieldValue } from '@/utils/crypto'
+import { DEFAULT_INVOICE_NUMBER_FORMAT, validateDocumentNumberFormat } from '@/utils/document-number'
+import { listDocumentFormatOptions } from '@/utils/document-formats'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -25,6 +27,10 @@ export type CompanyFormValues = {
   /** 支払通知書を作ってから子分の返事を待つ日数（'0'〜'90'）。0 は待たない運用 */
   payment_notice_response_days: string
   transport_insurance_amount: string
+  /** 請求書番号の採番書式（例 INV-{YYYY}{MM}-{SEQ:4}）。utils/document-number.ts 参照 */
+  invoice_number_format: string
+  /** 標準の帳票様式キー（utils/document-formats.ts のレジストリ） */
+  document_format_key: string
 }
 
 const EMPTY: CompanyFormValues = {
@@ -33,6 +39,8 @@ const EMPTY: CompanyFormValues = {
   fiscal_year_end_month: '',
   payment_notice_response_days: '7',
   transport_insurance_amount: '1000',
+  invoice_number_format: DEFAULT_INVOICE_NUMBER_FORMAT,
+  document_format_key: 'standard',
 }
 
 /**
@@ -75,6 +83,8 @@ export async function fetchCompanyForEdit(): Promise<ActionResult<CompanyFormVal
       transport_insurance_amount:
         (data as { transport_insurance_amount?: number | null })
           .transport_insurance_amount?.toString() ?? '1000',
+      invoice_number_format: data.invoice_number_format || DEFAULT_INVOICE_NUMBER_FORMAT,
+      document_format_key:   data.document_format_key   || 'standard',
     },
     error: null,
   }
@@ -120,6 +130,14 @@ export async function saveCompany(values: CompanyFormValues): Promise<ActionResu
     return { data: null, error: '運送保険料は0以上の整数で指定してください。' }
   }
 
+  // 採番書式: {SEQ} 必須・未知トークン拒否。空欄は既定書式に戻す
+  const numberFormat = values.invoice_number_format.trim() || DEFAULT_INVOICE_NUMBER_FORMAT
+  const fmtErr = validateDocumentNumberFormat(numberFormat)
+  if (fmtErr) return { data: null, error: `請求書番号の書式: ${fmtErr}` }
+  // 様式キー: レジストリに無いものは standard に倒す
+  const formatKey = listDocumentFormatOptions('invoice').some(o => o.key === values.document_format_key)
+    ? values.document_format_key : 'standard'
+
   const tenantId = await getCurrentTenantId()
   const service  = createServiceClient()
 
@@ -142,6 +160,8 @@ export async function saveCompany(values: CompanyFormValues): Promise<ActionResu
     fiscal_year_end_month: fiscalYearEndMonth,
     payment_notice_response_days: days,
     transport_insurance_amount: insurance,
+    invoice_number_format: numberFormat,
+    document_format_key:   formatKey,
     tenant_id:          tenantId,
     updated_at:         new Date().toISOString(),
   }

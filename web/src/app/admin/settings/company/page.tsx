@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { fetchCompanyForEdit, saveCompany, type CompanyFormValues } from './actions'
+import { listDocumentFormatOptions } from '@/utils/document-formats'
 
 const EMPTY: CompanyFormValues = {
   name: '', invoice_reg_number: '', postal_code: '', address: '', phone: '', email: '',
@@ -9,6 +10,8 @@ const EMPTY: CompanyFormValues = {
   fiscal_year_end_month: '',
   payment_notice_response_days: '7',
   transport_insurance_amount: '1000',
+  invoice_number_format: 'INV-{YYYY}{MM}-{SEQ:4}',
+  document_format_key: 'standard',
 }
 
 function Field({
@@ -135,6 +138,44 @@ export default function CompanySettingsPage() {
           <span className="mt-1 block text-xs text-zinc-500">
             事業年度は決算月の翌月から始まります（3月決算なら4月〜翌年3月）。
             委託先ごとの年度累計の集計期間に使います。未設定でも他の機能は止まりません。
+          </span>
+        </label>
+      </section>
+
+      <section className="mb-8 space-y-4">
+        <h2 className="border-b border-zinc-200 pb-2 text-sm font-semibold text-zinc-900">
+          帳票の発行
+        </h2>
+        <label className="block">
+          <span className="text-sm font-medium text-zinc-700">請求書番号の書式</span>
+          <input
+            type="text"
+            placeholder="INV-{YYYY}{MM}-{SEQ:4}"
+            value={values.invoice_number_format}
+            onChange={e => set('invoice_number_format')(e.target.value)}
+            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm font-mono
+                       text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+          />
+          <span className="mt-1 block text-xs text-zinc-500">
+            使えるトークン: {'{YYYY} {YY} {MM} {DD} {FY}（事業年度） {CLIENT}（荷主コード） {SEQ} {SEQ:4}（4桁ゼロ埋め）'}。
+            連番は {'{FY}'} / {'{YYYY}'} / {'{MM}'} の組み合わせごとにリセットされます（どれも無ければ通し番号）。
+            確定発行した番号は変わりません。書式を変えても発行済みの控えには影響しません。
+          </span>
+        </label>
+        <label className="block">
+          <span className="text-sm font-medium text-zinc-700">標準の請求書様式</span>
+          <select
+            value={values.document_format_key}
+            onChange={e => set('document_format_key')(e.target.value)}
+            className="mt-1 w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm
+                       text-zinc-900 focus:border-zinc-900 focus:outline-none focus:ring-1 focus:ring-zinc-900"
+          >
+            {listDocumentFormatOptions('invoice').map(o => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </select>
+          <span className="mt-1 block text-xs text-zinc-500">
+            荷主ごとに様式を指定していない場合に使う様式です。導入先様式は今後追加されます。
           </span>
         </label>
       </section>
