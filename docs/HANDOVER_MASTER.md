@@ -1384,6 +1384,23 @@ web/
 
 ### 5-4. 直近の作業履歴（新しい順）
 
+#### 2026-08-24（軽微残タスク3件の処理＋立替金税内訳の正本化・本番デプロイ済み）
+
+**やったこと（コミット `789862c`・push済み・Workers自動デプロイ success run `32659700172`。DB変更なし）**
+
+1. **`updateInvoiceStatus` の `tenant_id` フィルタ** — 調査の結果**既に対応済みだった**（現行コードに `.eq('tenant_id', tenantId)` あり）。§5-4 旧記録の「未対応」注記を訂正。
+2. **非課税の立替金の税抜内訳ずれ（旧🟢低）** — `utils/expense-tax.ts`（`splitExpenseTax`・vitest 3件付き）を税内訳の唯一の正本として新設。`driver/dashboard/actions.ts` と `voice-actions.ts` の `Math.round(実費/1.1)` 固定計算を置換し、完了報告フォーム（`ScheduleCalendar.tsx`）の種別「その他」にだけ「非課税（印紙代など）」チェックを追加（高速・駐車場・燃料は常に10%課税）。
+3. **併せて発見・修正した実バグ** — 画面登録は `tax_category='exclusive'`、音声は `'taxable_10'` と不統一で、おおば様式PDF（`pdf-actions.ts`）が `'taxable_10'` 判定で税額を出すため**画面から登録した立替金はPDFで税額0**になっていた。PDF側を「`amount_actual − amount_tax_excluded`」（`payment-notice-calc.ts` と同じ正本）に変更し `tax_category` 依存を廃止。既存行の `'exclusive'` は読む側が依存しなくなったため無害・放置。
+4. **scan_jobs 検証行・既存ダミーデータ（旧🟢低×2）** — 新本番DB（`hibiki-production`）で `scan_jobs`/`contractors`/`projects`/`companies`/`work_records`/`expense_records` 全て0件を実測確認。8/21 白紙化で解消済みとしてクローズ。
+
+**検証**: `tsc --noEmit` 通過・vitest 209件合格・eslint 変更ファイル新規指摘なし。⚠️**画面の実機確認は未実施** — 残作業は「完了報告フォームのその他→非課税チェック」と「おおば様式PDFの立替金税額」の2点の目視確認のみ。
+
+**残タスクの棚卸し（2026-08-24時点・次セッション向け）**
+
+- 軽（すぐ着手可）: `ALLOW_DEV_AUTH_BYPASS=true` が代理承認でも `requireOwner()` を飛ばす件のガード（開発時のみの挙動）。
+- 中（要ボス判断・確認）: ①請求書採番 `{YYYY}{MM}` を発行日基準→対象月基準にするか ②様式②見本の「①②＝担当者」の読み（配員表と照合） ③`payment_notices.status` の派生値化→段階的廃止。
+- 重・保留: 源泉徴収税の支払通知書反映（列が無い・一覧と金額不一致）／代表者の別アカウント方式（未着手）／控除限度額1億円超・消費税率改正追随（ボス判断で後回し）／旧本番DBのテスト環境化・B社オンボーディング・フィールドテスト後UX（フィードバック待ち）。
+
 #### 2026-08-24 未明（帳票発行土台①＋おおば様式②を本番適用・デプロイ）
 
 1. **本番 DB にマイグレーション 4 本を適用**（MCP `execute_sql` で各ファイル全文＋`schema_migrations` INSERT を 1 トランザクションずつ。ファイル名どおりの version で記録）: `20260823150000_document_issuance_foundation` / `20260823180000_users_tenant_id` / `20260824000000_contractors_apply_transport_insurance` / `20260824010000_companies_seal_image`。各適用後に SQL で検証（テーブル3・関数1・ポリシー3・users 1件に tenant_id・列存在）。⚠️ `contractors_is_internal` は以前 MCP `apply_migration` で入れたため version が `20260823010356`（ファイルは `20260823100000`）とズレて記録されている。新本番DB構築時（`supabase db push`）はこの1本だけ重複適用に注意（`IF NOT EXISTS` なので実害なし）。
