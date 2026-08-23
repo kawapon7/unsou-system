@@ -9,7 +9,7 @@ export function OobaInvoiceDocument({ data }: { data: InvoicePdfData }) {
   const rows = aggregateOobaInvoiceRows(data.lines, data.yearMonth)
   const c = data.company
   return (
-    <div className="a4-page w-[794px] bg-white p-12 text-[12px] text-black leading-tight">
+    <div className="a4-page w-[794px] min-h-[1122px] bg-white shadow-xl print:shadow-none p-12 font-sans text-[12px] text-black leading-tight">
       <h1 className="text-center text-2xl tracking-[0.5em] mb-6">請 求 書</h1>
       <div className="flex justify-between mb-4">
         <div>
@@ -57,7 +57,7 @@ export function OobaInvoiceDocument({ data }: { data: InvoicePdfData }) {
           <tr><td colSpan={4} className="border border-black text-right px-2 font-bold">合計</td><td className="border border-black text-right px-2 font-bold">{yen(data.totalAmount)}</td></tr>
         </tfoot>
       </table>
-      {data.noteLines.map(n => <p key={n} className="mt-2">{n}</p>)}
+      {data.noteLines.map((n, i) => <p key={i} className="mt-2">{n}</p>)}
       <div className="mt-6 border border-black p-2 w-2/3">
         <p className="font-semibold">お振込先</p>
         <p>{c.bank.bankName} {c.bank.bankBranch}　{c.bank.accountType}　{c.bank.accountNumber}</p>
