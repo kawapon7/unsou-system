@@ -1,9 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { PrintModal } from './PrintModal'
 import { PaymentNoticeDocument } from './PaymentNoticeDocument'
+import { IssueButton } from './IssueButton'
 import { fetchPaymentNoticePdfData, type PaymentNoticePdfData } from '@/app/_actions/pdf-actions'
+import { issuePaymentNoticeDocument } from '@/app/_actions/document-actions'
 
 export function PaymentNoticePdfModal({
   contractorId,
@@ -11,6 +13,7 @@ export function PaymentNoticePdfModal({
   contractorName,
   onClose,
   showSaveHint = false,
+  canIssue = false,
 }: {
   contractorId:   string
   yearMonth:      string
@@ -18,23 +21,48 @@ export function PaymentNoticePdfModal({
   onClose:        () => void
   /** ドライバー画面から開いたときに保存を促す一文を出す（確定申告の証憑用） */
   showSaveHint?:  boolean
+  /** 確定発行ボタンを出す（管理者画面のみ true を渡す） */
+  canIssue?:      boolean
 }) {
   const [data, setData]   = useState<PaymentNoticePdfData | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [msg, setMsg]     = useState<string | null>(null)
+  const [issuedNo, setIssuedNo] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback(() => {
     fetchPaymentNoticePdfData(contractorId, yearMonth).then(res => {
       if (res.error) setError(res.error)
       else           setData(res.data)
     })
   }, [contractorId, yearMonth])
 
+  useEffect(() => { load() }, [load])
+
   return (
     <PrintModal
       isOpen
       onClose={onClose}
       title={`支払通知書 — ${contractorName} ${yearMonth}`}
+      actions={canIssue && data ? (
+        <IssueButton
+          label="支払通知書"
+          alreadyIssued={false}
+          issue={() => issuePaymentNoticeDocument(contractorId, yearMonth)}
+          onIssued={doc => { setMsg(null); setIssuedNo(doc.documentNumber); load() }}
+          onError={setMsg}
+        />
+      ) : null}
     >
+      {msg && (
+        <p className="mb-3 rounded-lg bg-red-50 border border-red-200 px-4 py-2.5 text-xs text-red-700 print:hidden">
+          {msg}
+        </p>
+      )}
+      {issuedNo && (
+        <p className="mb-3 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-2.5 text-xs text-emerald-800 print:hidden">
+          発行控えを保存しました（番号 {issuedNo}）。
+        </p>
+      )}
       {error ? (
         <div className="a4-page w-[794px] bg-white p-12 flex items-center justify-center">
           <p className="text-red-600 text-sm">データ取得エラー: {error}</p>

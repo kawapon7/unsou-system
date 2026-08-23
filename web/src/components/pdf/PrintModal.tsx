@@ -8,11 +8,14 @@ export function PrintModal({
   onClose,
   title,
   children,
+  actions,
 }: {
   isOpen:   boolean
   onClose:  () => void
   title:    string
   children: React.ReactNode
+  /** 操作バーに足すボタン（印刷ボタンの左）。印刷時は非表示 */
+  actions?: React.ReactNode
 }) {
   const [mounted, setMounted] = useState(false)
   useEffect(() => { setMounted(true) }, [])
@@ -27,6 +30,7 @@ export function PrintModal({
         <div className="fixed top-0 inset-x-0 z-50 flex items-center justify-between gap-4 bg-zinc-900/95 px-6 py-3 backdrop-blur">
           <h2 className="text-sm font-medium text-white truncate max-w-lg">{title}</h2>
           <div className="flex items-center gap-2 shrink-0">
+            {actions}
             <button
               onClick={() => window.print()}
               className="flex items-center gap-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 px-4 py-2 text-sm font-medium text-white transition"
