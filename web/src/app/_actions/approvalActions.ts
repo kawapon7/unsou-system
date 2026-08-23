@@ -119,6 +119,7 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
     .from('payment_notices')
     .update({ approval_status: 'approved' })
     .eq('id', noticeId)
+    .eq('tenant_id', tenantId)  // ⚠️ 2026-08-23 P1: SELECT で検証済みでも UPDATE 自体を絞る（TOCTOU 対策）
     .in('approval_status', ['pending', 'unapproved'])
 
   if (error) return { data: null, error: error.message }
@@ -154,6 +155,7 @@ export async function rejectPaymentNotice(noticeId: string): Promise<ActionResul
     .from('payment_notices')
     .update({ approval_status: 'rejected' })
     .eq('id', noticeId)
+    .eq('tenant_id', tenantId)  // ⚠️ 2026-08-23 P1: SELECT で検証済みでも UPDATE 自体を絞る（TOCTOU 対策）
     .in('approval_status', ['pending', 'unapproved'])
 
   if (error) return { data: null, error: error.message }
@@ -222,6 +224,7 @@ export async function fetchApprovalHistory(): Promise<ActionResult<ApprovalHisto
   if (!auth.ok) return { data: null, error: auth.error }
   try {
     const db = createServiceClient() as any
+    const tenantId = await getCurrentTenantId()  // ⚠️ 2026-08-23 P1: 不変ログの全社横断閲覧を防ぐ
 
     const { data, error } = await db
       .from('approval_history')
@@ -232,6 +235,7 @@ export async function fetchApprovalHistory(): Promise<ActionResult<ApprovalHisto
           contractors ( name )
         )
       `)
+      .eq('tenant_id', tenantId)
       .order('created_at', { ascending: false })
       .limit(100)
 
