@@ -31,7 +31,12 @@ export type CompanyFormValues = {
   invoice_number_format: string
   /** 標準の帳票様式キー（utils/document-formats.ts のレジストリ） */
   document_format_key: string
+  /** 印影（社判）PNG の data URL。空文字は未登録（保存時に NULL） */
+  seal_image: string
 }
+
+/** 印影の上限（data URL の文字数 ≒ 元PNGの 4/3 倍）。300KB の PNG ≒ 40万文字 */
+const SEAL_IMAGE_MAX_CHARS = 420_000
 
 const EMPTY: CompanyFormValues = {
   name: '', invoice_reg_number: '', postal_code: '', address: '', phone: '', email: '',
@@ -41,6 +46,7 @@ const EMPTY: CompanyFormValues = {
   transport_insurance_amount: '1000',
   invoice_number_format: DEFAULT_INVOICE_NUMBER_FORMAT,
   document_format_key: 'standard',
+  seal_image: '',
 }
 
 /**
@@ -85,6 +91,7 @@ export async function fetchCompanyForEdit(): Promise<ActionResult<CompanyFormVal
           .transport_insurance_amount?.toString() ?? '1000',
       invoice_number_format: data.invoice_number_format || DEFAULT_INVOICE_NUMBER_FORMAT,
       document_format_key:   data.document_format_key   || 'standard',
+      seal_image:            (data as { seal_image?: string | null }).seal_image ?? '',
     },
     error: null,
   }
@@ -138,6 +145,17 @@ export async function saveCompany(values: CompanyFormValues): Promise<ActionResu
   const formatKey = listDocumentFormatOptions('invoice').some(o => o.key === values.document_format_key)
     ? values.document_format_key : 'standard'
 
+  // 印影: PNG の data URL のみ受け付ける（SVG は script を含みうるので不可）。サイズ上限あり
+  const sealRaw = values.seal_image.trim()
+  if (sealRaw !== '') {
+    if (!/^data:image\/png;base64,[A-Za-z0-9+/]+=*$/.test(sealRaw)) {
+      return { data: null, error: '印影は PNG 画像のみ登録できます。' }
+    }
+    if (sealRaw.length > SEAL_IMAGE_MAX_CHARS) {
+      return { data: null, error: '印影の画像が大きすぎます（300KB 以下の PNG にしてください）。' }
+    }
+  }
+
   const tenantId = await getCurrentTenantId()
   const service  = createServiceClient()
 
@@ -162,6 +180,7 @@ export async function saveCompany(values: CompanyFormValues): Promise<ActionResu
     transport_insurance_amount: insurance,
     invoice_number_format: numberFormat,
     document_format_key:   formatKey,
+    seal_image:            sealRaw === '' ? null : sealRaw,
     tenant_id:          tenantId,
     updated_at:         new Date().toISOString(),
   }

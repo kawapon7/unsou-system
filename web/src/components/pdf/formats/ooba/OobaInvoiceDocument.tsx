@@ -12,7 +12,7 @@ const CELL = 'border border-black'
 /**
  * おおば運送様式 請求書 v1（oobaunsou_mihon の実物 PDF 2026-06 を見て 2026-08-23 に再現）。
  * 見た目を変えたら document-formats.ts の version を上げ、旧版を残す。
- * ⚠️ 印影（社判）は未対応（会社設定の画像登録＝計画③）。FAX は companies に列が無いため出さない。
+ * 印影は companies.seal_image（data URL）を発行元欄の右に重ねる。FAX は companies に列が無いため出さない。
  */
 export function OobaInvoiceDocument({ data }: { data: InvoicePdfData }) {
   const rows = layoutOobaInvoiceRows(aggregateOobaInvoiceRows(data.lines, data.yearMonth))
@@ -34,13 +34,18 @@ export function OobaInvoiceDocument({ data }: { data: InvoicePdfData }) {
           </div>
           <p className="mt-1 pl-16">下記の通り、ご請求申し上げます。</p>
         </div>
-        <div className="w-[250px] pt-6">
+        <div className="w-[270px] pt-6 relative">
           <p className="mb-5 pl-10">作成日 <span className="ml-6">{jpDate(data.issueDate)}</span></p>
           <p>〒{c.postalCode}</p>
           <p className="mt-1">{c.address}</p>
           <p className="mt-1">{c.name}</p>
           <p className="mt-1 pl-10">TEL： {c.phone}</p>
           <p className="mt-1">登録番号 {c.invoiceRegNumber}</p>
+          {c.sealImage && (
+            // 見本: 社名〜登録番号の右に角印が重なる。印刷時も出るよう <img>（背景画像は印刷で消えることがある）
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={c.sealImage} alt="" className="absolute right-0 top-[58px] w-[76px] h-[76px] object-contain" />
+          )}
         </div>
       </div>
 

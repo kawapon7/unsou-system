@@ -57,6 +57,10 @@ export function buildOobaInvoiceWorkbook(data: InvoicePdfData): ExcelJS.Workbook
   ws.getCell('F6').value = c.name
   ws.getCell('F7').value = `TEL： ${c.phone}`
   ws.getCell('F8').value = `登録番号 ${c.invoiceRegNumber}`
+  if (c.sealImage?.startsWith('data:image/png;base64,')) {
+    const imageId = wb.addImage({ base64: c.sealImage.replace(/^data:image\/png;base64,/, ''), extension: 'png' })
+    ws.addImage(imageId, { tl: { col: 6.4, row: 4.2 }, ext: { width: 72, height: 72 } })
+  }
 
   ws.getCell('B5').value = `件名： ${data.subject}`
   ws.getCell('B5').font = { bold: true }
@@ -161,16 +165,19 @@ export function buildOobaPaymentNoticeWorkbook(
   m.columns = [{ width: 2 }, { width: 14 }, { width: 30 }, { width: 4 }, { width: 4 }, { width: 4 }, { width: 16 }]
   m.getCell('A3').value = '支払明細書'
   m.getCell('A3').font = { size: 16, bold: true }
-  m.getCell('G5').value = data.issueDate.replace(/-/g, '/')
+  m.getCell('G5').value = data.issueDate.replace(/^(\d+)-0?(\d+)-0?(\d+)$/, '$1年$2月$3日')
   m.getCell('G6').value = `〒${c.postalCode}`
   m.getCell('B7').value = `　${data.contractorName}　`
+  m.getCell('B7').font = { size: 18, bold: true }
+  ;['B7', 'C7', 'D7'].forEach(r => { m.getCell(r).border = { bottom: { style: 'thin' } } })
   m.getCell('D7').value = '様'
   m.getCell('G7').value = c.address
   m.getCell('G8').value = c.name
   m.getCell('G9').value = `℡${c.phone}`
   m.getCell('B10').value = `（${data.noticeMonth})`
   m.getCell('G10').value = `登録番号 ${c.invoiceRegNumber}`
-  text(m, 'G11', '金額').alignment = { horizontal: 'center' }
+  const BLUE = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDDEBF7' } } as const
+  const g11 = text(m, 'G11', '金額'); g11.alignment = { horizontal: 'center' }; g11.fill = BLUE
   text(m, 'B12', '支払額')
   text(m, 'C12', '支払運賃')
   money(m, 'G12', data.laborNet)
@@ -194,12 +201,13 @@ export function buildOobaPaymentNoticeWorkbook(
   if (data.deduction === 0 && data.insuranceDeduction === 0) text(m, 'G27', '').alignment = { horizontal: 'right' }
   else money(m, 'G27', offsetTotal)
   text(m, 'B28', '立替金（高速料金、駐車場代　他　）')
-  money(m, 'G28', data.expenseNet)
+  // ⚠️ 見本の G28 は立替金明細書の合計＝税込額（G29「うち消費税」= G28×10/110）。税抜を入れると見本と食い違う
+  money(m, 'G28', expenseTotal)
   text(m, 'B29', 'うち消費税額（10％）')
   money(m, 'G29', data.expenseTax)
   text(m, 'B31', '立替金合計【④】')
   money(m, 'G31', expenseTotal)
-  text(m, 'B32', '差引支給額【①+②+③+④】（税込）').font = { bold: true }
+  const b32 = text(m, 'B32', '差引支給額【①+②+③+④】（税込）'); b32.font = { bold: true }; b32.fill = BLUE
   money(m, 'G32', data.totalAmount)
   m.getCell('G32').font = { bold: true }
   m.getCell('B33').value = '備考          ※送付後10日以内に御連絡が無い場合、確認済とします。'

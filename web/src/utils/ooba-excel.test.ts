@@ -69,7 +69,7 @@ describe('ooba-excel', () => {
     expect(ws.getCell('G21').value).toBe(-f.deduction)
     expect(ws.getCell('G24').value).toBe(-f.insuranceDeduction)
     expect(ws.getCell('G27').value).toBe(-(f.deduction + f.insuranceDeduction))
-    expect(ws.getCell('G28').value).toBe(f.expenseNet)
+    expect(ws.getCell('G28').value).toBe(f.expenseNet + f.expenseTax) // 見本 G28 は税込
     expect(ws.getCell('G29').value).toBe(f.expenseTax)
     expect(ws.getCell('G31').value).toBe(f.expenseNet + f.expenseTax)
     expect(ws.getCell('G32').value).toBe(f.totalAmount)
