@@ -68,6 +68,8 @@ async function loadCompanyIssuanceSettings(service: Service, tenantId: string) {
 
 type IssueInput = {
   kind: DocumentKind
+  /** 対象月 'YYYY-MM'。採番の {YYYY}{YY}{MM}{FY} と連番の期間はこの月を基準にする（発行日ではない） */
+  yearMonth: string
   sourceId: string
   contractorId: string | null
   partyName: string
@@ -96,7 +98,15 @@ async function issueDocument(service: Service, tenantId: string, input: IssueInp
     return { data: null, error: `発行済みの控え（${active.document_number}）があります。取消してから再発行してください。` }
   }
 
-  const ctx = { date: new Date(), fiscalYearEndMonth, clientCode: input.clientCode }
+  // 採番は対象月基準（2026-08-24 決定）。6月分はいつ発行しても INV-202606-… になり、
+  // 連番も対象月単位で数える。発行日そのものは document_date 列に別途残る。
+  // ⚠️ {DD} を含む書式では常に「01」になる（発行日を混ぜると再発行のたびに番号の日付部が
+  //    変わり、同一対象月内での番号の再現性が壊れるため対象月1日に固定）。
+  const [baseY, baseM] = input.yearMonth.split('-').map(Number)
+  if (!baseY || !baseM || baseM < 1 || baseM > 12) {
+    return { data: null, error: `対象月が不正です: ${input.yearMonth}` }
+  }
+  const ctx = { date: new Date(baseY, baseM - 1, 1), fiscalYearEndMonth, clientCode: input.clientCode }
   // ⚠️ 支払通知書は会社設定の書式を使わず固定書式（PN-…）。同じ書式だと番号が UNIQUE 制約で請求書と衝突する（8/23 画面検証で再現）。
   const format = input.kind === 'payment_notice' ? DEFAULT_PAYMENT_NOTICE_NUMBER_FORMAT : invoiceFormat
   const periodKey = sequencePeriodKey(format, ctx)
@@ -178,7 +188,7 @@ async function buildInvoiceIssueInput(
 
   return {
     data: {
-      kind: 'invoice', sourceId: inv.id, contractorId: null,
+      kind: 'invoice', yearMonth, sourceId: inv.id, contractorId: null,
       partyName: pdf.data.clientName, totalAmount: pdf.data.totalAmount, snapshot: pdf.data,
       clientFormatKey: client?.document_format_key ?? null, clientCode: null,
     },
@@ -205,7 +215,7 @@ async function buildPaymentNoticeIssueInput(
 
   return {
     data: {
-      kind: 'payment_notice', sourceId: pn.id, contractorId,
+      kind: 'payment_notice', yearMonth, sourceId: pn.id, contractorId,
       partyName: pdf.data.contractorName, totalAmount: pdf.data.totalAmount, snapshot: pdf.data,
       clientFormatKey: null, clientCode: null,
     },
