@@ -5,6 +5,9 @@
 // 連番のリセット単位は sequencePeriodKey() が書式中のトークンから決める。
 
 export const DEFAULT_INVOICE_NUMBER_FORMAT = 'INV-{YYYY}{MM}-{SEQ:4}'
+// ⚠️ 支払通知書は請求書と同じ issued_documents に入り、番号は UNIQUE(tenant_id, document_number)。
+// 会社設定の「請求書番号の書式」を共用すると INV-…-0001 が両種別で衝突するため、支払通知書は固定書式で採番する（書式の設定化は計画③）。
+export const DEFAULT_PAYMENT_NOTICE_NUMBER_FORMAT = 'PN-{YYYY}{MM}-{SEQ:4}'
 
 export type NumberContext = {
   date: Date

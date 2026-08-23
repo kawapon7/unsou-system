@@ -5,7 +5,7 @@ import { requireOwner, requireAuth } from '@/utils/auth'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { fetchInvoicePdfData, fetchPaymentNoticePdfData } from './pdf-actions'
 import {
-  DEFAULT_INVOICE_NUMBER_FORMAT, formatDocumentNumber, sequencePeriodKey, validateDocumentNumberFormat,
+  DEFAULT_INVOICE_NUMBER_FORMAT, DEFAULT_PAYMENT_NOTICE_NUMBER_FORMAT, formatDocumentNumber, sequencePeriodKey, validateDocumentNumberFormat,
 } from '@/utils/document-number'
 import { resolveDocumentFormat, type DocumentKind } from '@/utils/document-formats'
 import {
@@ -84,7 +84,7 @@ type IssueInput = {
 async function issueDocument(service: Service, tenantId: string, input: IssueInput): Promise<ActionResult<IssuedDocumentSummary>> {
   const settings = await loadCompanyIssuanceSettings(service, tenantId)
   if (settings.error || !settings.data) return { data: null, error: settings.error ?? '設定取得に失敗しました' }
-  const { format, fiscalYearEndMonth, companyFormatKey } = settings.data
+  const { format: invoiceFormat, fiscalYearEndMonth, companyFormatKey } = settings.data
 
   // 有効な控えが既にあれば拒否（部分ユニーク索引でも守られるが、先に分かる文言で返す）
   const { data: active } = await service
@@ -97,7 +97,8 @@ async function issueDocument(service: Service, tenantId: string, input: IssueInp
   }
 
   const ctx = { date: new Date(), fiscalYearEndMonth, clientCode: input.clientCode }
-  // ⚠️ 支払通知書も同じ書式・別カウンタ（kind で分かれる）。書式分離は計画③で検討
+  // ⚠️ 支払通知書は会社設定の書式を使わず固定書式（PN-…）。同じ書式だと番号が UNIQUE 制約で請求書と衝突する（8/23 画面検証で再現）。
+  const format = input.kind === 'payment_notice' ? DEFAULT_PAYMENT_NOTICE_NUMBER_FORMAT : invoiceFormat
   const periodKey = sequencePeriodKey(format, ctx)
   const { data: seq, error: seqErr } = await service.rpc('next_document_sequence', {
     p_tenant_id: tenantId, p_kind: input.kind, p_period_key: periodKey,

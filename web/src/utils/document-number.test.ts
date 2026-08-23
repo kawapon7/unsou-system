@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
-  DEFAULT_INVOICE_NUMBER_FORMAT, validateDocumentNumberFormat,
+  DEFAULT_INVOICE_NUMBER_FORMAT, DEFAULT_PAYMENT_NOTICE_NUMBER_FORMAT, validateDocumentNumberFormat,
   sequencePeriodKey, formatDocumentNumber,
 } from './document-number'
 
@@ -46,5 +46,14 @@ describe('validateDocumentNumberFormat', () => {
     expect(validateDocumentNumberFormat('{FOO}-{SEQ}')).toMatch(/FOO/)
     expect(validateDocumentNumberFormat('')).not.toBeNull()
     expect(validateDocumentNumberFormat('{SEQ:0}')).not.toBeNull()
+  })
+})
+
+describe('DEFAULT_PAYMENT_NOTICE_NUMBER_FORMAT', () => {
+  it('請求書の既定書式と番号が衝突しない（同じ issued_documents で UNIQUE のため）', () => {
+    const ctx = { date: new Date('2026-08-23'), seq: 1 }
+    expect(formatDocumentNumber(DEFAULT_PAYMENT_NOTICE_NUMBER_FORMAT, ctx))
+      .not.toBe(formatDocumentNumber(DEFAULT_INVOICE_NUMBER_FORMAT, ctx))
+    expect(formatDocumentNumber(DEFAULT_PAYMENT_NOTICE_NUMBER_FORMAT, ctx)).toBe('PN-202608-0001')
   })
 })
