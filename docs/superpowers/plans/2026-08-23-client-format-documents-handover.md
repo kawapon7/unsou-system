@@ -2,7 +2,7 @@
 
 作成: 2026-08-23（Mac mini / BLACKICE のセッションから）
 要件定義の正本: `docs/superpowers/specs/2026-08-23-client-format-documents-design.md`
-ステータス: **要件合意済み・土台①/様式②とも実装済み（ブランチ `feat/document-issuance-foundation`・本番DB未適用・画面未検証）**
+ステータス: **要件合意済み・土台①/様式②とも実装済み・ローカル Supabase で画面検証済み（2026-08-23 夜、ブランチ `feat/document-issuance-foundation`・本番DB未適用）**。様式②は実物（`oobaunsou_mihon/` の請求書 PDF・明細書 xlsx）と体裁を突き合わせ済み。印影（社判）も実装済み。
 
 ## 様式②の状態（2026-08-23 夜）
 
@@ -15,13 +15,14 @@
 - Excel: `web/src/utils/ooba-excel.ts`（ExcelJS、5シート、数式なし）、`ExcelDownloadButton.tsx`（ブラウザ生成）。
 - 補助: `web/src/utils/work-minutes.ts`（深夜跨ぎ対応）、`web/src/utils/time-format.ts`。
 
-**未実施（人間の作業に委譲）**: 画面確認（ログイン要）。チェックリストは `task-9-report.md`・`task-11-report.md` を参照（自社情報で様式を「おおば運送様式」に切替→請求書/支払通知書プレビュー→Excelボタン→発行控え再表示→標準に戻す）。運送保険OFFの実機確認はマイグレーション適用後。
+**画面確認は 2026-08-23 夜にローカル Supabase（Docker）で実施済み**（自社情報の新項目保存・請求書/支払通知書の確定発行・控え一覧の再発行/取消・おおば様式の PDF 4 ページと請求書・Excel 生成・印影の印字）。その場で見つけた採番衝突バグは修正済み（`980d3b2`）。**未実施**: 運送保険 OFF の実機確認、標準様式への印影印字、見本の①②＝担当者という読みの確認（配員表と照合）。
 
 **本番適用手順（ボス作業・1つずつ・順番厳守）**:
 
 0. 前提: `20260823150000_document_issuance_foundation.sql` と `20260823180000_users_tenant_id.sql`（土台①・RLS P0。下記「土台①の状態」節）が未適用なら先にそちらの本番適用手順で適用する。この2本は様式②より前提。
 1. SQL Editorで `supabase/migrations/20260824000000_contractors_apply_transport_insurance.sql` を全文実行
 2. `INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('20260824000000','contractors_apply_transport_insurance');`
+2-b. 同様に `20260824010000_companies_seal_image.sql`（印影列）を全文実行し、`INSERT ... VALUES ('20260824010000','companies_seal_image');`
 3. `git checkout main && git merge --no-ff feat/document-issuance-foundation && git push`（**push した時点で `.github/workflows/deploy.yml` が `web/` の変更を検知して自動で本番デプロイする**。必ず手順1・2の後に行う）
 4. 委託先マスタで作業系委託先の「運送保険」チェックを外す
 5. おおばテナントの自社情報で様式を「おおば運送様式」に変更
@@ -118,9 +119,9 @@
 - 既存の PDF 生成は `web/src/components/pdf/InvoiceDocument.tsx` と `PaymentNoticeDocument.tsx`、データ取得は `web/src/app/_actions/pdf-actions.ts`、PDF 化は `PrintModal.tsx`（HTML をブラウザ印刷）。これらは「標準様式」として残す
 - 新機能は「様式を導入先ごと・荷主ごとに持ち、PDF と Excel の両方で出す」。**Excel→PDF の自動変換は不可**（Workers 上に Excel が無い）ので PDF は様式ごとに HTML を1回組む
 - 束ね方・呼び名・経費/控除の扱いは出力側で定義。**DB の計算は1本のまま変えない**
-- 印鑑・ロゴは会社設定に画像登録（Storage でテナント隔離、Server Action 経由のみ）
+- 印鑑は会社設定に画像登録 — **実装は Storage ではなく `companies.seal_image`（PNG data URL、300KB 上限・サーバー検証）に変更（2026-08-23）**。理由: 1社1枚数十KB、既存 RLS で隔離、ブラウザ描画にそのまま渡せる、控えのスナップショットに当時の印影が残る。ロゴは未実装
 - 法的要件（インボイス記載事項の補完、電子帳簿保存法の発行控え保存）は様式より先の土台
-- 優先順位: ①土台（控え保存・採番・確定/再発行）→ ②おおば運送1社分 → ③荷主別切替・印鑑・端数設定 → ④メール送付ほか
+- 優先順位: ①土台（控え保存・採番・確定/再発行）✅ → ②おおば運送1社分 ✅（印影も済） → ③荷主別切替・端数設定・標準様式への印影・採番書式の種別分離 → ④メール送付ほか
 
 ## 実装計画で決めるべきこと（§9 の再掲）
 
