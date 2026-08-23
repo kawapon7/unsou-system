@@ -327,6 +327,7 @@ export type Database = {
           created_at: string
           email: string
           has_withholding: boolean
+          is_internal: boolean
           id: string
           invoice_number: string | null
           invoice_registration_type: string
@@ -356,6 +357,7 @@ export type Database = {
           created_at?: string
           email: string
           has_withholding?: boolean
+          is_internal?: boolean
           id?: string
           invoice_number?: string | null
           invoice_registration_type: string
@@ -385,6 +387,7 @@ export type Database = {
           created_at?: string
           email?: string
           has_withholding?: boolean
+          is_internal?: boolean
           id?: string
           invoice_number?: string | null
           invoice_registration_type?: string

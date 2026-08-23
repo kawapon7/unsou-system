@@ -70,6 +70,7 @@ export async function fetchPendingPaymentNotices(): Promise<ActionResult<Pending
         contractors!inner ( id, name, phone, email, tenant_id )
       `)
       .eq('contractors.tenant_id', tenantId)
+      .eq('contractors.is_internal', false)
       .in('approval_status', ['pending', 'unapproved'])
       .order('created_at', { ascending: true })
 
@@ -271,8 +272,9 @@ export async function getApprovalSummary(yearMonth: string): Promise<ActionResul
     const [pnRes, wrRes, exRes] = await Promise.all([
       // 支払通知書 (notice_month で月絞り込み)
       db.from('payment_notices')
-        .select('approval_status, contractors!inner ( tenant_id )')
+        .select('approval_status, contractors!inner ( tenant_id, is_internal )')
         .eq('contractors.tenant_id', tenantId)
+        .eq('contractors.is_internal', false)
         .gte('notice_month', monthStart)
         .lte('notice_month', monthEnd),
 

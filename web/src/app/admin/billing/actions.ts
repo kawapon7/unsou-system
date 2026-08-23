@@ -242,7 +242,8 @@ export async function fetchPaymentByContractor(
           invoice_number,
           has_withholding,
           closing_day,
-          payment_site
+          payment_site,
+          is_internal
         )
       `)
       .eq('tenant_id', tenantId)
@@ -262,7 +263,9 @@ export async function fetchPaymentByContractor(
     payeeMap.set(`${r.contractor_id}:${r.project_id}`, r as PayeeRule)
   }
 
-  const rows = (workResult.data ?? []) as unknown as WorkRecordForPayment[]
+  // 自社区分（代表者・従業員）の実績は売上(IN)には載せるが支払(OUT)には載せない
+  const rows = ((workResult.data ?? []) as unknown as WorkRecordForPayment[])
+    .filter(r => !(r.contractors as any)?.is_internal)
 
   // ── ① 委託先ごとに税抜き支払額(net)と件数のみを集計 ──
   // 税・控除・源泉は「合計後に1回」算出する（行ごと丸めによる1円ズレ防止／generatePaymentNotice と整合）。
@@ -783,7 +786,18 @@ export async function generateAllPaymentNotices(
     .not('contractor_id', 'is', null)
   if (wErr) return { data: null, error: wErr.message }
 
-  const ids = [...new Set((workRows ?? []).map((r: any) => r.contractor_id as string))]
+  const candidateIds = [...new Set((workRows ?? []).map((r: any) => r.contractor_id as string))]
+
+  // 自社区分（is_internal）の委託先は通知書を作らない。generatePaymentNotice 側でも弾くが、
+  // ここで除外しないと errors に毎月「対象外」が積まれて一括生成が失敗扱いに見えるため先に落とす。
+  const { data: extRows, error: cErr } = await supabase
+    .from('contractors')
+    .select('id')
+    .eq('tenant_id', tenantId)
+    .eq('is_internal', false)
+    .in('id', candidateIds.length ? candidateIds : ['00000000-0000-0000-0000-000000000000'])
+  if (cErr) return { data: null, error: cErr.message }
+  const ids = (extRows ?? []).map((r: any) => r.id as string)
 
   const results = await Promise.allSettled(
     ids.map(id => generatePaymentNotice(id, yearMonth)),

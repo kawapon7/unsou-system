@@ -214,7 +214,7 @@ export async function fetchPaymentNoticePdfData(
   const [contractorRes, noticeRes, workRes, expenseRes, projectsRes] = await Promise.all([
     // tenant_id は自社情報の取得に使う（ドライバー閲覧時は上の isOwner ブロックを通らないため、
     // 委託先レコード自身からテナントを引く）
-    service.from('contractors').select('name, invoice_registration_type, tenant_id').eq('id', contractorId).single(),
+    (service as any).from('contractors').select('name, invoice_registration_type, tenant_id, is_internal').eq('id', contractorId).single(),
     (service as any).from('payment_notices')
       .select('subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction, insurance_deduction, adjustment_amount')
       .eq('contractor_id', contractorId)
@@ -242,6 +242,8 @@ export async function fetchPaymentNoticePdfData(
   if (contractorRes.error || !contractorRes.data) return { data: null, error: '委託先が見つかりません' }
 
   const contractor = contractorRes.data
+  // 自社区分（代表者・従業員）には支払通知書が存在しないため PDF も出さない
+  if ((contractor as any).is_internal) return { data: null, error: '自社区分（代表者・従業員）の委託先は支払通知書の対象外です' }
   const notice     = noticeRes.data
   const projMap    = new Map((projectsRes.data ?? []).map(p => [p.id, p.project_name]))
 

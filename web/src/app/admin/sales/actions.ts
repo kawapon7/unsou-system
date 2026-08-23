@@ -589,6 +589,7 @@ export async function fetchPaymentNoticeSummary(
       .from('contractors')
       .select('id, name, invoice_registration_type')
       .eq('tenant_id', tenantId)
+      .eq('is_internal', false) // 自社区分は支払通知書の対象外
       .order('name'),
     supabase
       .from('work_records')
@@ -881,6 +882,7 @@ export async function fetchContractorOptions(): Promise<
     .from('contractors')
     .select('id, name, invoice_registration_type')
     .eq('tenant_id', tenantId)
+    .eq('is_internal', false) // 自社区分は OUT 手入力の宛先にしない
     .order('name')
   if (error) return { data: null, error: error.message }
   return {

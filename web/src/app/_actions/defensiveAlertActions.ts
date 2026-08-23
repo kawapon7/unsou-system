@@ -125,6 +125,7 @@ async function fetchInvoiceWarnings(): Promise<InvoiceWarningRow[]> {
     .select('id, name, invoice_number, invoice_status, invoice_registration_type')
     .eq('invoice_registration_type', 'registered')
     .eq('tenant_id', tenantId)
+    .eq('is_internal', false) // 自社区分はインボイス警告の対象外
 
   if (!data?.length) return []
 

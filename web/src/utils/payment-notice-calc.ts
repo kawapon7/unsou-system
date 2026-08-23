@@ -201,12 +201,15 @@ export async function computePaymentNoticeAmounts(
   // 委託先マスタ
   const { data: c, error: cErr } = await supabase
     .from('contractors')
-    .select('tax_category, invoice_registration_type, has_withholding, closing_day')
+    .select('tax_category, invoice_registration_type, has_withholding, closing_day, is_internal')
     .eq('id', contractorId)
     .eq('tenant_id', tenantId)
     .single()
   if (cErr || !c) return { data: null, error: cErr?.message ?? '委託先が見つかりません' }
   const contractor = c as any
+  // 自社区分（代表者・従業員）は外注費ではないため支払通知書を作らない（fail-closed）。
+  // 経過措置・源泉の計算もここを通るので、この1箇所で OUT 側から除外される。
+  if (contractor.is_internal) return { data: null, error: '自社区分（代表者・従業員）の委託先は支払通知書の対象外です' }
 
   // 締め日は委託先ごとに異なる（fetchPaymentByContractor と同じ closingRange ロジック）
   // ⚠️ 従来 toISOString() を挟んでおり JST の開発機で 1 日ずれていた。共通モジュールは

@@ -178,6 +178,7 @@ export async function fetchLongPendingNotices(tenantId: string): Promise<Pending
     `)
     .eq('approval_status', 'unapproved')
     .eq('contractors.tenant_id', tenantId)
+    .eq('contractors.is_internal', false)
     .lt('created_at', threshold)
     .order('created_at', { ascending: true })
 

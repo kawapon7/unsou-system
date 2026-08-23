@@ -109,6 +109,7 @@ type ContractorForm = {
   account_number: string
   account_holder: string
   parent_contractor_id: string
+  is_internal: boolean
 }
 
 const defaultContractorForm = (): ContractorForm => ({
@@ -130,6 +131,7 @@ const defaultContractorForm = (): ContractorForm => ({
   account_number: '',
   account_holder: '',
   parent_contractor_id: '',
+  is_internal: false,
 })
 
 // ── 共通コンポーネント ────────────────────────────────────
@@ -337,7 +339,7 @@ function ContractorFormFields({
   allContractors?: ContractorRow[]
   editTargetId?: string | null
 }) {
-  const set = (k: keyof ContractorForm, v: string) =>
+  const set = (k: keyof ContractorForm, v: string | boolean) =>
     onChange({ ...form, [k]: v })
 
   return (
@@ -376,6 +378,22 @@ function ContractorFormFields({
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
           </select>
+        </Field>
+        <Field label="区分">
+          <label className="flex items-start gap-2 text-sm text-zinc-700">
+            <input
+              type="checkbox"
+              className="mt-1 h-4 w-4"
+              checked={form.is_internal}
+              onChange={e => set('is_internal', e.target.checked)}
+            />
+            <span>
+              自社（代表者・従業員）
+              <span className="block text-xs text-zinc-500">
+                チェックすると支払通知書・インボイス警告・支払(OUT)集計の対象外になります。予定・実績・売上(IN)には通常どおり載ります。
+              </span>
+            </span>
+          </label>
         </Field>
       </div>
 
@@ -894,6 +912,7 @@ function ContractorsTab() {
       account_number: row.account_number ?? '',
       account_holder: row.account_holder ?? '',
       parent_contractor_id: (row as any).parent_contractor_id ?? '',
+      is_internal: Boolean((row as any).is_internal),
     })
     setFormError(null)
     setIsDirty(false)
@@ -932,6 +951,7 @@ function ContractorsTab() {
       has_withholding: false,
       show_detail_switch: true,
       parent_contractor_id: form.parent_contractor_id || null,
+      is_internal: form.is_internal,
     }
 
     const result = editTarget
@@ -987,7 +1007,12 @@ function ContractorsTab() {
             <tbody className="divide-y divide-zinc-100">
               {rows.map(row => (
                 <tr key={row.id} className="hover:bg-zinc-50">
-                  <td className="px-4 py-3 font-medium text-zinc-900">{row.name}</td>
+                  <td className="px-4 py-3 font-medium text-zinc-900">
+                    {row.name}
+                    {(row as any).is_internal && (
+                      <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-xs font-normal text-zinc-600">自社</span>
+                    )}
+                  </td>
                   <td className="px-4 py-3 text-zinc-600">{row.email ?? '—'}</td>
                   <td className="px-4 py-3 text-zinc-600">{paymentMethodLabel(row.payment_type)}</td>
                   <td className="px-4 py-3 text-zinc-600">{row.closing_day === '月末' || row.closing_day == null ? '月末' : `${row.closing_day}日`}</td>
