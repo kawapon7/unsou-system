@@ -17,6 +17,7 @@
     "@holiday-jp/holiday_jp": "^2.5.1",
     "@supabase/ssr": "^0.12.0",
     "@supabase/supabase-js": "^3.0.0-next.29",
+    "exceljs": "^4.4.0",
     "next": "^16.3.2",
     "react": "19.2.4",
     "react-dom": "19.2.4",

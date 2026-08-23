@@ -40,3 +40,4 @@ yarn-debug.log*
 
 # 実データ（口座情報・角印・従業員実名を含む。Git管理下に置かない）
 ooba/
+oobaunsou_mihon/
