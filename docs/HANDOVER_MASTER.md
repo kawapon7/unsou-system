@@ -1396,7 +1396,7 @@ web/
    - Server Actions: `_actions/document-actions.ts` — `issueInvoiceDocument` / `issuePaymentNoticeDocument` / `cancelIssuedDocument` / `reissueDocument` / `listIssuedDocuments` / `getIssuedDocument` / `getActiveIssuedDocumentForSource`。発行条件: 請求書は `status in (issued, paid)`、支払通知書は `approval_status='approved'` or `locked`。**invoices / payment_notices は書かない**。
    - 設計判断: 控えの実体は「発行時スナップショット JSON＋様式キー・版」。PDF はブラウザ印刷でサーバにファイルが無いため Storage は使わない（印影・Excel ファイル保存は計画②③）。再発行は「取消→現在データで新番号」。guard トリガが取消済み行の再 UPDATE を拒否するため `superseded_by` 列は未使用（新旧対応は `document_history.reason` に残す）。
    - UI: 設定>自社情報に「請求書番号の書式」「標準の請求書様式」。請求書/支払通知書 PDF モーダルに「確定発行（控え保存）」（`canIssue` を管理画面からのみ渡す）。`/admin/documents` 発行控え一覧（種別・相手先・発行日・金額で検索、取消・再発行、当時の様式で再表示）。`pdf-actions.ts` の請求書番号は控えがあればその番号、無ければ従来番号＋「(未発行)」。
-   - 検証: tsc / vitest 175 / build 通過。**DB 未適用のため画面動作は未検証**。適用手順は `docs/superpowers/plans/2026-08-23-client-format-documents-handover.md`。
+   - 検証: tsc / vitest 173 / build 通過。**DB 未適用のため画面動作は未検証**。適用手順は `docs/superpowers/plans/2026-08-23-client-format-documents-handover.md`。
    - 計画③へ送った項目: 端数処理の荷主別設定、印影・ロゴ（Storage）、採番書式の種別分離（現状は請求書・支払通知書が同じ書式・別カウンタ）。
 
 #### 2026-08-21夜（UI刷新を本番リリース＋本番DB初期化・フィールドテスト開始準備完了）
