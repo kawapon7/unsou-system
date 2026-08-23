@@ -55,9 +55,16 @@ describe('ooba-excel', () => {
     expect(totalRow + 2).toBe(23)
   })
 
-  it('支払明細書: 5 シートがあり差引支給額が入る', () => {
-    const wb = buildOobaPaymentNoticeWorkbook(OOBA_PAYMENT_NOTICE_FIXTURE)
-    expect(wb.worksheets.map(w => w.name)).toEqual(['支払明細書', '勤務報告書', '作業明細支払書', '立替金明細書', '利益表'])
+  it('支払明細書: includeInternalSheets 指定時は5シート（利益表つき）、未指定は4シート（社内用の利益表を委託先に出さない）', () => {
+    const withInternal = buildOobaPaymentNoticeWorkbook(OOBA_PAYMENT_NOTICE_FIXTURE, { includeInternalSheets: true })
+    expect(withInternal.worksheets.map(w => w.name)).toEqual(['支払明細書', '勤務報告書', '作業明細支払書', '立替金明細書', '利益表'])
+
+    const withoutInternal = buildOobaPaymentNoticeWorkbook(OOBA_PAYMENT_NOTICE_FIXTURE)
+    expect(withoutInternal.worksheets.map(w => w.name)).toEqual(['支払明細書', '勤務報告書', '作業明細支払書', '立替金明細書'])
+  })
+
+  it('支払明細書: 差引支給額が入る', () => {
+    const wb = buildOobaPaymentNoticeWorkbook(OOBA_PAYMENT_NOTICE_FIXTURE, { includeInternalSheets: true })
     const ws = wb.getWorksheet('支払明細書')!
     const f = OOBA_PAYMENT_NOTICE_FIXTURE
     expect(ws.getCell('G12').value).toBe(f.laborNet)
@@ -65,7 +72,6 @@ describe('ooba-excel', () => {
     expect(ws.getCell('G18').value).toBe(f.laborNet + f.adjustment)
     expect(ws.getCell('G19').value).toBe(f.laborTax)
     expect(ws.getCell('G21').value).toBe(-f.deduction)
-    expect(ws.getCell('G24').value).toBe(-1000)
     expect(ws.getCell('G24').value).toBe(-f.insuranceDeduction)
     expect(ws.getCell('G27').value).toBe(-(f.deduction + f.insuranceDeduction))
     expect(ws.getCell('G28').value).toBe(f.expenseNet)
@@ -76,6 +82,14 @@ describe('ooba-excel', () => {
     const rep = wb.getWorksheet('勤務報告書')!
     expect(rep.getCell('D5').value).toBe('C配送 2t')
     expect(rep.getCell('N5').value).toBe('8:00') // 実働 9h − 休憩 1h
+  })
+
+  it('支払明細書: 運送保険が0円のとき G24 は空欄になる（枠線は残す）', () => {
+    const data = { ...OOBA_PAYMENT_NOTICE_FIXTURE, insuranceDeduction: 0 }
+    const wb = buildOobaPaymentNoticeWorkbook(data)
+    const ws = wb.getWorksheet('支払明細書')!
+    expect(ws.getCell('G24').value).toBe('')
+    expect(ws.getCell('G24').border?.top?.style).toBe('thin')
   })
 
   it('支払明細書: 立替金明細書は expenseLines が空でも合計行が4行目に0で入る', () => {

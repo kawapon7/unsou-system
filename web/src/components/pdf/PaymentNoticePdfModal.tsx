@@ -50,7 +50,7 @@ export function PaymentNoticePdfModal({
           {data.formatKey === 'ooba' && (
             <ExcelDownloadButton
               fileName={`支払明細書_${contractorName}_${yearMonth}.xlsx`}
-              build={async () => (await import('@/utils/ooba-excel')).buildOobaPaymentNoticeWorkbook(data)}
+              build={async () => (await import('@/utils/ooba-excel')).buildOobaPaymentNoticeWorkbook(data, { includeInternalSheets: canIssue })}
             />
           )}
           {canIssue && (

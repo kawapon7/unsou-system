@@ -89,24 +89,36 @@ export function buildOobaInvoiceWorkbook(data: InvoicePdfData): ExcelJS.Workbook
   const totalRow = 9 + slots
   text(ws, `D${totalRow}`, '小計')
   money(ws, `E${totalRow}`, data.netTotal)
-  text(ws, `D${totalRow + 1}`, '消費税')
-  money(ws, `E${totalRow + 1}`, data.taxAmount)
+  // ⚠️ 行位置は固定（後続の備考・お振込先のセル座標が totalRow 基準のため）。非課税時は
+  //    ラベル・値ともに空文字にして行だけ残す（HTML 側は行ごと非表示にするが、Excel は座標固定のためこちらは空欄にする）。
+  if (data.isTaxable) {
+    text(ws, `D${totalRow + 1}`, '消費税')
+    money(ws, `E${totalRow + 1}`, data.taxAmount)
+  } else {
+    text(ws, `D${totalRow + 1}`, '')
+    text(ws, `E${totalRow + 1}`, '')
+  }
   text(ws, `D${totalRow + 2}`, '合計')
   money(ws, `E${totalRow + 2}`, data.totalAmount)
   ws.getCell(`E${totalRow + 2}`).font = { bold: true }
 
   data.noteLines.forEach((n, i) => { ws.getCell(`A${totalRow + 3 + i}`).value = n })
   const b = totalRow + 5 + data.noteLines.length
-  ws.getCell(`A${b}`).value = 'お振込先'
-  ws.getCell(`A${b}`).font = { bold: true }
-  ws.getCell(`A${b + 1}`).value = `${c.bank.bankName} ${c.bank.bankBranch}　${c.bank.accountType}　${c.bank.accountNumber}`
-  ws.getCell(`A${b + 2}`).value = c.bank.accountHolder
+  if (c.bank.bankName && c.bank.accountNumber) {
+    ws.getCell(`A${b}`).value = 'お振込先'
+    ws.getCell(`A${b}`).font = { bold: true }
+    ws.getCell(`A${b + 1}`).value = `${c.bank.bankName} ${c.bank.bankBranch}　${c.bank.accountType}　${c.bank.accountNumber}`
+    ws.getCell(`A${b + 2}`).value = c.bank.accountHolder
+  }
   ws.getCell(`A${b + 4}`).value = '備考'
 
   return wb
 }
 
-export function buildOobaPaymentNoticeWorkbook(data: PaymentNoticePdfData): ExcelJS.Workbook {
+export function buildOobaPaymentNoticeWorkbook(
+  data: PaymentNoticePdfData,
+  opts?: { includeInternalSheets?: boolean },
+): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook()
   const c = data.company
   const monthLabel = data.noticeMonth.replace(/^(\d{4})年0?(\d+)月分$/, '$2月度')
@@ -133,18 +145,24 @@ export function buildOobaPaymentNoticeWorkbook(data: PaymentNoticePdfData): Exce
   text(m, 'C12', '支払運賃')
   money(m, 'G12', data.laborNet)
   text(m, 'C17', '調整')
-  money(m, 'G17', data.adjustment)
+  // ⚠️ HTML 帳票側は 0 のとき空欄表示（帳票の慣習で「該当なし」に見せる）。Excel も揃える。
+  //    枠線（box）は残すため money() ではなく text() で ''  を入れる。
+  if (data.adjustment === 0) text(m, 'G17', '').alignment = { horizontal: 'right' }
+  else money(m, 'G17', data.adjustment)
   text(m, 'C18', '10%対象小計【①】')
   money(m, 'G18', subtotal10)
   text(m, 'C19', '消費税額（10％）【②】')
   money(m, 'G19', data.laborTax)
   text(m, 'B20', '相殺額')
   text(m, 'C21', `${Math.round(data.deductionRate * 100)}%分`)
-  money(m, 'G21', -data.deduction)
+  if (data.deduction === 0) text(m, 'G21', '').alignment = { horizontal: 'right' }
+  else money(m, 'G21', -data.deduction)
   text(m, 'C24', '運送保険 (非課税）')
-  money(m, 'G24', -data.insuranceDeduction)
+  if (data.insuranceDeduction === 0) text(m, 'G24', '').alignment = { horizontal: 'right' }
+  else money(m, 'G24', -data.insuranceDeduction)
   text(m, 'C27', '相殺額合計【③】')
-  money(m, 'G27', offsetTotal)
+  if (data.deduction === 0 && data.insuranceDeduction === 0) text(m, 'G27', '').alignment = { horizontal: 'right' }
+  else money(m, 'G27', offsetTotal)
   text(m, 'B28', '立替金（高速料金、駐車場代　他　）')
   money(m, 'G28', data.expenseNet)
   text(m, 'B29', 'うち消費税額（10％）')
@@ -230,17 +248,19 @@ export function buildOobaPaymentNoticeWorkbook(data: PaymentNoticePdfData): Exce
   text(x, `F${row}`, '合計')
   money(x, `H${row}`, advTotal)
 
-  // ── 利益表（社内用） ──
-  const p = wb.addWorksheet('利益表')
-  p.getCell('A1').value = '利益表'
-  text(p, 'B3', '作業日数合計')
-  text(p, 'C3', '作業時間合計')
-  text(p, 'D3', '売上（１０％分）')
-  const minutes = data.laborLines.reduce((s, l) => s + (workMinutesFromHHMM(l.startTime, l.endTime, l.breakMinutes) ?? 0), 0)
-  const workDayCount = new Set(data.laborLines.map(l => l.workDate)).size
-  text(p, 'B4', workDayCount)
-  text(p, 'C4', formatHHMM(minutes))
-  money(p, 'D4', Math.round(data.laborLines.reduce((s, l) => s + l.sellingAmount, 0) * 0.1))
+  // ── 利益表（社内用。委託先に渡すワークブックには含めない — includeInternalSheets 時のみ） ──
+  if (opts?.includeInternalSheets) {
+    const p = wb.addWorksheet('利益表')
+    p.getCell('A1').value = '利益表'
+    text(p, 'B3', '作業日数合計')
+    text(p, 'C3', '作業時間合計')
+    text(p, 'D3', '売上（１０％分）')
+    const minutes = data.laborLines.reduce((s, l) => s + (workMinutesFromHHMM(l.startTime, l.endTime, l.breakMinutes) ?? 0), 0)
+    const workDayCount = new Set(data.laborLines.map(l => l.workDate)).size
+    text(p, 'B4', workDayCount)
+    text(p, 'C4', formatHHMM(minutes))
+    money(p, 'D4', Math.round(data.laborLines.reduce((s, l) => s + l.sellingAmount, 0) * 0.1))
+  }
 
   return wb
 }

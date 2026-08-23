@@ -53,16 +53,20 @@ export function OobaInvoiceDocument({ data }: { data: InvoicePdfData }) {
         </tbody>
         <tfoot>
           <tr><td colSpan={4} className="border border-black text-right px-2">小計</td><td className="border border-black text-right px-2">{yen(data.netTotal)}</td></tr>
-          <tr><td colSpan={4} className="border border-black text-right px-2">消費税</td><td className="border border-black text-right px-2">{yen(data.taxAmount)}</td></tr>
+          {data.isTaxable && (
+            <tr><td colSpan={4} className="border border-black text-right px-2">消費税</td><td className="border border-black text-right px-2">{yen(data.taxAmount)}</td></tr>
+          )}
           <tr><td colSpan={4} className="border border-black text-right px-2 font-bold">合計</td><td className="border border-black text-right px-2 font-bold">{yen(data.totalAmount)}</td></tr>
         </tfoot>
       </table>
       {data.noteLines.map((n, i) => <p key={i} className="mt-2">{n}</p>)}
-      <div className="mt-6 border border-black p-2 w-2/3">
-        <p className="font-semibold">お振込先</p>
-        <p>{c.bank.bankName} {c.bank.bankBranch}　{c.bank.accountType}　{c.bank.accountNumber}</p>
-        <p>{c.bank.accountHolder}</p>
-      </div>
+      {c.bank.bankName && c.bank.accountNumber && (
+        <div className="mt-6 border border-black p-2 w-2/3">
+          <p className="font-semibold">お振込先</p>
+          <p>{c.bank.bankName} {c.bank.bankBranch}　{c.bank.accountType}　{c.bank.accountNumber}</p>
+          <p>{c.bank.accountHolder}</p>
+        </div>
+      )}
       <div className="mt-4"><p>備考</p></div>
     </div>
   )

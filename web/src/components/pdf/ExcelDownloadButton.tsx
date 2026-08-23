@@ -19,8 +19,12 @@ export function ExcelDownloadButton({ build, fileName }: { build: () => Promise<
       const wb = await build()
       const buf = await wb.xlsx.writeBuffer()
       const url = URL.createObjectURL(new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }))
-      const a = document.createElement('a'); a.href = url; a.download = safeFileName(fileName); a.click()
-      URL.revokeObjectURL(url)
+      const a = document.createElement('a'); a.href = url; a.download = safeFileName(fileName)
+      // ⚠️ Firefox 等では click() 時に要素が DOM 上にないとダウンロードが発火しないことがある。
+      //    revokeObjectURL もクリック直後だとダウンロード開始前にURLが無効化される場合があるため0msずらす。
+      document.body.appendChild(a)
+      a.click()
+      setTimeout(() => { a.remove(); URL.revokeObjectURL(url) }, 0)
     } catch (e) {
       // ⚠️ ここで握りつぶすと、顧客に渡す書類の生成に失敗してもボタンが黙って止まるだけになる。
       //    利用者が気づけるよう、必ずエラーメッセージを画面に出す。

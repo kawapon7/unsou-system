@@ -43,7 +43,8 @@ export function IssuedDocumentModal({ id, onClose }: { id: string; onClose: () =
             const m = await import('@/utils/ooba-excel')
             return doc.kind === 'invoice'
               ? m.buildOobaInvoiceWorkbook(doc.snapshot as InvoicePdfData)
-              : m.buildOobaPaymentNoticeWorkbook(doc.snapshot as PaymentNoticePdfData)
+              // IssuedDocumentModal は /admin/documents のみで使用（管理者専用画面）。委託先には出さない。
+              : m.buildOobaPaymentNoticeWorkbook(doc.snapshot as PaymentNoticePdfData, { includeInternalSheets: true })
           }}
         />
       ) : null}
