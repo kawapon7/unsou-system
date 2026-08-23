@@ -15,6 +15,8 @@ export const STANDARD_FORMAT_KEY = 'standard'
 
 export const DOCUMENT_FORMATS: Record<string, DocumentFormat> = {
   standard: { key: 'standard', version: 1, label: '標準様式', kinds: ['invoice', 'payment_notice'] },
+  // おおば運送の実物様式（2026-08-23 見本）。描画は components/pdf/formats/ooba/、Excel は utils/ooba-excel.ts
+  ooba:     { key: 'ooba',     version: 1, label: 'おおば運送様式', kinds: ['invoice', 'payment_notice'] },
 }
 
 function supports(f: DocumentFormat | undefined, kind: DocumentKind): f is DocumentFormat {

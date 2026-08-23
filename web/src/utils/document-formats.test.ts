@@ -16,7 +16,21 @@ describe('resolveDocumentFormat', () => {
 
 describe('listDocumentFormatOptions', () => {
   it('種別に対応する様式だけ返す', () => {
-    expect(listDocumentFormatOptions('invoice')).toEqual([{ key: 'standard', label: '標準様式' }])
-    expect(listDocumentFormatOptions('payment_notice')).toEqual([{ key: 'standard', label: '標準様式' }])
+    expect(listDocumentFormatOptions('invoice')).toEqual([
+      { key: 'standard', label: '標準様式' },
+      { key: 'ooba', label: 'おおば運送様式' },
+    ])
+    expect(listDocumentFormatOptions('payment_notice')).toEqual([
+      { key: 'standard', label: '標準様式' },
+      { key: 'ooba', label: 'おおば運送様式' },
+    ])
+  })
+})
+
+describe('ooba 様式', () => {
+  it('ooba 様式は請求書・支払通知書の両方に使える', () => {
+    expect(resolveDocumentFormat('invoice', { companyKey: 'ooba' }).key).toBe('ooba')
+    expect(resolveDocumentFormat('payment_notice', { companyKey: 'ooba' }).key).toBe('ooba')
+    expect(listDocumentFormatOptions('invoice').map(o => o.key)).toContain('ooba')
   })
 })

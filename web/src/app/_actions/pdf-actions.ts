@@ -16,6 +16,8 @@ import { closingRange, computeDueDate } from '@/utils/closing-period'
 import { isQualifiedInvoiceIssuer } from '@/utils/invoice-registration'
 import { getDeductionRate } from '@/utils/transitional-deduction'
 import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
+import { resolveDocumentFormat } from '@/utils/document-formats'
+import { buildOobaSubject, isWorkTypeProject } from '@/utils/ooba-invoice-lines'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -26,6 +28,10 @@ export type InvoicePdfLine = {
   projectName: string
   quantity:    number
   netAmount:   number
+  /** 個数制（per_piece）の本数。日数制は null。おおば様式の「○本」表記に使う */
+  pieceCount:  number | null
+  /** 作業系（デバンニング等）の案件か。おおば様式で「※人員結果は別紙参照」を出す判定 */
+  isWorkType:  boolean
 }
 
 export type InvoicePdfData = {
@@ -42,6 +48,14 @@ export type InvoicePdfData = {
   isTaxable:     boolean
   /** 発行元（自社）情報。DBの自社マスタから取得する */
   company:       CompanyInfo
+  /** 解決済みの様式キー（荷主指定 → 会社標準 → standard） */
+  formatKey:     string
+  /** 'YYYY-MM'。引数をそのまま入れる */
+  yearMonth:     string
+  /** 件名（おおば様式）。例: 'R8．6月度 業務委託費' */
+  subject:       string
+  /** 欄外の備考行 */
+  noteLines:     string[]
 }
 
 export async function fetchInvoicePdfData(
@@ -54,9 +68,9 @@ export async function fetchInvoicePdfData(
 
   const service = createServiceClient()
 
-  const [clientRes, invoiceRes, projectsRes] = await Promise.all([
+  const [clientRes, invoiceRes, projectsRes, companyFormatRes] = await Promise.all([
     service.from('clients')
-      .select('company_name, contact_name, tax_type, tenant_id, closing_day, payment_site')
+      .select('company_name, contact_name, tax_type, tenant_id, closing_day, payment_site, document_format_key')
       .eq('id', clientId).single(),
     // billing-actions.ts は YYYY-MM-01 形式で保存するため DATE 型に合わせる
     service.from('invoices')
@@ -65,13 +79,19 @@ export async function fetchInvoicePdfData(
       .eq('invoice_month', `${yearMonth}-01`)
       .maybeSingle(),
     service.from('projects').select('id, project_name').eq('client_id', clientId),
+    // getCompanyInfo が返す CompanyInfo は document_format_key を持たないため別クエリで引く
+    service.from('companies').select('document_format_key').eq('tenant_id', tenantId).maybeSingle(),
   ])
 
   if (clientRes.error || !clientRes.data || clientRes.data.tenant_id !== tenantId) {
     return { data: null, error: '荷主が見つかりません' }
   }
+  // ⚠️ fail-closed: 様式キーの取得に失敗した状態で PDF を出すと、荷主指定の様式と
+  //    無関係に standard 様式が印字されうる（気づかれにくい誤発行）。ここで止める。
+  if (companyFormatRes.error) return { data: null, error: companyFormatRes.error.message }
 
-  const client   = clientRes.data
+  const client           = clientRes.data
+  const companyFormatKey = companyFormatRes.data?.document_format_key ?? undefined
   const invoice  = invoiceRes.data
   const projects = projectsRes.data ?? []
   const projMap  = new Map(projects.map(p => [p.id, p.project_name]))
@@ -107,12 +127,17 @@ export async function fetchInvoicePdfData(
     ruleMap = buildPriceRuleMap(rules as unknown as PriceRuleRecord[])
   }
 
-  const lines: InvoicePdfLine[] = rawRows.map(r => ({
-    workDate:    r.work_date,
-    projectName: r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）',
-    quantity:    r.piece_count ?? 0,
-    netAmount:   calcWorkAmount(r, r.project_id ? ruleMap.get(r.project_id) : undefined, 'selling'),
-  }))
+  const lines: InvoicePdfLine[] = rawRows.map(r => {
+    const projectName = r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）'
+    return {
+      workDate:    r.work_date,
+      projectName,
+      quantity:    r.piece_count ?? 0,
+      netAmount:   calcWorkAmount(r, r.project_id ? ruleMap.get(r.project_id) : undefined, 'selling'),
+      pieceCount:  r.piece_count ?? null,
+      isWorkType:  isWorkTypeProject(projectName),
+    }
+  })
 
   // 確定済み invoice があればその値を優先（taxCalculator.ts との一致を保証）
   const netTotal    = invoice?.total_tax_excluded ?? lines.reduce((s, l) => s + l.netAmount, 0)
@@ -154,6 +179,10 @@ export async function fetchInvoicePdfData(
       taxAmount,
       totalAmount,
       isTaxable:    client.tax_type !== 'exempt',
+      formatKey:    resolveDocumentFormat('invoice', { clientKey: client.document_format_key, companyKey: companyFormatKey }).key,
+      yearMonth,
+      subject:      buildOobaSubject(yearMonth),
+      noteLines:    lines.some(l => l.isWorkType) ? ['※人員結果は別紙参照'] : [],
     },
     error: null,
   }
@@ -162,10 +191,16 @@ export async function fetchInvoicePdfData(
 // ── 支払通知書PDFデータ ──────────────────────────────────
 
 export type LaborPdfLine = {
-  workDate:    string
-  projectName: string
-  quantity:    number
-  netAmount:   number
+  workDate:      string
+  projectName:   string
+  quantity:      number
+  netAmount:     number
+  /** 勤務報告書シート用。work_records.start_time / end_time / break_minutes */
+  startTime:     string | null
+  endTime:       string | null
+  breakMinutes:  number | null
+  /** 荷主への売上（税抜）。calcWorkAmount(r, rule, 'selling') */
+  sellingAmount: number
 }
 
 export type ExpensePdfLine = {
@@ -195,6 +230,10 @@ export type PaymentNoticePdfData = {
   totalAmount:          number
   /** 発行元（自社）情報。振込先は支払通知書には印字しない */
   company:              CompanyInfo
+  /** 解決済みの様式キー（支払通知書は会社標準のみ） */
+  formatKey:            string
+  /** 手入力調整額だけ（adjustment には自動補正＋手入力が入っている） */
+  manualAdjustment:     number
 }
 
 export async function fetchPaymentNoticePdfData(
@@ -226,7 +265,7 @@ export async function fetchPaymentNoticePdfData(
     // 委託先レコード自身からテナントを引く）
     (service as any).from('contractors').select('name, invoice_registration_type, tenant_id, is_internal').eq('id', contractorId).single(),
     (service as any).from('payment_notices')
-      .select('subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction, insurance_deduction, adjustment_amount')
+      .select('subtotal_registered, tax_registered, subtotal_unregistered, tax_unregistered, deduction_unregistered, subtotal_exempt, total_excluding_tax, total_tax, total_deduction, insurance_deduction, adjustment_amount, manual_adjustment')
       .eq('contractor_id', contractorId)
       .eq('notice_month', from)
       .maybeSingle(),
@@ -274,13 +313,20 @@ export async function fetchPaymentNoticePdfData(
     payRuleMap = buildPriceRuleMap(rules as unknown as PriceRuleRecord[])
   }
 
-  const laborLines: LaborPdfLine[] = laborRows.map(r => ({
-    workDate:    r.work_date,
-    projectName: r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）',
-    quantity:    r.piece_count ?? 0,
-    // 支払通知書は「買値」side。請求書（selling）と取り違えないこと
-    netAmount:   calcWorkAmount(r, r.project_id ? payRuleMap.get(r.project_id) : undefined, 'buying'),
-  }))
+  const laborLines: LaborPdfLine[] = laborRows.map(r => {
+    const rule = r.project_id ? payRuleMap.get(r.project_id) : undefined
+    return {
+      workDate:      r.work_date,
+      projectName:   r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）',
+      quantity:      r.piece_count ?? 0,
+      // 支払通知書は「買値」side。請求書（selling）と取り違えないこと
+      netAmount:     calcWorkAmount(r, rule, 'buying'),
+      startTime:     r.start_time,
+      endTime:       r.end_time,
+      breakMinutes:  r.break_minutes,
+      sellingAmount: calcWorkAmount(r, rule, 'selling'),
+    }
+  })
 
   const expenseLines: ExpensePdfLine[] = (expenseRes.data ?? []).map(r => ({
     expenseDate: r.expense_date,
@@ -312,6 +358,9 @@ export async function fetchPaymentNoticePdfData(
   let insuranceDeduction = Number(extra?.insurance_deduction ?? 0)
   let totalDeduction     = n ? Number(n.total_deduction ?? 0) : 0
   let adjustment         = Number(extra?.adjustment_amount ?? 0)
+  // ⚠️ adjustment には自動補正（税込志向業者の端数補正）＋手入力調整額が合算されている。
+  //    支払通知書に手入力分だけ内訳表示するため別に持つ。
+  let manualAdjustment   = Number((n as { manual_adjustment?: number | null } | null)?.manual_adjustment ?? 0)
   if (!n) {
     const live = await computePaymentNoticeAmounts(service, {
       tenantId:     (contractor as { tenant_id?: string }).tenant_id ?? '',
@@ -328,6 +377,7 @@ export async function fetchPaymentNoticePdfData(
     insuranceDeduction = live.data.insuranceDeduction
     totalDeduction     = live.data.totalDeduction
     adjustment         = live.data.adjustment
+    manualAdjustment   = live.data.manualAdjustment
   }
   // ⚠️ 立替の内訳は合計の確定後に出す。上の !n ブロックで totalEx / totalTax を
   //    正本の値へ差し替えるため、先に計算すると差し替え前の値が残る。
@@ -352,9 +402,18 @@ export async function fetchPaymentNoticePdfData(
   const companyRes = await getCompanyInfo((contractor as any).tenant_id ?? '')
   if (!companyRes.data) return { data: null, error: companyRes.error }
 
+  // getCompanyInfo が返す CompanyInfo は document_format_key を持たないため別クエリで引く。
+  // ⚠️ fail-closed: 取得に失敗した状態で standard 決め打ちにしない。
+  const companyFormatRes = await service
+    .from('companies').select('document_format_key')
+    .eq('tenant_id', (contractor as any).tenant_id ?? '').maybeSingle()
+  if (companyFormatRes.error) return { data: null, error: companyFormatRes.error.message }
+
   return {
     data: {
       company:             companyRes.data,
+      formatKey:            resolveDocumentFormat('payment_notice', { companyKey: companyFormatRes.data?.document_format_key ?? undefined }).key,
+      manualAdjustment,
       contractorName:      contractor.name,
       invoiceRegistration: isQualifiedInvoiceIssuer(contractor.invoice_registration_type) ? 'registered' : 'unregistered',
       noticeMonth:         `${y}年${m}月分`,
