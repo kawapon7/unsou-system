@@ -298,7 +298,7 @@ export async function fetchPaymentNoticePdfData(
     // ⚠️ 承認済みだけを載せる。小計は payment_notices の保存値（承認済みのみ集計）を使うため、
     //    ここで未承認まで明細に出すと「明細に行があるのに小計 0」という文書になる（2026-08-02 修正）。
     service.from('expense_records')
-      .select('expense_date, expense_type, amount_tax_excluded, tax_category')
+      .select('expense_date, expense_type, amount_actual, amount_tax_excluded')
       .eq('contractor_id', contractorId)
       .eq('approval_status', 'approved')
       .gte('expense_date', from).lte('expense_date', to)
@@ -350,7 +350,9 @@ export async function fetchPaymentNoticePdfData(
     expenseDate: r.expense_date,
     expenseType: r.expense_type,
     netAmount:   r.amount_tax_excluded,
-    taxAmount:   r.tax_category === 'taxable_10' ? Math.round(r.amount_tax_excluded * 0.1) : 0,
+    // ⚠️ 税額は tax_category で判定しない（旧コードが 'exclusive' を保存しており 'taxable_10' 判定だと税額0になる）。
+    //    payment-notice-calc.ts と同じく「実費 − 税抜」を正本にする。
+    taxAmount:   Number(r.amount_actual ?? 0) - Number(r.amount_tax_excluded ?? 0),
   }))
 
   // 確定済み notice があればその値を優先（taxCalculator.ts との一致を保証）

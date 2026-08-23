@@ -33,6 +33,7 @@ type ExpenseFormItem = {
   expenseType: string
   amount: string
   remarks: string
+  taxExempt: boolean
 }
 
 const EXPENSE_TYPES = [
@@ -260,7 +261,7 @@ function DayCell({
 // ── 完了報告フォーム（実績＋立替金一体型） ─────────────────────
 
 function newExpenseRow(): ExpenseFormItem {
-  return { key: Math.random().toString(36).slice(2), expenseType: 'toll', amount: '', remarks: '' }
+  return { key: Math.random().toString(36).slice(2), expenseType: 'toll', amount: '', remarks: '', taxExempt: false }
 }
 
 function CompletionFormSheet({
@@ -291,7 +292,7 @@ function CompletionFormSheet({
   function removeExpense(key: string) {
     setExpenses(prev => prev.filter(e => e.key !== key))
   }
-  function updateExpense(key: string, field: keyof Omit<ExpenseFormItem, 'key'>, value: string) {
+  function updateExpense(key: string, field: keyof Omit<ExpenseFormItem, 'key'>, value: string | boolean) {
     setExpenses(prev => prev.map(e => e.key === key ? { ...e, [field]: value } : e))
   }
 
@@ -349,7 +350,7 @@ function CompletionFormSheet({
       for (const exp of expenses) {
         const amount = parseInt(exp.amount, 10)
         if (!isNaN(amount) && amount > 0) {
-          await submitExpense({ contractorId, expenseDate: date, expenseType: exp.expenseType, amountActual: amount, remarks: exp.remarks.trim() })
+          await submitExpense({ contractorId, expenseDate: date, expenseType: exp.expenseType, amountActual: amount, remarks: exp.remarks.trim(), taxExempt: exp.expenseType === 'other' && exp.taxExempt })
         }
       }
     }
@@ -479,6 +480,15 @@ function CompletionFormSheet({
                       placeholder="例: 〇〇IC→△△IC、領収書あり"
                       className="w-full rounded-lg border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-800 placeholder:text-zinc-400 outline-none focus:border-zinc-500" />
                   </div>
+                  {/* 非課税は「その他」のときだけ選べる（高速・駐車場・燃料は常に10%課税） */}
+                  {exp.expenseType === 'other' && (
+                    <label className="flex items-center gap-2 text-xs text-zinc-600">
+                      <input type="checkbox" checked={exp.taxExempt}
+                        onChange={e => updateExpense(exp.key, 'taxExempt', e.target.checked)}
+                        className="h-4 w-4 rounded border-zinc-300" />
+                      非課税（印紙代など）
+                    </label>
+                  )}
                 </div>
               ))}
             </div>
@@ -543,7 +553,7 @@ function CompletionFormSheet({
                     <p className="text-[10px] font-semibold text-blue-400 mb-1">立替金</p>
                     {expenses.filter(e => parseInt(e.amount) > 0).map(e => (
                       <div key={e.key} className="flex justify-between text-xs text-zinc-700">
-                        <span>{EXPENSE_TYPES.find(t => t.value === e.expenseType)?.label}{e.remarks ? `（${e.remarks}）` : ''}</span>
+                        <span>{EXPENSE_TYPES.find(t => t.value === e.expenseType)?.label}{e.expenseType === 'other' && e.taxExempt ? '・非課税' : ''}{e.remarks ? `（${e.remarks}）` : ''}</span>
                         <span className="font-medium">¥{Number(e.amount).toLocaleString()}</span>
                       </div>
                     ))}

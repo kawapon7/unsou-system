@@ -7,6 +7,7 @@ import {
 } from '@google/generative-ai'
 import { createClient }        from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { splitExpenseTax }     from '@/utils/expense-tax'
 import { requireAuth }         from '@/utils/auth'
 import { getCurrentTenantId }  from '@/utils/tenant'
 
@@ -183,7 +184,8 @@ export async function saveVoiceExpense(
 
   const service           = createServiceClient()
   const tenantId          = await getCurrentTenantId()
-  const amountTaxExcluded = Math.round(params.amount / 1.1)
+  // 税内訳は utils/expense-tax.ts が唯一の正本（音声入力は課税固定）
+  const tax               = splitExpenseTax(params.amount)
   const expenseType       = CATEGORY_TO_TYPE[params.category] ?? 'other'
 
   const { error } = await service
@@ -199,8 +201,8 @@ export async function saveVoiceExpense(
       category:            expenseType,
       amount:              params.amount,
       amount_actual:       params.amount,
-      amount_tax_excluded: amountTaxExcluded,
-      tax_category:        'taxable_10',
+      amount_tax_excluded: tax.amountTaxExcluded,
+      tax_category:        tax.taxCategory,
       remarks:             `[VOICE] ${CATEGORY_LABEL[params.category] ?? 'その他'}`,
     })
 

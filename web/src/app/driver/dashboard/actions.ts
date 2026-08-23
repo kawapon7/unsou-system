@@ -1,6 +1,7 @@
 'use server'
 
 import { createClient } from '@/utils/supabase/server'
+import { splitExpenseTax } from '@/utils/expense-tax'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { resolveContractorId, type ContractorLookupClient } from '@/utils/auth'
@@ -26,6 +27,8 @@ export type SubmitExpenseParams = {
   expenseType:  string
   amountActual: number
   remarks:      string
+  /** 非課税の立替（印紙代など）。省略時は10%課税として内訳を計算する */
+  taxExempt?:   boolean
 }
 
 export type AssignedProject = ProjectRow & {
@@ -189,7 +192,8 @@ export async function submitExpense(
 
   const supabase = createServiceClient()
   const tenantId = await getCurrentTenantId()
-  const amountTaxExcluded = Math.round(params.amountActual / 1.1)
+  // 税内訳は utils/expense-tax.ts が唯一の正本（非課税は taxExempt=true）
+  const tax = splitExpenseTax(params.amountActual, params.taxExempt === true)
 
   const { data, error } = await supabase
     .from('expense_records')
@@ -204,8 +208,8 @@ export async function submitExpense(
       category:            params.expenseType,
       amount:              params.amountActual,
       amount_actual:       params.amountActual,
-      amount_tax_excluded: amountTaxExcluded,
-      tax_category:        'exclusive',
+      amount_tax_excluded: tax.amountTaxExcluded,
+      tax_category:        tax.taxCategory,
       approval_status:     'pending',
       remarks:             params.remarks || null,
     })
