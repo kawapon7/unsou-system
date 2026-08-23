@@ -1384,6 +1384,19 @@ web/
 
 ### 5-4. 直近の作業履歴（新しい順）
 
+#### 2026-08-24 その2（devバイパスの requireOwner ガード＋前回残の画面確認2点を完了）
+
+**1. `ALLOW_DEV_AUTH_BYPASS` ガード修正（棚卸しの軽タスク・完了）**
+
+`finalizeInvoiceAndNotice` と `proxyApprovePaymentNotice`（`billing-actions.ts`）が `isDev` のとき `requireOwner()` を丸ごと飛ばしていたのを、**無条件に `requireOwner()` を通す**形に変更。バイパスの合成 owner は `getAuthContext()` が「未ログイン時のみ」返すため、バイパス有効でも**ログイン済みの非オーナーは拒否**される。合成ID用に `utils/auth.ts` へ `DEV_BYPASS_USER_ID` を export し、`approval_history.action_by`（UUID型）へは従来どおり `DEV_ADMIN_UUID` に写像。未使用になった `createClient` import を削除。検証: `tsc --noEmit` 通過・vitest 209件合格・eslint は既存指摘のみ。
+
+**2. 画面確認2点（前回の残作業・完了）** — ローカル Supabase（127.0.0.1:54321）＋dev サーバーで実機確認。
+
+- **完了報告フォームの非課税チェック**: 種別「その他」でのみ「非課税（印紙代など）」が表示され、高速等に戻すと消える。確認画面に「その他・非課税 ¥200」と表示され、送信後の `expense_records` は 高速1,100円→`taxable_10`/税抜1,000、その他非課税200円→`exempt`/税抜200 で正しい。
+- **おおば様式PDFの立替金税額**: driver 側 支払明細PDF（2026-07、tollway `inclusive` 3,200円）で立替金行が**税込3,200円**表示（旧コードなら税抜2,909円になっていた）。「うち消費税額（10％）800」「立替金合計【④】8,800」「差引支給額 135,520」まで様式崩れなし（スクリーンショット確認済み）。
+
+**検証環境メモ**: ログインは password 入力ではなく `auth.admin.generateLink`（magiclink）→ verify URL → `sb-127-auth-token` クッキー手動設定で実施。ローカル auth に `driver1@demo.hibiki.local`（田中一郎に紐付け・`public.users` role=`sub`）を新設し**残置**（次回の driver 画面検証に使える）。テストで作った 8/24 の完了報告・立替金2件・work_record は削除し schedule を `scheduled` に戻して原状復帰。`web/.env.local` は本番向け（`.env.local.prod-backup` と同一・バイパス false）に復元済み。⚠️ 127.0.0.1 オリジンは Next.js の `allowedDevOrigins` 未設定でブロックされるため、dev 検証は `localhost` を使うこと。⚠️ 現 `.env.local` は**本番DBを向いたまま**（8/23 の本番確認の名残）— ローカル開発を再開するときは `.env.local.local-dev` に差し替える。
+
 #### 2026-08-24（軽微残タスク3件の処理＋立替金税内訳の正本化・本番デプロイ済み）
 
 **やったこと（コミット `789862c`・push済み・Workers自動デプロイ success run `32659700172`。DB変更なし）**
@@ -1397,7 +1410,7 @@ web/
 
 **残タスクの棚卸し（2026-08-24時点・次セッション向け）**
 
-- 軽（すぐ着手可）: `ALLOW_DEV_AUTH_BYPASS=true` が代理承認でも `requireOwner()` を飛ばす件のガード（開発時のみの挙動）。
+- ~~軽（すぐ着手可）: `ALLOW_DEV_AUTH_BYPASS=true` が代理承認でも `requireOwner()` を飛ばす件のガード（開発時のみの挙動）。~~ → **2026-08-24 その2で完了**。
 - 中（要ボス判断・確認）: ①請求書採番 `{YYYY}{MM}` を発行日基準→対象月基準にするか ②様式②見本の「①②＝担当者」の読み（配員表と照合） ③`payment_notices.status` の派生値化→段階的廃止。
 - 重・保留: 源泉徴収税の支払通知書反映（列が無い・一覧と金額不一致）／代表者の別アカウント方式（未着手）／控除限度額1億円超・消費税率改正追随（ボス判断で後回し）／旧本番DBのテスト環境化・B社オンボーディング・フィールドテスト後UX（フィードバック待ち）。
 

@@ -27,9 +27,12 @@ export type AuthResult =
  * ⚠️ 認証バイパス（dev専用）: ALLOW_DEV_AUTH_BYPASS=true のときのみ合成 owner を返す。
  * 本番ではこの環境変数を絶対に設定しないこと。proxy.ts のバイパスと挙動を揃えている。
  */
+/** dev バイパス時の合成ユーザーID（UUIDではない。UUID列に書く際は呼び出し側で写像すること） */
+export const DEV_BYPASS_USER_ID = 'dev-bypass'
+
 function devBypassContext(): AuthContext {
   return {
-    userId:       'dev-bypass',
+    userId:       DEV_BYPASS_USER_ID,
     email:        'dev@local',
     role:         'master',
     contractorId: null,

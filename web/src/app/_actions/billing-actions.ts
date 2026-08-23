@@ -1,11 +1,10 @@
 'use server'
 
-import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { calculateInvoiceTax, type TaxItem } from '@/utils/billing/taxCalculator'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { getPaymentNoticeResponseDays, lockableAtFrom } from '@/utils/company'
-import { requireOwner } from '@/utils/auth'
+import { requireOwner, DEV_BYPASS_USER_ID } from '@/utils/auth'
 import { writeInvoice } from '@/utils/invoice-writer'
 import { invoiceLockError } from '@/utils/invoice-lock'
 import {
@@ -405,18 +404,13 @@ export type FinalizeTarget =
 export async function finalizeInvoiceAndNotice(
   target: FinalizeTarget,
 ): Promise<ActionResult> {
-  // 認証チェック（dev専用バイパスは ALLOW_DEV_AUTH_BYPASS=true のときのみ。本番では設定しない）
-  const supabase = await createClient()
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  const isDev = process.env.ALLOW_DEV_AUTH_BYPASS === 'true'
-  if ((authErr || !user) && !isDev) return { data: null, error: '認証が必要です' }
-  if (!isDev) {
-    const __owner = await requireOwner()
-    if (!__owner.ok) return { data: null, error: __owner.error }
-  }
-  // dev環境のフォールバック: admin@hibiki.com のUUID（approval_history.action_by はUUID型）
+  // ⚠️ dev バイパス（ALLOW_DEV_AUTH_BYPASS=true）でも requireOwner は飛ばさない。
+  //    バイパスは「未ログイン時に合成 owner を返す」だけで、ログイン済みの非オーナーは拒否される。
+  const __owner = await requireOwner()
+  if (!__owner.ok) return { data: null, error: __owner.error }
+  // dev バイパスの合成IDは UUID ではないため、approval_history.action_by（UUID型）用に admin@hibiki.com のUUIDへ写す
   const DEV_ADMIN_UUID = '33259c12-e46b-4ebd-a87c-cf50682729c4'
-  const userId = user?.id ?? DEV_ADMIN_UUID
+  const userId = __owner.ctx.userId === DEV_BYPASS_USER_ID ? DEV_ADMIN_UUID : __owner.ctx.userId
 
   const service = createServiceClient()
   const opts = {
@@ -449,16 +443,11 @@ export async function finalizeInvoiceAndNotice(
 export async function proxyApprovePaymentNotice(
   params: ProxyApprovalParams,
 ): Promise<ActionResult> {
-  const supabase = await createClient()
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  const isDev = process.env.ALLOW_DEV_AUTH_BYPASS === 'true'
-  if ((authErr || !user) && !isDev) return { data: null, error: '認証が必要です' }
-  if (!isDev) {
-    const __owner = await requireOwner()
-    if (!__owner.ok) return { data: null, error: __owner.error }
-  }
+  // ⚠️ dev バイパスでも requireOwner は飛ばさない（finalizeInvoiceAndNotice と同じ理由）
+  const __owner = await requireOwner()
+  if (!__owner.ok) return { data: null, error: __owner.error }
   const DEV_ADMIN_UUID = '33259c12-e46b-4ebd-a87c-cf50682729c4'
-  const userId = user?.id ?? DEV_ADMIN_UUID
+  const userId = __owner.ctx.userId === DEV_BYPASS_USER_ID ? DEV_ADMIN_UUID : __owner.ctx.userId
 
   // 入力検証: 3項目とも必須。空メモの代理承認は受け付けない
   if (!CONFIRMATION_METHODS.includes(params.confirmationMethod)) {
