@@ -75,3 +75,25 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=dummy
 
 データ部分は空・エラー表示になるが、レイアウト・配色・タブ切替の確認には十分。
 ⚠️ `ALLOW_DEV_AUTH_BYPASS=true` は開発専用。この `.env.local` をコミットしないこと。
+
+## 4. Claude Code を mini で動かして Air から操作する（2026-08-23 追記）
+
+画面共有ではなく、**mini 上の tmux の中で CLI 版 Claude Code を動かし、Air のターミナルから操作する**。文字はローカル描画なので解像度・色の問題が出ない。
+
+```bash
+# Air から。tmux セッション hibiki に入る（無ければ作る）。Claude は mini で動き続ける
+ssh mini -t '/opt/homebrew/bin/tmux new -A -s hibiki'
+```
+
+- 抜けるときは **`Ctrl-b` → `d`**（デタッチ）。`exit` / `Ctrl-d` はセッションごと消えるので使わない
+- 同じリポジトリで CLI 版とデスクトップ版の Claude を**同時に動かさない**（互いの編集を上書きする）
+- mini の `~/.tmux.conf`（設定済み）: `set -g mouse on` / `set -g bell-action none` / `set -g history-limit 50000`
+
+### ベルが鳴り続ける（キンコンカンコン）ときの原因と対処
+1. **スクロールやカーソル操作で鳴る** → Claude Code が有効にしたマウス追跡モードの残骸。SSH 切断後もターミナルが覚えていてマウスイベントをシェルに送り、zsh がビープする。即時対処は Air 側で `reset`。再発防止は tmux の `mouse on`（tmux がイベントを消費する）と Air の `~/.zshrc` に `setopt NO_BEEP`
+2. **放置中に定期的に鳴る** → Claude Code の要注目通知。`claude config set --global preferredNotifChannel notifications_disabled` で止まる（許可待ちで止まっている可能性が高いので、放置作業は許可プロンプトが出ない設定にしておく）
+
+### 画面共有が必要なとき（Simulator・Browser ペインなど）
+- macOS「画面共有」の**高パフォーマンスモード**（両方 Apple silicon・mini は macOS 26.5 で条件充足）は Air と同じ解像度の仮想ディスプレイを作るので、mini の 1080p モニタに縛られず文字が読める。ただし**ポインタ消失・メニューの描き残し**が既知の荒さ（`Esc`・デスクトップクリック・表示モードの切替で再描画）
+- GUI 操作時間が長いなら Jump Desktop（Fluid）への乗り換えが定番の解決策
+- Warp ターミナルは tmux 内では利点がほぼ無い（ブロック表示・補完・AI が無効になる）ため導入見送り
