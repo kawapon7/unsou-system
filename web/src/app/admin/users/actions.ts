@@ -92,10 +92,14 @@ export async function createAdminUser(
   })
   if (verifyErr) return { data: null, error: 'パスワードが正しくありません' }
 
+  // ⚠️ 2026-08-23 P0: 新規ユーザーは作成時に所属テナントを app_metadata と users.tenant_id の両方に書く。
+  //    どちらも本人は書き換えられない（service_role 専用）。これが無いと getCurrentTenantId() が throw する。
+  const tenantId = await getCurrentTenantId()
   const { data: authData, error: authErr } = await db.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
+    app_metadata: { tenant_id: tenantId },
   })
   if (authErr) return { data: null, error: authErr.message }
 
@@ -103,6 +107,7 @@ export async function createAdminUser(
     id: authData.user.id,
     email,
     role: 'master',
+    tenant_id: tenantId,
   })
   if (pubErr) {
     await db.auth.admin.deleteUser(authData.user.id)
@@ -131,19 +136,22 @@ export async function createDriverUser(
     .maybeSingle()
   if (cErr || !contractor) return { data: null, error: '委託先が見つかりません' }
 
-  // auth ユーザー作成
+  // auth ユーザー作成（所属テナントを app_metadata に焼き込む。2026-08-23 P0）
   const { data: authData, error: authErr } = await db.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
+    app_metadata: { tenant_id: tenantId },
   })
   if (authErr) return { data: null, error: authErr.message }
 
-  // public.users に登録
+  // public.users に登録（tenant_id と contractor_id も同時に確定させる）
   const { error: pubErr } = await db.from('users').insert({
     id: authData.user.id,
     email,
     role: 'sub',
+    tenant_id: tenantId,
+    contractor_id: contractorId,
   })
   if (pubErr) {
     await db.auth.admin.deleteUser(authData.user.id)

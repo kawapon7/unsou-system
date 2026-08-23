@@ -39,4 +39,7 @@ yarn-debug.log*
 .claude/settings.local.json
 
 # 実データ（口座情報・角印・従業員実名を含む。Git管理下に置かない）
-ooba/
+# ⚠️ ルート直下限定。無印の "ooba/" だと web/src/components/pdf/formats/ooba/（ソースコード）まで
+#    誤って無視してしまうため /ooba/ に絞る（2026-08-23 Task 6 で発覚）。
+/ooba/
+/oobaunsou_mihon/

@@ -177,6 +177,7 @@ export type Database = {
           company_name: string
           contact_name: string | null
           created_at: string
+          document_format_key: string | null
           email: string | null
           has_invoice: boolean
           id: string
@@ -205,6 +206,7 @@ export type Database = {
           company_name: string
           contact_name?: string | null
           created_at?: string
+          document_format_key?: string | null
           email?: string | null
           has_invoice?: boolean
           id?: string
@@ -233,6 +235,7 @@ export type Database = {
           company_name?: string
           contact_name?: string | null
           created_at?: string
+          document_format_key?: string | null
           email?: string | null
           has_invoice?: boolean
           id?: string
@@ -260,9 +263,11 @@ export type Database = {
           bank_branch: string | null
           bank_name: string | null
           created_at: string
+          document_format_key: string
           email: string | null
           fiscal_year_end_month: number | null
           id: string
+          invoice_number_format: string
           invoice_reg_number: string | null
           name: string
           payment_notice_response_days: number
@@ -280,9 +285,11 @@ export type Database = {
           bank_branch?: string | null
           bank_name?: string | null
           created_at?: string
+          document_format_key?: string
           email?: string | null
           fiscal_year_end_month?: number | null
           id?: string
+          invoice_number_format?: string
           invoice_reg_number?: string | null
           name: string
           payment_notice_response_days?: number
@@ -300,9 +307,11 @@ export type Database = {
           bank_branch?: string | null
           bank_name?: string | null
           created_at?: string
+          document_format_key?: string
           email?: string | null
           fiscal_year_end_month?: number | null
           id?: string
+          invoice_number_format?: string
           invoice_reg_number?: string | null
           name?: string
           payment_notice_response_days?: number
@@ -327,6 +336,7 @@ export type Database = {
           created_at: string
           email: string
           has_withholding: boolean
+          apply_transport_insurance: boolean
           is_internal: boolean
           id: string
           invoice_number: string | null
@@ -357,6 +367,7 @@ export type Database = {
           created_at?: string
           email: string
           has_withholding?: boolean
+          apply_transport_insurance?: boolean
           is_internal?: boolean
           id?: string
           invoice_number?: string | null
@@ -387,6 +398,7 @@ export type Database = {
           created_at?: string
           email?: string
           has_withholding?: boolean
+          apply_transport_insurance?: boolean
           is_internal?: boolean
           id?: string
           invoice_number?: string | null
@@ -421,6 +433,60 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      document_history: {
+        Row: {
+          action_by: string
+          action_type: string
+          created_at: string
+          id: string
+          issued_document_id: string
+          reason: string | null
+          tenant_id: string
+        }
+        Insert: {
+          action_by: string
+          action_type: string
+          created_at?: string
+          id?: string
+          issued_document_id: string
+          reason?: string | null
+          tenant_id: string
+        }
+        Update: {
+          action_by?: string
+          action_type?: string
+          created_at?: string
+          id?: string
+          issued_document_id?: string
+          reason?: string | null
+          tenant_id?: string
+        }
+        Relationships: []
+      }
+      document_sequences: {
+        Row: {
+          kind: string
+          last_no: number
+          period_key: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          kind: string
+          last_no?: number
+          period_key: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          kind?: string
+          last_no?: number
+          period_key?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       driver_project_assignments: {
         Row: {
@@ -650,6 +716,75 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      issued_documents: {
+        Row: {
+          cancel_reason: string | null
+          cancelled_at: string | null
+          cancelled_by: string | null
+          contractor_id: string | null
+          created_at: string
+          document_date: string
+          document_number: string
+          format_key: string
+          format_version: number
+          id: string
+          issued_at: string
+          issued_by: string
+          kind: string
+          party_name: string
+          snapshot: Json
+          source_id: string
+          status: string
+          superseded_by: string | null
+          tenant_id: string
+          total_amount: number
+        }
+        Insert: {
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          contractor_id?: string | null
+          created_at?: string
+          document_date: string
+          document_number: string
+          format_key: string
+          format_version: number
+          id?: string
+          issued_at?: string
+          issued_by: string
+          kind: string
+          party_name: string
+          snapshot: Json
+          source_id: string
+          status?: string
+          superseded_by?: string | null
+          tenant_id: string
+          total_amount: number
+        }
+        Update: {
+          cancel_reason?: string | null
+          cancelled_at?: string | null
+          cancelled_by?: string | null
+          contractor_id?: string | null
+          created_at?: string
+          document_date?: string
+          document_number?: string
+          format_key?: string
+          format_version?: number
+          id?: string
+          issued_at?: string
+          issued_by?: string
+          kind?: string
+          party_name?: string
+          snapshot?: Json
+          source_id?: string
+          status?: string
+          superseded_by?: string | null
+          tenant_id?: string
+          total_amount?: number
+        }
+        Relationships: []
       }
       notification_logs: {
         Row: {
@@ -1163,6 +1298,7 @@ export type Database = {
           email: string
           id: string
           role: string
+          tenant_id: string | null
         }
         Insert: {
           contractor_id?: string | null
@@ -1170,6 +1306,7 @@ export type Database = {
           email: string
           id: string
           role: string
+          tenant_id?: string | null
         }
         Update: {
           contractor_id?: string | null
@@ -1177,6 +1314,7 @@ export type Database = {
           email?: string
           id?: string
           role?: string
+          tenant_id?: string | null
         }
         Relationships: [
           {
@@ -1281,7 +1419,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      next_document_sequence: {
+        Args: { p_kind: string; p_period_key: string; p_tenant_id: string }
+        Returns: number
+      }
     }
     Enums: {
       [_ in never]: never

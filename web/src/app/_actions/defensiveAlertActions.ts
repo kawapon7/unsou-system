@@ -245,11 +245,13 @@ export async function reviewThresholdRecord(
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const db = createServiceClient() as any
+  const tenantId = await getCurrentTenantId()  // ⚠️ 2026-08-23 P1: id だけの UPDATE はテナント跨ぎになる
 
   const { error } = await db
     .from(table)
     .update({ status: 'approved' })
     .eq('id', id)
+    .eq('tenant_id', tenantId)
     .eq('status', 'pending_review')
 
   if (error) return { data: null, error: error.message }

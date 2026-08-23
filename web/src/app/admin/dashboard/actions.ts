@@ -101,6 +101,7 @@ export async function fetchCashflowSummary(
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
+  const tenantId = await getCurrentTenantId()  // ⚠️ 2026-08-23 P1: 全クエリをテナントで絞る
 
   let invoiceFilter: { from: string; to: string }
   let noticeFilter:  { from: string; to: string }
@@ -121,20 +122,24 @@ export async function fetchCashflowSummary(
       ? supabase
           .from('invoices')
           .select('status, total_amount')
+          .eq('tenant_id', tenantId)
           .eq('invoice_month', toDbMonth(refDate.slice(0, 7)))
       : supabase
           .from('invoices')
           .select('status, total_amount')
+          .eq('tenant_id', tenantId)
           .gte('due_date', invoiceFilter.from)
           .lte('due_date', invoiceFilter.to),
     period === 'month'
       ? supabase
           .from('payment_notices')
           .select('total_amount, adjustment_amount, approval_status')
+          .eq('tenant_id', tenantId)
           .eq('notice_month', toDbMonth(refDate.slice(0, 7)))
       : supabase
           .from('payment_notices')
           .select('total_amount, adjustment_amount, approval_status')
+          .eq('tenant_id', tenantId)
           .gte('created_at', `${noticeFilter.from}T00:00:00`)
           .lte('created_at', `${noticeFilter.to}T23:59:59`),
   ])
@@ -177,10 +182,12 @@ export async function fetchTimelineIn(
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
+  const tenantId = await getCurrentTenantId()  // ⚠️ 2026-08-23 P1: 全クエリをテナントで絞る
 
   let query = supabase
     .from('invoices')
     .select('id, status, total_amount, due_date, clients(company_name)')
+    .eq('tenant_id', tenantId)
 
   if (period === 'month') {
     query = query.eq('invoice_month', toDbMonth(refDate.slice(0, 7))) as typeof query
@@ -216,10 +223,12 @@ export async function fetchTimelineOut(
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
+  const tenantId = await getCurrentTenantId()  // ⚠️ 2026-08-23 P1: 全クエリをテナントで絞る
 
   let query = supabase
     .from('payment_notices')
     .select('id, total_amount, adjustment_amount, approval_status, created_at, contractors(name)')
+    .eq('tenant_id', tenantId)
 
   if (period === 'month') {
     query = query.eq('notice_month', toDbMonth(refDate.slice(0, 7))) as typeof query
@@ -256,10 +265,12 @@ export async function fetchAlerts(
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
+  const tenantId = await getCurrentTenantId()  // ⚠️ 2026-08-23 P1: 全クエリをテナントで絞る
 
   const { count } = await supabase
     .from('invoices')
     .select('id', { count: 'exact', head: true })
+    .eq('tenant_id', tenantId)
     .eq('invoice_month', toDbMonth(yearMonth))
     .eq('status', 'draft')
 
@@ -275,16 +286,19 @@ export async function fetchMonthlyTrend(): Promise<ActionResult<MonthlyTrendRow[
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
   const supabase = createServiceClient()
+  const tenantId = await getCurrentTenantId()  // ⚠️ 2026-08-23 P1: 全クエリをテナントで絞る
   const months = pastMonths(12)
 
   const [invoiceRes, noticeRes] = await Promise.all([
     supabase
       .from('invoices')
       .select('invoice_month, status, total_amount')
+      .eq('tenant_id', tenantId)
       .in('invoice_month', months.map(toDbMonth)),
     supabase
       .from('payment_notices')
       .select('notice_month, total_amount')
+      .eq('tenant_id', tenantId)
       .in('notice_month', months.map(toDbMonth)),
   ])
 

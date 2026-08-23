@@ -468,6 +468,9 @@
 13. `billing_records`（課金管理）
 14. `schedules`（予定管理・入力遅延アラート検知元）
 15. `notification_logs`（催促・監査履歴ログ・不変ログ）
+16. `issued_documents`（発行控え。請求書・支払通知書の確定発行時スナップショット＋様式キー/版＋番号。取消以外の UPDATE と DELETE はトリガで禁止。2026-08-23・**本番未適用**）
+17. `document_history`（発行・取消・再発行の不変ログ。INSERT のみ。2026-08-23・**本番未適用**）
+18. `document_sequences`（採番カウンタ。`next_document_sequence()` で原子的に進める。service_role 専用。2026-08-23・**本番未適用**）
 
 #### Server Actions 配置（v_2_1追加）
 * `web/src/app/_actions/scheduleActions.ts` — `getMissingInputs` / `updateScheduleStatus` / `logNotification` / `fetchSchedules` / `upsertSchedule`
@@ -1290,6 +1293,7 @@ web/
 | ✅ 完了 2026-07-01 | main統合 | `fix/p0-security-hardening` を main へマージ済み（`eb749a5`）。Workers移行修正は `bf648f4` |
 | ✅ 完了 2026-07-02 | superpowers / context-mode プラグイン復旧 | CLAUDE.mdのスキル宣言可視化ルール修正＋`~/.claude/settings.json` の `enabledPlugins` を両方 `true` に修正。詳細は5-4参照 |
 | ✅ 完了 2026-07-02 | security-reviewスキルによるP0-P2セキュリティ監査・修正 | 認可ガード欠落・クロステナントIDOR等7件修正（`a7d937d`）。詳細は5-4参照 |
+| 🔄 実装済み・未マージ 2026-08-23 | ✅ 様式② **導入先ごとの帳票様式（請求書・支払明細書）再現** | **`feat/document-issuance-foundation` ブランチで実装完了・本番未適用。見本突合（差引支給額245,960）一致確認済み。同日夜にローカル Supabase で画面検証済み、実物（`oobaunsou_mihon/`）と請求書・本票の体裁を合わせ、印影（`companies.seal_image`、マイグレーション `20260824010000`）も実装（§5-4 の 6〜8 参照。本番適用は 3 本）。** 様式キー `ooba`（`utils/document-formats.ts`）。運送保険を委託先別ON/OFF化（`contractors.apply_transport_insurance`、マイグレーション `20260824000000_contractors_apply_transport_insurance.sql`、default true、列欠落時はfail-closed）。おおば請求書/支払通知書（本票＋勤務報告書＋作業明細支払書＋立替金明細書の4ページ、`components/pdf/formats/ooba/`）とExcel出力（`utils/ooba-excel.ts`、5シート・数式なし・ブラウザ生成）。**本番適用手順（1つずつ・順番厳守。`main`へのpushは`.github/workflows/deploy.yml`が`web/`変更を検知して自動デプロイするため「merge」は「deploy」と同義）**: ⓪未適用なら先に土台①`20260823150000`・RLS P0`20260823180000`を適用 ①SQL Editorで`20260824000000_contractors_apply_transport_insurance.sql`全文実行 ②`schema_migrations`に手動INSERT ③`git checkout main && git merge --no-ff feat/document-issuance-foundation && git push`（**push時点で自動デプロイ。必ず①②の後**） ④委託先マスタで作業系委託先の「運送保険」チェックを外す ⑤おおばテナントの自社情報で様式を「おおば運送様式」に変更 ⑥画面一巡確認（未実施・ログイン要、手順は `task-9-report.md`/`task-11-report.md`）。⚠️順番を逆にすると`apply_transport_insurance`列が無くて支払通知書の計算が全停止（ダッシュボードも空白）。既知の制限: 走行距離列なし／作業系判定は案件名ベース（次版で`projects`カテゴリ列化）／人員結果表（別紙）は次版／相殺額ラベルは適格事業者でも「0%分」表示／明細シート合計は行合計・本票はDB値のため`work_records`後修正でズレ得る。詳細 `docs/superpowers/plans/2026-08-23-client-format-documents-handover.md` |
 | ⏸ 未着手 2026-08-22 | **代表者の現場稼働対応（別アカウント方式）** | **方式確定: ロール切替UIは作らず、代表者本人を委託先登録した別メールの子分アカウントでドライバー画面にログインする。** 残タスク=①`contractors` に内部/外部の区分列（追加前に既存列・CHECKを確認）②支払通知書生成・5大アラート・経過措置計算から内部を除外 ③代表者用の委託先＋子分アカウントを本番で作成（運用作業）。⚠️①②が入るまで代表者担当の案件で通知書を確定しない（外注費として載る）。税務根拠 `docs/research/2026-08-22-owner-driver-tax-treatment.md`／計画 `docs/superpowers/plans/2026-08-22-owner-driver-handover.md` |
 | ✅ 完了 2026-07-02 | admin@hibiki.com パスワード不明問題の解消 | Supabase Admin API（service_role）で直接パスワード更新。詳細は5-4参照 |
 | ✅ 完了 2026-07-06 | 本番ユーザー作成・実ログイン確認 | master(`kawapon7+hibiki@gmail.com`)・driver(`kawapon7+driver@gmail.com`)とも実ログイン確認済み。この過程で権限誤判定の重大バグを発見・修正（詳細は5-4参照） |
@@ -1379,6 +1383,40 @@ web/
 | 本番 tenant_id 設定 | 🔲 未整備 | |
 
 ### 5-4. 直近の作業履歴（新しい順）
+
+#### 2026-08-23（帳票様式再現の要件定義／リモート開発環境の整備）
+
+1. **導入先ごとの帳票様式（請求書・支払明細書）再現機能の要件をボスと合意し、要件定義を作成**（`docs/superpowers/specs/2026-08-23-client-format-documents-design.md`）。合意5点: ①PDF+Excel 両方（スプレッドシートは .xlsx 経由）②様式は導入先ごと＋荷主ごと（未設定は標準様式）③束ね方・呼び名・経費/控除の扱いは出力側で定義、DB計算は1本のまま ④印鑑・ロゴは会社設定に画像登録（Storage でテナント隔離）⑤1社目はおおば運送の実物、全パターンの作り込みはしない。⚠️**Excel→PDF の自動変換は不可**（Cloudflare Workers 上に Excel/LibreOffice が無い）。PDF は様式ごとに HTML を1回組む。法的要件（インボイス記載事項の補完・電子帳簿保存法の発行控え保存）を様式より先の土台として位置づけた。**実装は未着手**。実物（雛形 Excel・見本）の入手待ち。
+2. **実物様式の所在を確認**: `HANDOVER_MASTER.md` 旧記述「`ooba/`（gitignore 済み・実データ）の実請求書と実支払明細書で裏取り済み」に該当。`ooba/` は `.gitignore:42` で除外されており **Mac mini には存在しない**（GitHub を経由しないため、作業した機械＝ICEBREAKER 側にのみある見込み）。リポジトリ・iCloud・Google Drive（kawapon7）・Gmail には該当ファイル無し。mini へは `scp -r ~/dev/unsou-system/ooba mini:~/dev/unsou-system/` で持ち込む（gitignore 済みなのでコミットに混ざらない）。
+3. **リモート開発環境（Air→mini）の整備**: SSH+tmux で CLI 版 Claude Code を mini で動かす運用に決定。`docs/REMOTE_DEV_CHECK.md` に tmux 運用・ベル暴走の原因と対処・高パフォーマンス画面共有の所見を追記。tmux.conf は `mouse on` / `bell-action none` / `history-limit 50000`。Warp 導入は tmux 内では利点なしと判断し見送り。
+
+4. **（同日・別セッション）帳票発行の土台①を実装（ブランチ `feat/document-issuance-foundation`・本番DB未適用・画面未検証）**。見本 Excel 未着のため、様式に依存しない土台から先行（ボス指示）。計画 `docs/superpowers/plans/2026-08-23-document-issuance-foundation.md`。
+   - DB: `supabase/migrations/20260823150000_document_issuance_foundation.sql` — `companies.invoice_number_format`（既定 `INV-{YYYY}{MM}-{SEQ:4}`）/ `companies.document_format_key` / `clients.document_format_key`、`issued_documents`・`document_history`・`document_sequences`、関数 `next_document_sequence`。RLS は owner SELECT＋ドライバー本人の支払通知書控え SELECT のみ、書き込みは service_role。
+   - 純粋関数: `utils/document-number.ts`（採番書式 `{YYYY}{YY}{MM}{DD}{FY}{CLIENT}{SEQ:n}`、連番リセット単位はトークンから決定）、`utils/document-formats.ts`（様式レジストリ・荷主→会社→standard 解決・版番号）、`utils/document-search.ts`（検索条件正規化・型）。各 vitest あり。
+   - Server Actions: `_actions/document-actions.ts` — `issueInvoiceDocument` / `issuePaymentNoticeDocument` / `cancelIssuedDocument` / `reissueDocument` / `listIssuedDocuments` / `getIssuedDocument` / `getActiveIssuedDocumentForSource`。発行条件: 請求書は `status in (issued, paid)`、支払通知書は `approval_status='approved'` or `locked`。**invoices / payment_notices は書かない**。
+   - 設計判断: 控えの実体は「発行時スナップショット JSON＋様式キー・版」。PDF はブラウザ印刷でサーバにファイルが無いため Storage は使わない（印影・Excel ファイル保存は計画②③）。再発行は「取消→現在データで新番号」。guard トリガが取消済み行の再 UPDATE を拒否するため `superseded_by` 列は未使用（新旧対応は `document_history.reason` に残す）。
+   - UI: 設定>自社情報に「請求書番号の書式」「標準の請求書様式」。請求書/支払通知書 PDF モーダルに「確定発行（控え保存）」（`canIssue` を管理画面からのみ渡す）。`/admin/documents` 発行控え一覧（種別・相手先・発行日・金額で検索、取消・再発行、当時の様式で再表示）。`pdf-actions.ts` の請求書番号は控えがあればその番号、無ければ従来番号＋「(未発行)」。
+   - 検証: tsc / vitest 173 / build 通過。**DB 未適用のため画面動作は未検証**（→ 同日夜の 6 でローカル検証済み）。適用手順は `docs/superpowers/plans/2026-08-23-client-format-documents-handover.md`。
+   - 計画③へ送った項目: 端数処理の荷主別設定、印影・ロゴ（Storage）、採番書式の種別分離（現状は請求書・支払通知書が同じ書式・別カウンタ）。
+
+5. **（同日夜・続き）様式②「おおば運送様式」を実装（同ブランチ・本番未適用・画面未検証 → 6〜8 で検証・体裁合わせ済み。本番適用のマイグレーションは 8 のとおり 3 本）**。様式キー `ooba`（`utils/document-formats.ts`）。運送保険料の委託先別ON/OFF（`contractors.apply_transport_insurance`、マイグレーション `20260824000000_contractors_apply_transport_insurance.sql`、default true、計算側は列欠落時fail-closed）。請求書/支払通知書のPDF（本票＋勤務報告書＋作業明細支払書＋立替金明細書の4ページ、`components/pdf/formats/ooba/OobaInvoiceDocument.tsx`・`OobaPaymentNoticeDocument.tsx`）とExcel（`utils/ooba-excel.ts`、ExcelJS・5シート・数式なし・`ExcelDownloadButton.tsx`でブラウザ生成）。案件別集約は `utils/ooba-invoice-lines.ts`（単価＝金額÷日数、件名は令和年月表記、作業系判定は案件名の「作業/デバンニング/荷役」）。見本（坂田 2025-11）との数値突合をvitestで実施し差引支給額245,960が一致（`payment-notice-totals.test.ts`）。**画面確認は次回ログイン時**（手順は `task-9-report.md`/`task-11-report.md`）。**本番適用は順番厳守**: ①（未適用なら先に土台①・RLS P0のマイグレーションを適用）②SQL Editorで`20260824000000`全文実行→③`schema_migrations`にINSERT→④`main`へmerge＆push（**pushで自動デプロイ**。①②③より後でないと`apply_transport_insurance`列が無く支払通知書の計算が全停止）→⑤委託先マスタでの運送保険チェック調整→⑥自社情報での様式切替。詳細・既知の制限は `docs/superpowers/plans/2026-08-23-client-format-documents-handover.md`。
+
+6. **（同日夜・Mac mini）帳票発行土台①＋おおば様式②をローカル Supabase で画面検証し、バグ1件を修正（`980d3b2`）**。
+   - **検証環境**: Docker Desktop を新規導入し `supabase start`（63本のマイグレーション全適用）。`web/.env.local` をローカル向けに書換え（本番向けは `web/.env.local.prod-backup` に退避・gitignore 済）。**⚠️本番に戻すときは backup を `.env.local` に戻して dev サーバーを再起動する。** テナント＝`create-tenant.mjs`（`admin@hibiki.com` / ローカル専用PW）、デモ＝`seed-demo-full.mjs` を一時コピーで投入。
+   - **確認できたこと**: 自社情報の新項目（採番書式・標準様式）保存／請求書の確定→PDFモーダルで「(未発行)」→確定発行で `INV-202608-0001` 採番／発行控え一覧の表示・再発行（0001取消→0002・`document_history` に新旧対応）／様式 `ooba` で支払通知書4ページ・請求書の描画／Excel ボタンで xlsx Blob 生成（11KB）／支払通知書の確定発行 `PN-202608-0002`（様式 ooba v1）。
+   - **修正したバグ**: 支払通知書の確定発行が `issued_documents_tenant_id_document_number_key` で失敗。請求書と同じ書式を共用していたため番号が衝突（請求書を先に発行すると必ず再現）。支払通知書は固定書式 `PN-{YYYY}{MM}-{SEQ:4}` に分離（設定化は計画③）。tsc 0・vitest 204。
+   - **要ボス判断（未対応）**: ①採番の `{YYYY}{MM}` は**発行日基準**（7月分の請求書が `INV-202608-…`）。対象月基準にしたいなら書式トークン追加が必要 ②失敗した発行でも連番が消費され欠番が出る（採番RPCがINSERTと別トランザクション）③標準様式の請求書PDFで時間制案件の数量が 0 と出る（プレビューは 8）④おおば請求書で個建て案件が「○本」ごとに別行に分かれる（実物と照合要）⑤立替金内訳に `tollway` が英語コードのまま出る。
+   - **環境の発見（引き継ぎ）**: ⓐ `seed-demo-full.mjs` は F0 以前の仕様で `price_rules` / `project_payees` / `payment_notices`（2箇所）に `tenant_id` が無く、`TENANT_ID` も `'local-dev'` 固定。ローカル用に直すなら env から uuid を受ける形にする ⓑ **PG17 のローカルイメージでは `postgres` ロールの既定権限が API ロールに付かず**、`20260616` の GRANT 以降に作ったテーブル7つ（`tenants`・`issued_documents` 等）に `service_role`/`authenticated` 権限が無かった。ローカルでは手動 GRANT で回避。本番は旧既定権限で自動付与されているが、**新本番DB構築時は GRANT を含むマイグレーションの追加を検討**（`schema-fingerprint.sql` の照合対象に権限は含まれない）。
+
+7. **（同日夜・続き）おおば様式の請求書を実物 PDF のレイアウトで再現（`4b4294c`）**。実物は Mac mini の `oobaunsou_mihon/`（gitignore 済・請求書は PDF のみ、明細書は xlsx）。見本＝2026-06 エス.アール.シー宛。
+   - 明細は**担当者（委託先）ごとに①②…**を振り、担当者×案件×本数で束ねる（`InvoicePdfLine.contractorName` を追加。旧スナップショットは担当者なしの1グループに束ねる互換あり）。並びは作業系ブロック（担当者ごとに空行区切り）→「※人員結果は別紙参照」→非作業系、最低17行。PDF/Excel とも7列（月度｜①②｜摘要｜数量[日]｜単価｜金額）・水色ヘッダー・小計/消費税/合計・お振込先・備考枠。ooba v1 は本番未リリースのため版番号は 1 のまま差し替え。vitest 206 passed。ローカル画面で見本と同等のレイアウトを確認。
+   - **要確認（ボス）**: ①見本の①②が「担当者」を指すという読みで実装した（配員表と照合要）②印影（社判）は未対応＝計画③の画像登録待ち ③FAX は `companies` に列が無いので出していない（必要なら列追加）。
+
+8. **（同日夜・続き）支払明細書を見本 xlsx の体裁に合わせ、印影（社判）を実装（`c52bd78`）**。
+   - 本票＝見本「支払明細書」シートの構成を再現（縦結合ラベル・空きスペーサー・水色セル・備考欄）。**立替金の行は税込額**に修正（見本の式 `G29 = G28×10/110`。従来は税抜を出していた）。勤務報告書は 2 段ヘッダー。見本の勤務報告書は案件ごとの集約 1 行だが、シートの式は日別行向けなので **日別行のまま**とした。
+   - **印影**: 設計時の「Storage で画像登録」から変更し、`companies.seal_image`（PNG の data URL、**マイグレーション `20260824010000_companies_seal_image.sql`・本番未適用**）に持つ。理由=1テナント1枚数十KB・既存 RLS で隔離・ブラウザ描画にそのまま渡せる・控えのスナップショットに当時の印影が残る。サーバー側で `data:image/png;base64,` と 300KB 上限を検証（SVG 不可）。自社情報にアップロード UI。おおば様式請求書の発行元欄の右に印字（PDF・Excel）。**標準様式への印字は未対応**。実物の角印は `oobaunsou_mihon/IMG_6712.PNG`（おおば運送テナント作成時に登録する）。
+   - 本番適用のマイグレーションは **3 本**になった: `20260823150000`・`20260824000000`・`20260824010000`。
+   - 検証: tsc 0・vitest 206・ローカル画面で請求書（角印つき）・本票の描画を確認。eslint の `set-state-in-effect`（page.tsx:64）は既存 debt。
 
 #### 2026-08-21夜（UI刷新を本番リリース＋本番DB初期化・フィールドテスト開始準備完了）
 
@@ -2465,6 +2503,7 @@ web/src/
 │   │   ├── workRecordActions.ts        完了報告・立替金・緊急インポート
 │   │   ├── defensiveAlertActions.ts    5大防衛アラート
 │   │   ├── billing-actions.ts          支払通知書
+│   │   ├── document-actions.ts         帳票の確定発行・取消・再発行・発行控え検索（2026-08-23）
 │   │   ├── driver-actions.ts           ドライバー関連
 │   │   ├── emailActions.ts             Resend メール送信
 │   │   ├── voice-actions.ts            VOICEオプション（Gemini TTS）

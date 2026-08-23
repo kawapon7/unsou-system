@@ -2,6 +2,7 @@
 
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
+import { getCurrentTenantId } from '@/utils/tenant'
 
 // metadata 更新を許可するテーブルのみ列挙（口座情報を持つ contractors は対象外）
 type MetadataTable = 'clients' | 'work_records' | 'expense_records'
@@ -57,11 +58,14 @@ export async function mergeMetadata(
   if (!user) return { data: null, error: '認証が必要です' }
 
   const service = createServiceClient()
+  // ⚠️ 2026-08-23 P1: id だけでは他テナントの行を書き換えられる。必ずテナントで絞る
+  const tenantId = await getCurrentTenantId()
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: current, error: fetchErr } = await (service.from(table) as any)
     .select('metadata')
     .eq('id', id)
+    .eq('tenant_id', tenantId)
     .single()
 
   if (fetchErr || !current) {
@@ -77,6 +81,7 @@ export async function mergeMetadata(
   const { error: updateErr } = await (service.from(table) as any)
     .update({ metadata: merged })
     .eq('id', id)
+    .eq('tenant_id', tenantId)
 
   if (updateErr) return { data: null, error: updateErr.message }
 
@@ -96,11 +101,14 @@ export async function clearMetadataNamespace(
   if (!user) return { data: null, error: '認証が必要です' }
 
   const service = createServiceClient()
+  // ⚠️ 2026-08-23 P1: id だけでは他テナントの行を書き換えられる。必ずテナントで絞る
+  const tenantId = await getCurrentTenantId()
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data: current, error: fetchErr } = await (service.from(table) as any)
     .select('metadata')
     .eq('id', id)
+    .eq('tenant_id', tenantId)
     .single()
 
   if (fetchErr || !current) {
@@ -118,6 +126,7 @@ export async function clearMetadataNamespace(
   const { error: updateErr } = await (service.from(table) as any)
     .update({ metadata: cleaned })
     .eq('id', id)
+    .eq('tenant_id', tenantId)
 
   if (updateErr) return { data: null, error: updateErr.message }
 

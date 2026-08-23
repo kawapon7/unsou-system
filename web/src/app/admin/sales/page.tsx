@@ -1170,6 +1170,7 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
           yearMonth={yearMonth}
           clientName={pdfTarget.name}
           onClose={() => setPdfTarget(null)}
+          canIssue
         />
       )}
       {pdfTarget?.type === 'notice' && (
@@ -1178,6 +1179,7 @@ function FinalizeTab({ yearMonth }: { yearMonth: string }) {
           yearMonth={yearMonth}
           contractorName={pdfTarget.name}
           onClose={() => setPdfTarget(null)}
+          canIssue
         />
       )}
     </div>

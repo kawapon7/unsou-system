@@ -21,6 +21,8 @@ export type CompanyInfo = {
   address:          string
   phone:            string
   email:            string
+  /** 印影（社判）PNG の data URL。未登録は null。請求書（導入先様式）に印字する */
+  sealImage?:       string | null
   /** 振込先。請求書にのみ印字する（支払通知書には出さない） */
   bank: {
     bankName:      string
@@ -68,6 +70,7 @@ export async function getCompanyInfo(tenantId: string): Promise<CompanyInfoResul
       address:          data.address     ?? '',
       phone:            data.phone       ?? '',
       email:            data.email       ?? '',
+      sealImage:        (data as { seal_image?: string | null }).seal_image ?? null,
       bank: {
         // bank_name / bank_branch / account_number / account_holder は
         // utils/crypto.ts の BANK_FIELD_KEYS に含まれるため暗号化されている。
