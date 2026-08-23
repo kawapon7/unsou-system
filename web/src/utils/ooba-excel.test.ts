@@ -1,31 +1,37 @@
 import { describe, it, expect } from 'vitest'
 import { buildOobaInvoiceWorkbook, buildOobaPaymentNoticeWorkbook } from './ooba-excel'
 import { OOBA_INVOICE_FIXTURE, OOBA_PAYMENT_NOTICE_FIXTURE } from '@/components/pdf/formats/ooba/fixtures'
-import { aggregateOobaInvoiceRows } from './ooba-invoice-lines'
+import { aggregateOobaInvoiceRows, layoutOobaInvoiceRows } from './ooba-invoice-lines'
 import type { InvoicePdfData, InvoicePdfLine } from '@/app/_actions/pdf-actions'
 
 describe('ooba-excel', () => {
-  it('請求書: 件名・明細・合計が所定セルに入る', () => {
+  it('請求書: 件名・明細・合計が所定セルに入る（見本の7列レイアウト）', () => {
     const wb = buildOobaInvoiceWorkbook(OOBA_INVOICE_FIXTURE)
     const ws = wb.getWorksheet('請求書')!
     expect(ws.getCell('A1').value).toBe('請 求 書')
-    expect(ws.getCell('A5').value).toBe('件名： R8．6月度 業務委託費')
-    expect(ws.getCell('B9').value).toBe('Aデバンニング作業 1本')
-    expect(ws.getCell('C9').value).toBe('6月度 14 日')
-    expect(ws.getCell('D9').value).toBe(16000)
-    expect(ws.getCell('E9').value).toBe(224000)
-    const total = OOBA_INVOICE_FIXTURE.totalAmount
-    // フィクスチャは3グループ（10行未満）なので slots=10 → 合計行は 9+10+2=21
-    const rows = aggregateOobaInvoiceRows(OOBA_INVOICE_FIXTURE.lines, OOBA_INVOICE_FIXTURE.yearMonth)
-    const totalRow = 9 + Math.max(10, rows.length)
-    expect(totalRow).toBe(19) // 合わせて明示: 3グループなので slots は最低10行のまま
-    expect(ws.getCell(`E${totalRow + 2}`).value).toBe(total)
-    expect(ws.getCell('E21').value).toBe(total)
+    expect(ws.getCell('B5').value).toBe('件名： R8．6月度 業務委託費')
+    expect(ws.getCell('B10').value).toBe('摘要')
+    // 11行目＝担当者①のデバンニング 1本
+    expect(ws.getCell('A11').value).toBe('6月度')
+    expect(ws.getCell('B11').value).toBe('①')
+    expect(ws.getCell('C11').value).toBe('Aデバンニング作業 1本')
+    expect(ws.getCell('D11').value).toBe(14)
+    expect(ws.getCell('E11').value).toBe('日')
+    expect(ws.getCell('F11').value).toBe(13000)
+    expect(ws.getCell('G11').value).toBe(182000)
+    // 12行目は同じ担当者の続き（月度・番号は空）
+    expect(ws.getCell('A12').value ?? '').toBe('')
+    expect(ws.getCell('C12').value).toBe('Aデバンニング作業 2本')
+    const display = layoutOobaInvoiceRows(aggregateOobaInvoiceRows(OOBA_INVOICE_FIXTURE.lines, OOBA_INVOICE_FIXTURE.yearMonth))
+    expect(display.length).toBe(17)
+    const totalRow = 11 + 17
+    expect(ws.getCell(`D${totalRow}`).value).toBe('小計')
+    expect(ws.getCell(`F${totalRow + 2}`).value).toBe(OOBA_INVOICE_FIXTURE.totalAmount)
+    expect(display.some(d => d.type === 'note')).toBe(true)
   })
 
-  it('請求書: 明細が10件を超えても行が省略されず、合計は明細の下に印字される', () => {
-    // 12件のグループ（案件名を変えて1件ずつ）→ 集計後も12行になる
-    const lines: InvoicePdfLine[] = Array.from({ length: 12 }, (_, i) => ({
+  it('請求書: 明細が17行を超えても行が省略されず、合計は明細の下に印字される', () => {
+    const lines: InvoicePdfLine[] = Array.from({ length: 20 }, (_, i) => ({
       workDate: `2026-06-${String(i + 1).padStart(2, '0')}`,
       projectName: `案件${i + 1}`,
       quantity: 1,
@@ -34,25 +40,14 @@ describe('ooba-excel', () => {
       isWorkType: false,
     }))
     const netTotal = lines.reduce((s, l) => s + l.netAmount, 0)
-    const taxAmount = Math.round(netTotal * 0.1)
-    const data: InvoicePdfData = {
-      ...OOBA_INVOICE_FIXTURE,
-      lines,
-      netTotal,
-      taxAmount,
-      totalAmount: netTotal + taxAmount,
-      noteLines: [],
-    }
+    const data: InvoicePdfData = { ...OOBA_INVOICE_FIXTURE, lines, netTotal, taxAmount: Math.round(netTotal * 0.1), totalAmount: netTotal + Math.round(netTotal * 0.1) }
     const wb = buildOobaInvoiceWorkbook(data)
     const ws = wb.getWorksheet('請求書')!
-    const rows = aggregateOobaInvoiceRows(data.lines, data.yearMonth)
-    expect(rows.length).toBe(12)
-    const totalRow = 9 + Math.max(10, rows.length) // 9 + 12 = 21
-    // 12番目の行（i=11）は r = 9+11 = 20 に印字される
-    expect(ws.getCell('B20').value).toBe('案件12')
-    expect(ws.getCell('E20').value).toBe(rows[11].amount)
-    expect(ws.getCell(`E${totalRow + 2}`).value).toBe(data.totalAmount)
-    expect(totalRow + 2).toBe(23)
+    const display = layoutOobaInvoiceRows(aggregateOobaInvoiceRows(data.lines, data.yearMonth))
+    expect(display.length).toBe(20)
+    expect(ws.getCell('C30').value).toBe('案件20')
+    expect(ws.getCell('F31').value).toBe(data.netTotal)
+    expect(ws.getCell('F33').value).toBe(data.totalAmount)
   })
 
   it('支払明細書: includeInternalSheets 指定時は5シート（利益表つき）、未指定は4シート（社内用の利益表を委託先に出さない）', () => {

@@ -11,11 +11,13 @@ const COMPANY: CompanyInfo = {
 // ⚠️ netTotal/taxAmount/totalAmount は INVOICE_LINES から計算する（事後の代入で export 済みの
 //    定数を書き換えない）。exported const を後から mutate すると import 側で参照タイミング次第の
 //    値になりうるため。
-const INVOICE_LINES = [
-  ...Array.from({ length: 14 }, (_, i) => ({ workDate: `2026-06-${String(i + 1).padStart(2, '0')}`, projectName: 'Aデバンニング作業', quantity: 1, netAmount: 16000, pieceCount: 1, isWorkType: true })),
-  ...Array.from({ length: 4 },  (_, i) => ({ workDate: `2026-06-${String(i + 15).padStart(2, '0')}`, projectName: 'Aデバンニング作業', quantity: 2, netAmount: 26000, pieceCount: 2, isWorkType: true })),
-  ...Array.from({ length: 22 }, (_, i) => ({ workDate: `2026-06-${String(i + 1).padStart(2, '0')}`, projectName: 'B荷役作業', quantity: 1, netAmount: 12000, pieceCount: null, isWorkType: true })),
-]
+// 見本 PDF（2026-06）の構成を再現: 担当者①②がそれぞれ デバンニング 1本×14日・2本×4日、荷役 22日
+const d = (i: number) => `2026-06-${String(i).padStart(2, '0')}`
+const INVOICE_LINES = ['担当者A', '担当者B'].flatMap(contractorName => [
+  ...Array.from({ length: 14 }, (_, i) => ({ workDate: d(i + 1),  projectName: 'Aデバンニング作業', quantity: 1, netAmount: 13000, pieceCount: 1, isWorkType: true,  contractorName })),
+  ...Array.from({ length: 4 },  (_, i) => ({ workDate: d(i + 15), projectName: 'Aデバンニング作業', quantity: 2, netAmount: 16000, pieceCount: 2, isWorkType: true,  contractorName })),
+  ...Array.from({ length: 22 }, (_, i) => ({ workDate: d(i + 1),  projectName: 'B荷役作業',          quantity: 1, netAmount: 12000, pieceCount: null, isWorkType: false, contractorName })),
+])
 const INVOICE_NET_TOTAL = INVOICE_LINES.reduce((s, l) => s + l.netAmount, 0)
 const INVOICE_TAX_AMOUNT = Math.round(INVOICE_NET_TOTAL * 0.1)
 

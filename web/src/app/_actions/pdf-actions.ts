@@ -33,6 +33,8 @@ export type InvoicePdfLine = {
   pieceCount:  number | null
   /** 作業系（デバンニング等）の案件か。おおば様式で「※人員結果は別紙参照」を出す判定 */
   isWorkType:  boolean
+  /** 担当した委託先名。おおば様式の ①②… の割当に使う。旧スナップショットには無い（undefined） */
+  contractorName?: string | null
 }
 
 export type InvoicePdfData = {
@@ -107,7 +109,7 @@ export async function fetchInvoicePdfData(
 
   const { data: workRows, error: wrErr } = await service
     .from('work_records')
-    .select(`${WORK_RECORD_AMOUNT_COLUMNS}, work_date`)
+    .select(`${WORK_RECORD_AMOUNT_COLUMNS}, work_date, contractor_id`)
     .in('project_id', projIds.length > 0 ? projIds : ['__never__'])
     .gte('work_date', from)
     .lte('work_date', to)
@@ -115,7 +117,17 @@ export async function fetchInvoicePdfData(
 
   if (wrErr) return { data: null, error: wrErr.message }
 
-  const rawRows = (workRows ?? []) as unknown as (RawWorkRecord & { work_date: string })[]
+  const rawRows = (workRows ?? []) as unknown as (RawWorkRecord & { work_date: string; contractor_id: string | null })[]
+
+  // 担当者名（おおば様式の①②…）。テナント内の委託先だけを引く
+  const contractorIds = [...new Set(rawRows.map(r => r.contractor_id).filter((x): x is string => !!x))]
+  const contractorNameMap = new Map<string, string>()
+  if (contractorIds.length > 0) {
+    const { data: cs, error: cErr } = await service
+      .from('contractors').select('id, name').eq('tenant_id', tenantId).in('id', contractorIds)
+    if (cErr) return { data: null, error: cErr.message }
+    for (const c of (cs ?? []) as { id: string; name: string }[]) contractorNameMap.set(c.id, c.name)
+  }
 
   // price_rules には tenant_id が無いため、テナント確認済みの案件IDだけを引く
   let ruleMap = new Map<string, PriceRuleRecord>()
@@ -141,6 +153,7 @@ export async function fetchInvoicePdfData(
       netAmount:   calcWorkAmount(r, rule, 'selling'),
       pieceCount:  isPieceBased ? (r.piece_count ?? null) : null,
       isWorkType:  isWorkTypeProject(projectName),
+      contractorName: r.contractor_id ? (contractorNameMap.get(r.contractor_id) ?? null) : null,
     }
   })
 

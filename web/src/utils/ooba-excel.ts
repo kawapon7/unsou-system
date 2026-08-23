@@ -6,7 +6,7 @@
 
 import ExcelJS from 'exceljs'
 import type { InvoicePdfData, PaymentNoticePdfData } from '@/app/_actions/pdf-actions'
-import { aggregateOobaInvoiceRows } from './ooba-invoice-lines'
+import { aggregateOobaInvoiceRows, circledNumber, layoutOobaInvoiceRows } from './ooba-invoice-lines'
 import { workMinutesFromHHMM, formatHHMM } from './work-minutes'
 
 const YEN = '#,##0;[Red]-#,##0'
@@ -37,80 +37,110 @@ const md = (iso: string) => {
 export function buildOobaInvoiceWorkbook(data: InvoicePdfData): ExcelJS.Workbook {
   const wb = new ExcelJS.Workbook()
   const ws = wb.addWorksheet('請求書', { pageSetup: { paperSize: 9, orientation: 'portrait', fitToPage: true } })
-  ws.columns = [{ width: 4 }, { width: 40 }, { width: 16 }, { width: 12 }, { width: 16 }]
+  // 列: A=月度 B=①② C=摘要 D=日数 E=「日」 F=単価 G=金額（見本 PDF 2026-06 の並び）
+  ws.columns = [{ width: 9 }, { width: 9 }, { width: 34 }, { width: 6 }, { width: 4 }, { width: 14 }, { width: 14 }]
   const c = data.company
+  const HEAD = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDDEBF7' } } as const
 
   ws.getCell('A1').value = '請 求 書'
-  ws.getCell('A1').font = { size: 18, bold: true }
-  ws.mergeCells('A1:E1')
+  ws.getCell('A1').font = { size: 18 }
+  ws.mergeCells('A1:G1')
   ws.getCell('A1').alignment = { horizontal: 'center' }
 
-  ws.getCell('A3').value = `${data.clientName} 御中`
-  ws.getCell('A3').font = { size: 14, underline: true }
-  ws.getCell('D3').value = `作成日 ${data.issueDate.replace(/-(\d+)-(\d+)/, (_, m, d) => `年${Number(m)}月${Number(d)}日`)}`
-  ws.getCell('D4').value = c.name
-  ws.getCell('D5').value = `〒${c.postalCode}`
-  ws.getCell('D6').value = c.address
-  ws.getCell('D7').value = `TEL： ${c.phone}`
-  ws.getCell('D8').value = `登録番号 ${c.invoiceRegNumber}`
+  ws.getCell('B3').value = data.clientName
+  ws.getCell('B3').font = { size: 14, bold: true }
+  ws.getCell('D3').value = '御中'
+  ;['B3', 'C3', 'D3'].forEach(r => { ws.getCell(r).border = { bottom: { style: 'medium' } } })
+  ws.getCell('F3').value = `作成日 ${data.issueDate.replace(/-(\d+)-(\d+)/, (_, m, d) => `年${Number(m)}月${Number(d)}日`)}`
+  ws.getCell('F4').value = `〒${c.postalCode}`
+  ws.getCell('F5').value = c.address
+  ws.getCell('F6').value = c.name
+  ws.getCell('F7').value = `TEL： ${c.phone}`
+  ws.getCell('F8').value = `登録番号 ${c.invoiceRegNumber}`
 
-  ws.getCell('A5').value = `件名： ${data.subject}`
-  ws.getCell('A6').value = '下記の通り、ご請求申し上げます。'
-  ws.getCell('A7').value = `合計金額 ¥${data.totalAmount.toLocaleString('ja-JP')} （税込）`
-  ws.getCell('A7').font = { size: 13, bold: true }
+  ws.getCell('B5').value = `件名： ${data.subject}`
+  ws.getCell('B5').font = { bold: true }
+  ;['B5', 'C5', 'D5'].forEach(r => { ws.getCell(r).border = { bottom: { style: 'double' } } })
+  ws.getCell('B6').value = '下記の通り、ご請求申し上げます。'
+  ws.getCell('B8').value = '合計金額'
+  ws.getCell('B8').font = { size: 13, bold: true }
+  ws.getCell('C8').value = data.totalAmount
+  ws.getCell('C8').numFmt = '"¥"#,##0'
+  ws.getCell('C8').font = { size: 14, bold: true }
+  ws.getCell('D8').value = '（税込）'
+  ;['B8', 'C8', 'D8'].forEach(r => { ws.getCell(r).border = { bottom: { style: 'double' } } })
 
-  ;['', '摘要', '数量', '単価', '金額'].forEach((h, i) => {
-    const cell = text(ws, `${'ABCDE'[i]}8`, h)
+  const HEADER_ROW = 10
+  text(ws, `A${HEADER_ROW}`, '')
+  text(ws, `B${HEADER_ROW}`, '摘要'); ws.mergeCells(`B${HEADER_ROW}:C${HEADER_ROW}`)
+  text(ws, `D${HEADER_ROW}`, '数量'); ws.mergeCells(`D${HEADER_ROW}:E${HEADER_ROW}`)
+  text(ws, `F${HEADER_ROW}`, '単価')
+  text(ws, `G${HEADER_ROW}`, '金額')
+  ;['A', 'B', 'D', 'F', 'G'].forEach(col => {
+    const cell = ws.getCell(`${col}${HEADER_ROW}`)
     cell.alignment = { horizontal: 'center' }
-    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEEEEE' } }
+    cell.font = { bold: true }
+    cell.fill = HEAD
   })
 
-  const rows = aggregateOobaInvoiceRows(data.lines, data.yearMonth)
-  const MARK = ['①', '②', '③', '④', '⑤', '⑥', '⑦', '⑧', '⑨', '⑩']
-  // ⚠️ 明細が10件を超える荷主もいる。固定10行にすると11件目以降が印字から消え、
+  // ⚠️ 明細が固定行数を超える荷主もいる。固定行にすると超過分が印字から消え、
   //    小計/合計は正しい値のまま「合計と明細の合計が合わない」誤発行になる。
-  //    最低10行は確保しつつ、明細数に応じて行数を伸ばす。
-  const slots = Math.max(10, rows.length)
-  for (let i = 0; i < slots; i++) {
-    const r = 9 + i
-    const row = rows[i]
-    text(ws, `A${r}`, row ? (MARK[i] ?? i + 1) : '')
-    text(ws, `B${r}`, row?.description ?? '')
-    text(ws, `C${r}`, row?.quantityLabel ?? '')
-    if (row) {
-      money(ws, `D${r}`, row.unitPrice)
-      money(ws, `E${r}`, row.amount)
-    } else {
-      box(ws, `D${r}`)
-      box(ws, `E${r}`)
+  //    見本は17行。最低17行は確保しつつ、明細数に応じて行数を伸ばす（layoutOobaInvoiceRows が担う）。
+  const display = layoutOobaInvoiceRows(aggregateOobaInvoiceRows(data.lines, data.yearMonth))
+  display.forEach((d, i) => {
+    const r = HEADER_ROW + 1 + i
+    ;['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(col => box(ws, `${col}${r}`))
+    if (d.type === 'blank') return
+    if (d.type === 'note') {
+      ws.getCell(`B${r}`).value = d.text
+      ws.getCell(`B${r}`).font = { bold: true }
+      return
     }
-  }
+    const row = d.row
+    if (row.groupStart) {
+      text(ws, `A${r}`, row.monthLabel).alignment = { horizontal: 'center' }
+      text(ws, `B${r}`, circledNumber(row.no)).alignment = { horizontal: 'center' }
+    }
+    text(ws, `C${r}`, row.description)
+    text(ws, `D${r}`, row.days).alignment = { horizontal: 'center' }
+    text(ws, `E${r}`, '日')
+    money(ws, `F${r}`, row.unitPrice)
+    money(ws, `G${r}`, row.amount)
+  })
 
-  const totalRow = 9 + slots
-  text(ws, `D${totalRow}`, '小計')
-  money(ws, `E${totalRow}`, data.netTotal)
+  const totalRow = HEADER_ROW + 1 + display.length
+  const label = (ref: string, v: string) => {
+    const cell = text(ws, ref, v)
+    cell.alignment = { horizontal: 'center' }
+    cell.font = { bold: true }
+    cell.fill = HEAD
+  }
+  label(`D${totalRow}`, '小計'); ws.mergeCells(`D${totalRow}:E${totalRow}`)
+  money(ws, `F${totalRow}`, data.netTotal); ws.mergeCells(`F${totalRow}:G${totalRow}`)
   // ⚠️ 行位置は固定（後続の備考・お振込先のセル座標が totalRow 基準のため）。非課税時は
-  //    ラベル・値ともに空文字にして行だけ残す（HTML 側は行ごと非表示にするが、Excel は座標固定のためこちらは空欄にする）。
-  if (data.isTaxable) {
-    text(ws, `D${totalRow + 1}`, '消費税')
-    money(ws, `E${totalRow + 1}`, data.taxAmount)
-  } else {
-    text(ws, `D${totalRow + 1}`, '')
-    text(ws, `E${totalRow + 1}`, '')
-  }
-  text(ws, `D${totalRow + 2}`, '合計')
-  money(ws, `E${totalRow + 2}`, data.totalAmount)
-  ws.getCell(`E${totalRow + 2}`).font = { bold: true }
+  //    値を空にして行だけ残す（HTML 側も同じく空欄）。
+  label(`D${totalRow + 1}`, '消費税'); ws.mergeCells(`D${totalRow + 1}:E${totalRow + 1}`)
+  if (data.isTaxable) money(ws, `F${totalRow + 1}`, data.taxAmount); else box(ws, `F${totalRow + 1}`)
+  ws.mergeCells(`F${totalRow + 1}:G${totalRow + 1}`)
+  label(`D${totalRow + 2}`, '合計'); ws.mergeCells(`D${totalRow + 2}:E${totalRow + 2}`)
+  money(ws, `F${totalRow + 2}`, data.totalAmount).font = { bold: true }
+  ws.mergeCells(`F${totalRow + 2}:G${totalRow + 2}`)
 
-  data.noteLines.forEach((n, i) => { ws.getCell(`A${totalRow + 3 + i}`).value = n })
-  const b = totalRow + 5 + data.noteLines.length
   if (c.bank.bankName && c.bank.accountNumber) {
-    ws.getCell(`A${b}`).value = 'お振込先'
-    ws.getCell(`A${b}`).font = { bold: true }
-    ws.getCell(`A${b + 1}`).value = `${c.bank.bankName} ${c.bank.bankBranch}　${c.bank.accountType}　${c.bank.accountNumber}`
-    ws.getCell(`A${b + 2}`).value = c.bank.accountHolder
+    ws.getCell(`A${totalRow + 1}`).value = 'お振込先'
+    ws.getCell(`B${totalRow + 2}`).value = `${c.bank.bankName}　${c.bank.bankBranch}`
+    ws.getCell(`B${totalRow + 3}`).value = `${c.bank.accountType}　${c.bank.accountNumber}`
+    ws.getCell(`B${totalRow + 4}`).value = c.bank.accountHolder
   }
-  ws.getCell(`A${b + 4}`).value = '備考'
+  const b = totalRow + 6
+  ws.mergeCells(`A${b}:B${b + 3}`)
+  const remark = ws.getCell(`A${b}`)
+  remark.value = '備考'
+  remark.font = { bold: true }
+  remark.fill = HEAD
+  remark.alignment = { horizontal: 'center', vertical: 'middle' }
+  ws.mergeCells(`C${b}:G${b + 3}`)
+  for (let r = b; r <= b + 3; r++) ['A', 'B', 'C', 'D', 'E', 'F', 'G'].forEach(col => box(ws, `${col}${r}`))
 
   return wb
 }
