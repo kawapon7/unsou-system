@@ -1401,6 +1401,13 @@ web/
 
 5. **（同日夜・続き）様式②「おおば運送様式」を実装（同ブランチ・本番未適用・画面未検証）**。様式キー `ooba`（`utils/document-formats.ts`）。運送保険料の委託先別ON/OFF（`contractors.apply_transport_insurance`、マイグレーション `20260824000000_contractors_apply_transport_insurance.sql`、default true、計算側は列欠落時fail-closed）。請求書/支払通知書のPDF（本票＋勤務報告書＋作業明細支払書＋立替金明細書の4ページ、`components/pdf/formats/ooba/OobaInvoiceDocument.tsx`・`OobaPaymentNoticeDocument.tsx`）とExcel（`utils/ooba-excel.ts`、ExcelJS・5シート・数式なし・`ExcelDownloadButton.tsx`でブラウザ生成）。案件別集約は `utils/ooba-invoice-lines.ts`（単価＝金額÷日数、件名は令和年月表記、作業系判定は案件名の「作業/デバンニング/荷役」）。見本（坂田 2025-11）との数値突合をvitestで実施し差引支給額245,960が一致（`payment-notice-totals.test.ts`）。**画面確認は次回ログイン時**（手順は `task-9-report.md`/`task-11-report.md`）。**本番適用は順番厳守**: ①（未適用なら先に土台①・RLS P0のマイグレーションを適用）②SQL Editorで`20260824000000`全文実行→③`schema_migrations`にINSERT→④`main`へmerge＆push（**pushで自動デプロイ**。①②③より後でないと`apply_transport_insurance`列が無く支払通知書の計算が全停止）→⑤委託先マスタでの運送保険チェック調整→⑥自社情報での様式切替。詳細・既知の制限は `docs/superpowers/plans/2026-08-23-client-format-documents-handover.md`。
 
+6. **（同日夜・Mac mini）帳票発行土台①＋おおば様式②をローカル Supabase で画面検証し、バグ1件を修正（`980d3b2`）**。
+   - **検証環境**: Docker Desktop を新規導入し `supabase start`（63本のマイグレーション全適用）。`web/.env.local` をローカル向けに書換え（本番向けは `web/.env.local.prod-backup` に退避・gitignore 済）。**⚠️本番に戻すときは backup を `.env.local` に戻して dev サーバーを再起動する。** テナント＝`create-tenant.mjs`（`admin@hibiki.com` / ローカル専用PW）、デモ＝`seed-demo-full.mjs` を一時コピーで投入。
+   - **確認できたこと**: 自社情報の新項目（採番書式・標準様式）保存／請求書の確定→PDFモーダルで「(未発行)」→確定発行で `INV-202608-0001` 採番／発行控え一覧の表示・再発行（0001取消→0002・`document_history` に新旧対応）／様式 `ooba` で支払通知書4ページ・請求書の描画／Excel ボタンで xlsx Blob 生成（11KB）／支払通知書の確定発行 `PN-202608-0002`（様式 ooba v1）。
+   - **修正したバグ**: 支払通知書の確定発行が `issued_documents_tenant_id_document_number_key` で失敗。請求書と同じ書式を共用していたため番号が衝突（請求書を先に発行すると必ず再現）。支払通知書は固定書式 `PN-{YYYY}{MM}-{SEQ:4}` に分離（設定化は計画③）。tsc 0・vitest 204。
+   - **要ボス判断（未対応）**: ①採番の `{YYYY}{MM}` は**発行日基準**（7月分の請求書が `INV-202608-…`）。対象月基準にしたいなら書式トークン追加が必要 ②失敗した発行でも連番が消費され欠番が出る（採番RPCがINSERTと別トランザクション）③標準様式の請求書PDFで時間制案件の数量が 0 と出る（プレビューは 8）④おおば請求書で個建て案件が「○本」ごとに別行に分かれる（実物と照合要）⑤立替金内訳に `tollway` が英語コードのまま出る。
+   - **環境の発見（引き継ぎ）**: ⓐ `seed-demo-full.mjs` は F0 以前の仕様で `price_rules` / `project_payees` / `payment_notices`（2箇所）に `tenant_id` が無く、`TENANT_ID` も `'local-dev'` 固定。ローカル用に直すなら env から uuid を受ける形にする ⓑ **PG17 のローカルイメージでは `postgres` ロールの既定権限が API ロールに付かず**、`20260616` の GRANT 以降に作ったテーブル7つ（`tenants`・`issued_documents` 等）に `service_role`/`authenticated` 権限が無かった。ローカルでは手動 GRANT で回避。本番は旧既定権限で自動付与されているが、**新本番DB構築時は GRANT を含むマイグレーションの追加を検討**（`schema-fingerprint.sql` の照合対象に権限は含まれない）。
+
 #### 2026-08-21夜（UI刷新を本番リリース＋本番DB初期化・フィールドテスト開始準備完了）
 
 1. **UI刷新①〜④-2を main へマージし本番デプロイ**（マージ `3488ce0` → Actions Run#19 success）。続けて**ログイン後の遷移先をホーム画面（/admin）へ変更**（`5d25b34` → Run#20 success）。ボスが Mac mini の実データで一巡確認・指摘なし。
