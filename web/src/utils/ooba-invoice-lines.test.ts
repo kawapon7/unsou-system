@@ -27,7 +27,14 @@ describe('ooba-invoice-lines', () => {
     ], '2026-06')
     expect(rows.map(r => [r.description, r.quantityLabel, r.unitPrice, r.amount])).toEqual([
       ['協和冷蔵デバンニング作業 1本', '6月度 1 日', 16000, 16000],
-      ['協和冷蔵デバンニング作業 2本', '6月度 2 日', 13000, 52000],
+      ['協和冷蔵デバンニング作業 2本', '6月度 2 日', 26000, 52000],
     ])
+  })
+  it('同一日付の複数レコードは1日として束ね、単価は1日分', () => {
+    const rows = aggregateOobaInvoiceRows([
+      line({ projectName: 'テスト案件', netAmount: 30000 }),
+      line({ projectName: 'テスト案件', netAmount: 20000, workDate: '2026-06-01' }),
+    ], '2026-06')
+    expect(rows).toEqual([{ no: 1, description: 'テスト案件', quantityLabel: '6月度 1 日', unitPrice: 50000, amount: 50000 }])
   })
 })

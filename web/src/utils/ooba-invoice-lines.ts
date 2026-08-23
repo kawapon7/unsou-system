@@ -40,13 +40,12 @@ export function isWorkTypeProject(name: string): boolean {
  */
 export function aggregateOobaInvoiceRows(lines: InvoicePdfLine[], yearMonth: string): OobaInvoiceRow[] {
   const month = Number(yearMonth.split('-')[1])
-  const groups = new Map<string, { description: string; dates: Set<string>; totalQuantity: number; amount: number }>()
+  const groups = new Map<string, { description: string; dates: Set<string>; amount: number }>()
   for (const l of lines) {
     const suffix = l.pieceCount && l.pieceCount > 0 ? ` ${l.pieceCount}本` : ''
     const description = `${l.projectName}${suffix}`
-    const g = groups.get(description) ?? { description, dates: new Set(), totalQuantity: 0, amount: 0 }
+    const g = groups.get(description) ?? { description, dates: new Set(), amount: 0 }
     g.dates.add(l.workDate)
-    g.totalQuantity += l.quantity
     g.amount += l.netAmount
     groups.set(description, g)
   }
@@ -54,7 +53,7 @@ export function aggregateOobaInvoiceRows(lines: InvoicePdfLine[], yearMonth: str
     no: i + 1,
     description: g.description,
     quantityLabel: `${month}月度 ${g.dates.size} 日`,
-    unitPrice: g.totalQuantity > 0 ? Math.round(g.amount / g.totalQuantity) : 0,
+    unitPrice: g.dates.size > 0 ? Math.round(g.amount / g.dates.size) : 0,
     amount: g.amount,
   }))
 }
