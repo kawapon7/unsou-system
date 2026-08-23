@@ -35,7 +35,8 @@ export function IssuedDocumentModal({ id, onClose }: { id: string; onClose: () =
       isOpen
       onClose={onClose}
       title={doc ? `${kindLabel}控え ${doc.documentNumber} — ${doc.partyName}` : '発行控え'}
-      actions={doc && doc.formatKey === 'ooba' ? (
+      // 様式の版を上げたら ooba-excel.ts 側にも版分岐を足す（旧版スナップショットの列が変わるため）
+      actions={doc && doc.formatKey === 'ooba' && doc.formatVersion === 1 ? (
         <ExcelDownloadButton
           fileName={`${kindLabel}_${doc.documentNumber}.xlsx`}
           build={async () => {
