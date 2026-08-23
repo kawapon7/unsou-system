@@ -63,4 +63,17 @@ describe('assemblePaymentTotals', () => {
     expect(t.totalDeduction).toBe(1_000)
     expect(t.totalAmount).toBe(67_233)
   })
+
+  it('おおば見本 2025-11 の構成で差引支給額が一致する', () => {
+    const t = assemblePaymentTotals({
+      laborTaxExcluded: 229_104,
+      laborTax: 22_909,
+      expenseTaxExcluded: 0,
+      expenseTax: 0,
+      deduction: 5_040,
+      adjustment: -13,
+      insuranceDeduction: 1_000,
+    })
+    expect(t.totalAmount).toBe(245_960)
+  })
 })

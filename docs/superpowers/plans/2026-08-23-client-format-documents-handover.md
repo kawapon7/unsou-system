@@ -2,7 +2,31 @@
 
 作成: 2026-08-23（Mac mini / BLACKICE のセッションから）
 要件定義の正本: `docs/superpowers/specs/2026-08-23-client-format-documents-design.md`
-ステータス: **要件合意済み・実物様式の入手待ち・土台①は実装済み（ブランチ `feat/document-issuance-foundation`・本番DB未適用・画面未検証）・様式②は未着手**
+ステータス: **要件合意済み・土台①/様式②とも実装済み（ブランチ `feat/document-issuance-foundation`・本番DB未適用・画面未検証）**
+
+## 様式②の状態（2026-08-23 夜）
+
+**実装完了・未マージ・本番DB未適用。** 見本（坂田 2025-11）との数値突合を vitest で実施し、差引支給額 245,960 が一致（`web/src/utils/payment-notice-totals.test.ts`）。全テスト（201件）・`tsc --noEmit`・`next build` とも通過。
+
+- 運送保険の委託先別 ON/OFF: `contractors.apply_transport_insurance`（マイグレーション `supabase/migrations/20260824000000_contractors_apply_transport_insurance.sql`、default true）。委託先フォームに「運送保険（荷物保険）を支払明細で控除する」チェック。計算は列欠落時 fail-closed。
+- 様式キー `ooba`（`web/src/utils/document-formats.ts`）。PDFデータ拡張は `pdf-actions.ts`（formatKey/yearMonth/subject/noteLines/pieceCount/isWorkType/開始終了時刻 JST/sellingAmount/manualAdjustment）。
+- 案件別集約: `web/src/utils/ooba-invoice-lines.ts`（単価＝金額÷日数、件名「R{令和}．{月}月度 業務委託費」、作業系判定は案件名に「作業/デバンニング/荷役」）。
+- PDF: `web/src/components/pdf/formats/ooba/OobaInvoiceDocument.tsx`・`OobaPaymentNoticeDocument.tsx`（本票＋勤務報告書＋作業明細支払書＋立替金明細書の4ページ）。分岐は `DocumentRenderer.tsx`（format_key×version×kind の唯一の分岐点）に集約。
+- Excel: `web/src/utils/ooba-excel.ts`（ExcelJS、5シート、数式なし）、`ExcelDownloadButton.tsx`（ブラウザ生成）。
+- 補助: `web/src/utils/work-minutes.ts`（深夜跨ぎ対応）、`web/src/utils/time-format.ts`。
+
+**未実施（人間の作業に委譲）**: 画面確認（ログイン要）。チェックリストは `task-9-report.md`・`task-11-report.md` を参照（自社情報で様式を「おおば運送様式」に切替→請求書/支払通知書プレビュー→Excelボタン→発行控え再表示→標準に戻す）。運送保険OFFの実機確認はマイグレーション適用後。
+
+**本番適用手順（ボス作業・1つずつ）**:
+1. ブランチをマージ
+2. SQL Editorで `20260824000000_contractors_apply_transport_insurance.sql` を全文実行
+3. `INSERT INTO supabase_migrations.schema_migrations (version, name) VALUES ('20260824000000','contractors_apply_transport_insurance');`
+4. デプロイ
+5. 委託先マスタで作業系委託先の「運送保険」チェックを外す
+6. おおばテナントの自社情報で様式を「おおば運送様式」に変更
+7. 画面一巡確認
+
+**既知の制限**: 走行距離は列が無く空欄／作業系判定は案件名ベース（次版で `projects` にカテゴリ列）／人員結果表（別紙）は次版／相殺額ラベルは適格事業者でも「0%分」と出る／明細シート合計は行の合計、本票はDB値のため `work_records` を後から直すとズレうる。
 
 ## 土台①の状態（2026-08-23 実装）
 
