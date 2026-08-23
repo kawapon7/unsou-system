@@ -121,9 +121,19 @@ export async function fetchInvoicePdfData(
   // 確定済み請求書に支払期日があればそれを使う。無ければ締め日＋支払サイトで算出する
   const dueDate     = invoice?.due_date           ?? computeDueDate(yearMonth, client.closing_day, client.payment_site)
 
-  // 請求書番号: INV-YYYYMM-{id先頭5文字}
+  // 請求書番号: 発行控え（issued_documents）があればその番号。
+  // 無ければ従来の暫定番号 INV-YYYYMM-{id先頭5文字} に「(未発行)」を付けて区別する。
+  // ⚠️ 正式な番号は document-actions.ts の確定発行で採番される。ここでは採番しない。
   const suffix        = invoice?.id ? invoice.id.replace(/-/g, '').slice(0, 5).toUpperCase() : 'XXXXX'
-  const invoiceNumber = `INV-${yearMonth.replace('-', '')}-${suffix}`
+  let   invoiceNumber = `INV-${yearMonth.replace('-', '')}-${suffix} (未発行)`
+  if (invoice?.id) {
+    const { data: issuedDoc } = await service
+      .from('issued_documents')
+      .select('document_number')
+      .eq('tenant_id', tenantId).eq('kind', 'invoice').eq('source_id', invoice.id).eq('status', 'issued')
+      .maybeSingle()
+    if (issuedDoc?.document_number) invoiceNumber = issuedDoc.document_number
+  }
 
   // ⚠️ fail-closed: 自社情報が未登録ならPDFを生成せずエラーを返す。
   //    仮の登録番号を印字した請求書が社外に出るのを防ぐ。
