@@ -505,7 +505,8 @@ function ContractorFormFields({
       <SectionTitle>拡張項目（管理用）</SectionTitle>
       <div className="grid grid-cols-2 gap-4">
         <Field label="源泉徴収フラグ">
-          <input disabled className={inputCls} value="デフォルト: false" readOnly />
+          {/* ⚠️ v1.6凍結中。サーバー側（rejectFrozenWithholding）でも true を拒否している */}
+          <input disabled className={inputCls} value="凍結中（軽貨物の外注報酬は源泉対象外）" readOnly />
         </Field>
         <Field label="業者区分">
           <input disabled className={inputCls} value="デフォルト: individual" readOnly />

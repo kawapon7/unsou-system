@@ -110,9 +110,22 @@ export async function fetchContractors(): Promise<ActionResult<ContractorRow[]>>
   return { data: (data ?? []).map(decryptBankFields), error: null }
 }
 
+// ⚠️ 源泉徴収は v1.6 で凍結中（軽貨物の外注報酬は所法204条の列挙外で源泉対象外）。
+//    payment_notices に源泉列が無く、ON の委託先を作ると OUT 支払一覧（10.21%控除）と
+//    支払通知書で金額が食い違うため、フラグの有効化は fail-closed で拒否する。
+//    解凍するときは通知書側の設計（列追加・PDF反映・本番マイグレーション）とセットで行うこと。
+function rejectFrozenWithholding(payload: { has_withholding?: boolean }): string | null {
+  if (payload.has_withholding === true) {
+    return '源泉徴収フラグは凍結中のため有効化できません（軽貨物の外注報酬は源泉対象外）。'
+  }
+  return null
+}
+
 export async function createContractor(payload: ContractorInsert): Promise<ActionResult<ContractorRow>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+  const frozenErr = rejectFrozenWithholding(payload)
+  if (frozenErr) return { data: null, error: frozenErr }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
@@ -151,6 +164,8 @@ export async function deleteContractor(contractorId: string): Promise<ActionResu
 export async function updateContractor(id: string, payload: ContractorUpdate): Promise<ActionResult<ContractorRow>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+  const frozenErr = rejectFrozenWithholding(payload)
+  if (frozenErr) return { data: null, error: frozenErr }
   const tenantId = await getCurrentTenantId()
   const supabase = createServiceClient()
   const { data, error } = await supabase
