@@ -3,6 +3,7 @@
 import { requireOperator } from '@/utils/operator'
 import {
   validateAndConvert,
+  departmentKey,
   type ImportFile,
   type RowError,
 } from '@/utils/partner-import'
@@ -10,6 +11,7 @@ import {
   createClient_,
   createClientDepartment,
   createContractor,
+  fetchClientDepartments,
   fetchClients,
   fetchContractors,
 } from '@/app/admin/partners/actions'
@@ -37,10 +39,23 @@ export async function importPartners(file: ImportFile): Promise<ImportResult> {
   if (clientsRes.error) return { ok: false, errors: [], fatal: clientsRes.error }
   if (contractorsRes.error) return { ok: false, errors: [], fatal: contractorsRes.error }
 
+  // 部署の重複検査用: 既存クライアント全件の部署を並列取得する（初期投入用途のため件数は少ない前提）。
+  const existingClients = clientsRes.data ?? []
+  const departmentResults = await Promise.all(
+    existingClients.map(c => fetchClientDepartments(c.id)),
+  )
+  const departmentsError = departmentResults.find(r => r.error)?.error
+  if (departmentsError) return { ok: false, errors: [], fatal: departmentsError }
+
+  const departmentKeys = existingClients.flatMap((c, i) =>
+    (departmentResults[i].data ?? []).map(d => departmentKey(c.company_name, d.name)),
+  )
+
   const validated = validateAndConvert(file, {
-    clientNames: (clientsRes.data ?? []).map(c => c.company_name),
+    clientNames: existingClients.map(c => c.company_name),
     contractorNames: (contractorsRes.data ?? []).map(c => c.name),
     contractorEmails: (contractorsRes.data ?? []).map(c => c.email),
+    departmentKeys,
   })
   if (!validated.data) return { ok: false, errors: validated.errors }
 

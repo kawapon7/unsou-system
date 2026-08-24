@@ -145,7 +145,9 @@ export default function ImportClient() {
       next = { clients: [], departments: [], contractors: [] }
       for (const key of SHEET_ORDER) {
         const ws = wb.Sheets[SHEET_NAMES[key]]
-        const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+        // blankrows: true で空行もインデックスを保持したまま取得する（行番号ズレ防止）。
+        // 全セル空文字の行は validateAndConvert 側の isBlankRow で無視される。
+        const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '', blankrows: true })
         next[key] = rows.map(row => {
           const out: RawRow = {}
           for (const k of Object.keys(row)) out[k] = String(row[k]).trim()
@@ -157,7 +159,7 @@ export default function ImportClient() {
       return
     }
 
-    const { errors } = validateAndConvert(next, { clientNames: [], contractorNames: [], contractorEmails: [] })
+    const { errors } = validateAndConvert(next, { clientNames: [], contractorNames: [], contractorEmails: [], departmentKeys: [] })
     setImportFile(next)
     setPreviewErrors(errors)
     setTotalRows(countDataRows(next))

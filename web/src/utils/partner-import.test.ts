@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { validateAndConvert, TEMPLATE_HEADERS } from './partner-import'
+import { validateAndConvert, departmentKey, TEMPLATE_HEADERS } from './partner-import'
 
-const noExisting = { clientNames: [], contractorNames: [], contractorEmails: [] }
+const noExisting = { clientNames: [], contractorNames: [], contractorEmails: [], departmentKeys: [] }
 
 const validContractor = {
   '名前': '山田運送', 'メール': 'yamada@example.com', '電話': '090-1111-2222',
@@ -55,6 +55,41 @@ describe('validateAndConvert 正常系', () => {
     )
     expect(r.errors).toEqual([])
     expect(r.data!.contractors).toHaveLength(1)
+  })
+  it('全セルが空文字の行はエラーにならずスキップされる', () => {
+    const blankRow = Object.fromEntries(
+      Object.keys(validContractor).map(k => [k, '']),
+    ) as typeof validContractor
+    const r = validateAndConvert(
+      { contractors: [blankRow, validContractor], clients: [], departments: [] },
+      noExisting,
+    )
+    expect(r.errors).toEqual([])
+    expect(r.data!.contractors).toHaveLength(1)
+  })
+})
+
+describe('validateAndConvert 行番号（sheet_to_json配列インデックス→Excel行）', () => {
+  it('例）行の直後のデータ行はExcel行3になる（配列index1 → row=3）', () => {
+    const example = { ...validContractor, '名前': '例）山田運送' }
+    const bad = { ...validContractor, '名前': '' }
+    const r = validateAndConvert(
+      { contractors: [example, bad], clients: [], departments: [] },
+      noExisting,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors[0]).toMatchObject({ row: 3, column: '名前' })
+  })
+  it('例）行の次の正常データ行を挟んだ2件目のエラーはExcel行4になる（配列index2 → row=4）', () => {
+    const example = { ...validContractor, '名前': '例）山田運送' }
+    const ok = { ...validContractor, 'メール': 'ok@example.com' }
+    const bad = { ...validContractor, '名前': '', 'メール': 'bad@example.com' }
+    const r = validateAndConvert(
+      { contractors: [example, ok, bad], clients: [], departments: [] },
+      noExisting,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors[0]).toMatchObject({ row: 4, column: '名前' })
   })
 })
 
@@ -117,6 +152,26 @@ describe('validateAndConvert エラー系（すべて全件中止 data:null）',
       { ...noExisting, clientNames: ['テスト商事'] },
     )
     expect(r.errors).toEqual([])
+  })
+  it('部署のファイル内重複（同一請求先名+部署名）はエラー', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [validDept, { ...validDept }] },
+      { ...noExisting, clientNames: ['テスト商事'] },
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.sheet === '部署' && e.column === '部署名' && e.reason.includes('ファイル内'))).toBe(true)
+  })
+  it('部署が既存DBの departmentKeys と重複していればエラー', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [validDept] },
+      {
+        ...noExisting,
+        clientNames: ['テスト商事'],
+        departmentKeys: [departmentKey('テスト商事', '物流部')],
+      },
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.sheet === '部署' && e.column === '部署名' && e.reason.includes('既に登録'))).toBe(true)
   })
   it('エラーは全件収集される（1件で打ち切らない）', () => {
     const r = validateAndConvert(
