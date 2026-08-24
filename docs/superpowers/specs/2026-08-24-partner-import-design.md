@@ -63,7 +63,6 @@
 | 名前 | ✓ | name | テキスト |
 | メール | ✓ | email | メール形式 |
 | 電話 | | phone | テキスト |
-| 種別 | ✓ | contractor_type | 個人/会社（画面の列挙に対応） |
 | 締め日 | ✓ | closing_day | 月末 or 1〜28 |
 | 支払月 | ✓ | payment_month_offset | 当月/翌月/翌々月/3ヶ月後 → 0-3 |
 | 支払日 | ✓ | payment_day | 月末 or 1〜28 |
@@ -77,7 +76,7 @@
 | 口座番号 | | account_number | 🔐暗号化対象・数字7桁目安 |
 | 口座名義 | | account_holder | 🔐暗号化対象 |
 
-※ `is_internal`（自社・代表者）、`parent_contractor_id`（2次委託）、`same_person_id` はテンプレ対象外（投入後に画面で設定）。運賃保険 `apply_transport_insurance` はデフォルト値。
+※ `is_internal`（自社・代表者）、`parent_contractor_id`（2次委託）、`same_person_id` はテンプレ対象外（投入後に画面で設定）。運賃保険 `apply_transport_insurance` はデフォルト値。`contractor_type` は既存フォームと同じ `'individual'` 固定、`has_withholding` は凍結仕様に従い `false` 固定（2026-08-24実装時判明: 既存フォームに種別UIは存在しないため「種別」列は設けない）。
 
 ### シート「請求先」
 
