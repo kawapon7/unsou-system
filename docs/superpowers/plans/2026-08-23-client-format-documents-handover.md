@@ -2,7 +2,7 @@
 
 作成: 2026-08-23（Mac mini / BLACKICE のセッションから）
 要件定義の正本: `docs/superpowers/specs/2026-08-23-client-format-documents-design.md`
-ステータス: **要件合意済み・土台①/様式②とも実装済み・ローカル Supabase で画面検証済み（2026-08-23 夜、ブランチ `feat/document-issuance-foundation`・本番DB未適用）**。様式②は実物（`oobaunsou_mihon/` の請求書 PDF・明細書 xlsx）と体裁を突き合わせ済み。印影（社判）も実装済み。
+ステータス: **✅ 本番適用・デプロイ済み（2026-08-24 未明。マイグレーション4本＋merge・HANDOVER §5-4「2026-08-24 未明」参照）。ボスによる本番画面一巡も確認済み。** さらに同日: ①②＝担当者の読みを人員結果表で確定（§5-4 その4）、採番は対象月基準に変更（その3）、本番DBは `hibiki-production` へ切替（その8・新DBにも db push で適用済み）。以下は実装時の記録: 要件合意済み・土台①/様式②とも実装済み・ローカル Supabase で画面検証済み（2026-08-23 夜、ブランチ `feat/document-issuance-foundation`・本番DB未適用）。様式②は実物（`oobaunsou_mihon/` の請求書 PDF・明細書 xlsx）と体裁を突き合わせ済み。印影（社判）も実装済み。
 
 ## 様式②の状態（2026-08-23 夜）
 

@@ -1,5 +1,7 @@
 # 新本番DBの構築（切替なし） Implementation Plan
 
+> **✅ この計画は完了・消化済み（2026-08-24）。** 構築は 2026-08-21 に完了（指紋照合 8/8 一致・§HANDOVER 5-2 の同日行参照）。その後 **2026-08-24 に切替も実施済み**（当計画のスコープ外だった切替は `docs/superpowers/plans/2026-08-24-db-switchover.md` で実行）。本番= `hibiki-production`（`lsgvnxiuidvwefihjbcu`）、旧 `hbpnhbsm` はテスト環境。以下は計画本文（歴史記録）。
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 新しいSupabase組織・プロジェクトを作り、マイグレーション56本を適用して、現行本番DBとスキーマが完全一致することを機械照合で証明する（切替は行わない）。
