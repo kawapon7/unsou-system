@@ -125,33 +125,36 @@ export default function ImportClient() {
     setParseError(null)
     setResult(null)
 
-    let wb: XLSX.WorkBook
+    // XLSX.read〜行のString化までを1つの try/catch にまとめる。
+    // sheet_to_json やセル値の String() 変換も壊れたファイル（不正なブック構造・巨大セル等）で
+    // 例外を投げうるため、読み込み系の処理は丸ごと保護してユーザー向けエラーに変換する。
+    let next: ImportFile
     try {
       const buf = await file.arrayBuffer()
-      wb = XLSX.read(buf)
+      const wb = XLSX.read(buf)
+
+      const missing = SHEET_ORDER.filter(key => !wb.SheetNames.includes(SHEET_NAMES[key]))
+      if (missing.length > 0) {
+        setParseError(
+          `シート名が一致しません（見つからないシート: ${missing.map(k => SHEET_NAMES[k]).join('、')}）。` +
+          'テンプレートをダウンロードして、シート名を変更せずに入力してください。',
+        )
+        return
+      }
+
+      next = { clients: [], departments: [], contractors: [] }
+      for (const key of SHEET_ORDER) {
+        const ws = wb.Sheets[SHEET_NAMES[key]]
+        const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+        next[key] = rows.map(row => {
+          const out: RawRow = {}
+          for (const k of Object.keys(row)) out[k] = String(row[k]).trim()
+          return out
+        })
+      }
     } catch {
       setParseError('ファイルの読み込みに失敗しました。.xlsx 形式のファイルを選択してください。')
       return
-    }
-
-    const missing = SHEET_ORDER.filter(key => !wb.SheetNames.includes(SHEET_NAMES[key]))
-    if (missing.length > 0) {
-      setParseError(
-        `シート名が一致しません（見つからないシート: ${missing.map(k => SHEET_NAMES[k]).join('、')}）。` +
-        'テンプレートをダウンロードして、シート名を変更せずに入力してください。',
-      )
-      return
-    }
-
-    const next: ImportFile = { clients: [], departments: [], contractors: [] }
-    for (const key of SHEET_ORDER) {
-      const ws = wb.Sheets[SHEET_NAMES[key]]
-      const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
-      next[key] = rows.map(row => {
-        const out: RawRow = {}
-        for (const k of Object.keys(row)) out[k] = String(row[k]).trim()
-        return out
-      })
     }
 
     const { errors } = validateAndConvert(next, { clientNames: [], contractorNames: [], contractorEmails: [] })
@@ -189,6 +192,9 @@ export default function ImportClient() {
           <p className="text-sm font-semibold text-zinc-800">1. テンプレートをダウンロード</p>
           <p className="text-xs text-zinc-500 mt-0.5">
             {SHEET_NAMES.clients}・{SHEET_NAMES.departments}・{SHEET_NAMES.contractors} の3シート構成です。
+          </p>
+          <p className="text-xs text-zinc-400 mt-0.5">
+            各シート2行目の「例）」記入例（登録番号・口座番号等を含む）はダミー値です。実データに置き換えてください。
           </p>
         </div>
         <button

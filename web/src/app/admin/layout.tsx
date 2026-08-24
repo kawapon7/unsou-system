@@ -25,7 +25,17 @@ export default async function OyabunLayout({
 }) {
   // ⚠️ dev専用バイパスは ALLOW_DEV_AUTH_BYPASS=true のときのみ（本番では設定しない）
   if (process.env.ALLOW_DEV_AUTH_BYPASS === 'true') {
-    return <OyabunShell email="dev@local" isOperator={false}><AdminBody>{children}</AdminBody></OyabunShell>
+    // getAuthContext() は未ログイン時に合成ユーザー（userId: DEV_BYPASS_USER_ID = 'dev-bypass'）
+    // を返す（utils/auth.ts）。ここも本番分岐と同じ requireOperator() を呼ぶことで、
+    // page.tsx（/admin/ops/import）のゲートとnavの出し分けを一致させる。
+    // OPERATOR_USER_IDS に 'dev-bypass' を含めればローカルでnavリンクが出て、
+    // 含めなければ出ない（= page.tsx への直打ちアクセスと同じ結果になる）。
+    const operatorAuth = await requireOperator()
+    return (
+      <OyabunShell email="dev@local" isOperator={operatorAuth.ok}>
+        <AdminBody>{children}</AdminBody>
+      </OyabunShell>
+    )
   }
 
   const auth = await getAuthContext()
