@@ -1384,6 +1384,15 @@ web/
 
 ### 5-4. 直近の作業履歴（新しい順）
 
+#### 2026-08-24 その8（本番DB切替を実施・完了）
+
+**✅ 本番は `hibiki-production`（`lsgvnxiuidvwefihjbcu`・新org）で稼働開始。旧DB `hbpnhbsm` はテスト環境化。**
+
+- 実施内容: ①`supabase db push` 6本適用（残り2本は8/21適用済みと判明）→ ローカル65本と1:1一致 ②lsgv の Site URL/Redirect URLs 設定・管理者ユーザー作成（UUID `0573b242-93b1-46a1-8767-6bc30712e712`・role=master・tenant_id=A社UUID を SQL で紐づけ）③GitHub secrets（NEXT_PUBLIC_SUPABASE_URL/ANON_KEY）と wrangler secrets（URL/ANON_KEY/SERVICE_ROLE_KEY）を lsgv 値へ → デプロイ run `32687195542` success → `/login` 200 確認。
+- ⚠️ 学び: `wrangler secret put` は**実行した瞬間に本番 Worker の新バージョンが配信される**（デプロイを待たない）。次回シークレットを切り替えるときは put→デプロイを間を置かず連続で行うこと。
+- `web/.env.local.prod-backup` は**旧DB向けのため `.env.local.test-backup` にリネーム**。現 `.env.local` も旧DB（=テスト環境）向きのままにしてある（ローカル開発が誤って本番DBを触らないので安全側）。新本番に対する運用作業はダッシュボード/本番画面から行う。
+- **残タスク**: ①ボスが本番URLにログイン（新規作成の管理者アカウント）→ **自社情報の登録から開始**（未登録のうちは帳票系が fail-closed）②旧DB（hbpnhbsm）の Auth 設定から本番URLを外す（誤ログイン防止・ダッシュボード作業）③A社実マスタ投入（従来どおり他人待ち）④lsgv の Pro 化はA社実運用開始時に。
+
 #### 2026-08-24 その7（本番DB切替の方針確定・手順書作成）
 
 **ボス決定: 本番は新orgの `hibiki-production`（`lsgvnxiuidvwefihjbcu`）で運用する。切替手順書 = `docs/superpowers/plans/2026-08-24-db-switchover.md`。**

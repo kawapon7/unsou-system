@@ -1,5 +1,7 @@
 # 本番DB切替手順書: hbpnhbsm → hibiki-production (lsgv)
 
+> **✅ 2026-08-24 12時台に切替完了。** Phase 1（db push 6本・65本1:1一致）→ Phase 2（URL設定・管理者作成 `0573b242-…`・master/tenant紐づけ）→ Phase 3（GitHub secrets 2つ・wrangler secrets 3つ・デプロイ run `32687195542` success）→ `/login` 200 確認。指紋照合は省略（新DBがマイグレーション1:1の唯一の正になったため）。**未実施の残り**: 手順10（ボスの実ログイン→自社情報登録）と手順11の一部（旧DB hbpnhbsm の Auth から本番URLを外す）。`.env.local.prod-backup` は `.env.local.test-backup` にリネーム済み。以下は実施前の計画。
+
 作成: 2026-08-24（ボス決定: 本番は新org の `hibiki-production` で運用する）
 
 ## 前提（2026-08-24 実測）
