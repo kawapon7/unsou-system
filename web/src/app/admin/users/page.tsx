@@ -788,6 +788,24 @@ function UserRow({
   onDelete: (u: ManagedUser) => void
   onAssign?: (u: ManagedUser) => void
 }) {
+  // 運営者アカウントはメールを出さず「システムサポート」表記。編集・削除ボタンも出さない
+  // （操作自体もサーバー側（updateUser/deleteUser）で本人以外拒否している）
+  if (user.isOperator) {
+    return (
+      <div className="flex items-center justify-between px-5 py-3.5 gap-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-sm font-medium text-zinc-900 truncate">システムサポート</span>
+            <span className="inline-flex items-center rounded-full bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-500">
+              運営
+            </span>
+          </div>
+          <p className="mt-0.5 text-xs text-zinc-400">HIBIKI運営のサポート用アカウントです</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="flex items-center justify-between px-5 py-3.5 gap-4">
       <div className="min-w-0 flex-1">

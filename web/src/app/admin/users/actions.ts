@@ -4,6 +4,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+import { parseOperatorIds, isOperatorId } from '@/utils/operator'
 
 export type UserRole = 'master' | 'driver'
 
@@ -14,6 +15,9 @@ export type ManagedUser = {
   contractor_id: string | null
   contractor_name: string | null
   created_at: string
+  // 運営者（OPERATOR_USER_IDS）のアカウント。UI では「システムサポート」表記にし、
+  // メール非表示・編集/削除ボタン非表示にする（判定はサーバー側でのみ行い、ID一覧は返さない）
+  isOperator: boolean
 }
 
 type ActionResult<T = void> =
@@ -48,6 +52,8 @@ export async function listUsers(): Promise<ActionResult<ManagedUser[]>> {
     (contractors ?? []).map((c: { id: string; name: string; email: string }) => [c.email, c])
   )
 
+  const operatorIds = parseOperatorIds(process.env.OPERATOR_USER_IDS)
+
   const result: ManagedUser[] = authUsers
     .filter(u => u.email)
     .map(u => {
@@ -62,6 +68,7 @@ export async function listUsers(): Promise<ActionResult<ManagedUser[]>> {
         contractor_id: contractor?.id ?? null,
         contractor_name: contractor?.name ?? null,
         created_at: u.created_at,
+        isOperator: isOperatorId(u.id, operatorIds),
       }
     })
     .sort((a, b) => {
@@ -183,6 +190,13 @@ export async function updateUser(
 ): Promise<ActionResult> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+
+  // 運営者アカウントは本人以外から変更不可（UI非表示に加えたサーバー側の実効ガード）
+  const operatorIds = parseOperatorIds(process.env.OPERATOR_USER_IDS)
+  if (isOperatorId(userId, operatorIds) && auth.ctx.userId !== userId) {
+    return { data: null, error: 'このアカウント（システムサポート）は変更できません' }
+  }
+
   const db = createServiceClient()
   const tenantId = await getCurrentTenantId()
 
@@ -223,6 +237,13 @@ export async function updateUser(
 export async function deleteUser(userId: string): Promise<ActionResult> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
+
+  // 運営者アカウントは本人以外から削除不可（UI非表示に加えたサーバー側の実効ガード）
+  const operatorIds = parseOperatorIds(process.env.OPERATOR_USER_IDS)
+  if (isOperatorId(userId, operatorIds) && auth.ctx.userId !== userId) {
+    return { data: null, error: 'このアカウント（システムサポート）は削除できません' }
+  }
+
   const db = createServiceClient()
 
   await db.from('users').delete().eq('id', userId)
