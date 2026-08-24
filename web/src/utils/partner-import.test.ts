@@ -56,6 +56,20 @@ describe('validateAndConvert 正常系', () => {
     expect(r.errors).toEqual([])
     expect(r.data!.contractors).toHaveLength(1)
   })
+
+  it('先頭セルが「※」のガイド行（必須/任意注記）はスキップされる', () => {
+    const guide = { ...validContractor, '名前': '※必須', 'メール': '必須', '登録番号': '適格のみ必須（T+13桁）・免税は記入不可' }
+    const clientGuide = { ...validClient, '会社名': '※必須', '締め日': '必須（月末 または 1〜28）' }
+    const deptGuide = { ...validDept, '請求先名': '※必須（請求先シートの会社名と一致）', '部署名': '必須' }
+    const r = validateAndConvert(
+      { contractors: [guide, validContractor], clients: [clientGuide, validClient], departments: [deptGuide, validDept] },
+      noExisting,
+    )
+    expect(r.errors).toEqual([])
+    expect(r.data!.contractors).toHaveLength(1)
+    expect(r.data!.clients).toHaveLength(1)
+    expect(r.data!.departments).toHaveLength(1)
+  })
   it('全セルが空文字の行はエラーにならずスキップされる', () => {
     const blankRow = Object.fromEntries(
       Object.keys(validContractor).map(k => [k, '']),

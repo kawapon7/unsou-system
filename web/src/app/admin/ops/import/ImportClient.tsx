@@ -21,7 +21,7 @@ type Phase = 'idle' | 'parsed' | 'importing' | 'done'
 // テンプレート出力・読み込みの対象シート（依存関係の順: 請求先→部署→委託先）
 const SHEET_ORDER = ['clients', 'departments', 'contractors'] as const
 
-// 記入例（2行目）。1列目が「例）」始まりの行は validateAndConvert 側でスキップされる。
+// 記入例（テンプレ3行目。2行目はGUIDE_ROWS）。1列目が「例）」or「※」始まりの行は validateAndConvert 側でスキップされる。
 const EXAMPLE_ROWS: Record<(typeof SHEET_ORDER)[number], string[]> = {
   clients: [
     '例）株式会社サンプル商事', '山田太郎', 'yamada@example.com', '03-xxxx-xxxx',
@@ -38,9 +38,29 @@ const EXAMPLE_ROWS: Record<(typeof SHEET_ORDER)[number], string[]> = {
   ],
 }
 
+// 必須/任意ガイド行（2行目・「※」始まり）。1列目が「※」or「例）」始まりの行は
+// validateAndConvert 側と同じ基準で非データ行としてスキップされる。
+const GUIDE_ROWS: Record<(typeof SHEET_ORDER)[number], string[]> = {
+  clients: [
+    '※必須', '任意', '任意', '任意',
+    '必須（月末 または 1〜28）', '必須（当月/翌月/翌々月/3ヶ月後）', '必須（月末 または 1〜28）', '必須（外税/内税/非課税）',
+    '必須（あり/なし）', '必須（あり/なし）',
+    '任意', '任意', '任意（普通/当座）', '任意', '任意',
+  ],
+  departments: [
+    '※必須（請求先シートの会社名と一致）', '必須', '任意', '任意', '任意',
+  ],
+  contractors: [
+    '※必須', '必須', '任意',
+    '必須（月末 または 1〜28）', '必須（当月/翌月/翌々月/3ヶ月後）', '必須（月末 または 1〜28）', '必須（振込/現金）',
+    '必須（外税/内税/非課税）', '必須（適格/免税）', '適格のみ必須（T+13桁）・免税は記入不可',
+    '任意', '任意', '任意（普通/当座）', '任意', '任意',
+  ],
+}
+
 function isExampleRow(row: RawRow): boolean {
   const first = Object.values(row)[0]
-  return typeof first === 'string' && first.startsWith('例）')
+  return typeof first === 'string' && (first.startsWith('例）') || first.startsWith('※'))
 }
 
 function countDataRows(file: ImportFile): number {
@@ -58,7 +78,7 @@ function downloadTemplate() {
   for (const key of SHEET_ORDER) {
     const headers: string[] = [...TEMPLATE_HEADERS[key]]
     const example = EXAMPLE_ROWS[key]
-    const ws = XLSX.utils.aoa_to_sheet([headers, example])
+    const ws = XLSX.utils.aoa_to_sheet([headers, GUIDE_ROWS[key], example])
     XLSX.utils.book_append_sheet(wb, ws, SHEET_NAMES[key])
   }
   XLSX.writeFile(wb, 'HIBIKI_取引先インポート.xlsx')
@@ -196,7 +216,7 @@ export default function ImportClient() {
             {SHEET_NAMES.clients}・{SHEET_NAMES.departments}・{SHEET_NAMES.contractors} の3シート構成です。
           </p>
           <p className="text-xs text-zinc-400 mt-0.5">
-            各シート2行目の「例）」記入例（登録番号・口座番号等を含む）はダミー値です。実データに置き換えてください。
+            各シート2行目は必須／任意のガイド、3行目の「例）」はダミー値の記入例です。どちらも残したまま取り込んで問題ありません（データとしては読み込まれません）。
           </p>
         </div>
         <button
