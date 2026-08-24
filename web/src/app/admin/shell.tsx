@@ -372,9 +372,11 @@ function MonthPicker() {
 
 function SidebarContent({
   email,
+  isOperator,
   onNavClick,
 }: {
   email: string
+  isOperator: boolean
   onNavClick?: () => void
 }) {
   return (
@@ -393,28 +395,33 @@ function SidebarContent({
         {/* ⭐ マイショートカット（お気に入りがある場合のみ表示） */}
         <FavoritesSection onNavClick={onNavClick} />
 
-        {NAV_GROUPS.map((group, gi) => (
-          <div key={group.groupLabel} className={gi > 0 ? 'mt-4' : undefined}>
-            <p className={`px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest ${CATEGORY_STYLES[group.accent].labelText}`}>
-              {group.groupLabel}
-            </p>
-            <div className="space-y-0.5">
-              {group.items.map(item => (
-                <NavLinkSuspended
-                  key={item.href}
-                  href={item.href}
-                  label={item.label}
-                  icon={item.icon}
-                  accent={group.accent}
-                  onClick={onNavClick}
-                />
-              ))}
+        {NAV_GROUPS.map((group, gi) => {
+          // 運営者専用メニューはサーバー側判定結果（isOperator）でのみ出し分ける
+          const visibleItems = group.items.filter(item => !item.operatorOnly || isOperator)
+          if (visibleItems.length === 0) return null
+          return (
+            <div key={group.groupLabel} className={gi > 0 ? 'mt-4' : undefined}>
+              <p className={`px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest ${CATEGORY_STYLES[group.accent].labelText}`}>
+                {group.groupLabel}
+              </p>
+              <div className="space-y-0.5">
+                {visibleItems.map(item => (
+                  <NavLinkSuspended
+                    key={item.href}
+                    href={item.href}
+                    label={item.label}
+                    icon={item.icon}
+                    accent={group.accent}
+                    onClick={onNavClick}
+                  />
+                ))}
+              </div>
+              {gi < NAV_GROUPS.length - 1 && (
+                <div className="mx-3 mt-3 border-t border-zinc-100" />
+              )}
             </div>
-            {gi < NAV_GROUPS.length - 1 && (
-              <div className="mx-3 mt-3 border-t border-zinc-100" />
-            )}
-          </div>
-        ))}
+          )
+        })}
       </nav>
 
       {/* ユーザー情報・ログアウト */}
@@ -437,9 +444,11 @@ function SidebarContent({
 
 export default function OyabunShell({
   email,
+  isOperator,
   children,
 }: {
   email: string
+  isOperator: boolean
   children: React.ReactNode
 }) {
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -450,7 +459,7 @@ export default function OyabunShell({
 
       {/* ── デスクトップ サイドバー ─────────────────────── */}
       <aside className="hidden lg:flex w-60 shrink-0 flex-col border-r border-zinc-200 bg-white">
-        <SidebarContent email={email} />
+        <SidebarContent email={email} isOperator={isOperator} />
       </aside>
 
       {/* ── モバイル ドロワー オーバーレイ ─────────────── */}
@@ -469,6 +478,7 @@ export default function OyabunShell({
       >
         <SidebarContent
           email={email}
+          isOperator={isOperator}
           onNavClick={() => setDrawerOpen(false)}
         />
       </aside>

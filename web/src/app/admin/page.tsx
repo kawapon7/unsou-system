@@ -1,8 +1,14 @@
 import Link from 'next/link'
 import { NAV_GROUPS, CATEGORY_STYLES } from './nav'
+import { requireOperator } from '@/utils/operator'
 
 // トップ画面（メニューハブ）。配色ルールは docs/UI_REDESIGN_PLAN.md §3 を正とする。
-export default function AdminHome() {
+// operatorOnly 項目の出し分けは shell.tsx のサイドバーと同じ方針:
+// サーバー側で判定した boolean のみ使い、OPERATOR_USER_IDS の値自体はクライアントへ渡さない。
+export default async function AdminHome() {
+  const operatorAuth = await requireOperator()
+  const isOperator = operatorAuth.ok
+
   return (
     <div className="mx-auto max-w-5xl px-6 py-10 lg:py-16">
       <header className="mb-10">
@@ -13,6 +19,8 @@ export default function AdminHome() {
       <div className="grid gap-5 md:grid-cols-2 lg:grid-cols-3">
         {NAV_GROUPS.map(group => {
           const s = CATEGORY_STYLES[group.accent]
+          const visibleItems = group.items.filter(item => !item.operatorOnly || isOperator)
+          if (visibleItems.length === 0) return null
           return (
             <section
               key={group.groupLabel}
@@ -28,7 +36,7 @@ export default function AdminHome() {
                 {group.description}
               </p>
               <ul className="space-y-0.5">
-                {group.items.map(item => (
+                {visibleItems.map(item => (
                   <li key={item.href}>
                     <Link
                       href={item.href}
