@@ -2,6 +2,7 @@ import { Suspense } from 'react'
 import { redirect } from 'next/navigation'
 import OyabunShell from './shell'
 import { getAuthContext } from '@/utils/auth'
+import { requireOperator } from '@/utils/operator'
 
 // ⚠️ 認証ガードを毎リクエスト実行させるため動的レンダリングを強制する。
 // 無いと admin 配下が静的プリレンダリング(○ Static)され、Workers の
@@ -24,7 +25,7 @@ export default async function OyabunLayout({
 }) {
   // ⚠️ dev専用バイパスは ALLOW_DEV_AUTH_BYPASS=true のときのみ（本番では設定しない）
   if (process.env.ALLOW_DEV_AUTH_BYPASS === 'true') {
-    return <OyabunShell email="dev@local"><AdminBody>{children}</AdminBody></OyabunShell>
+    return <OyabunShell email="dev@local" isOperator={false}><AdminBody>{children}</AdminBody></OyabunShell>
   }
 
   const auth = await getAuthContext()
@@ -32,5 +33,13 @@ export default async function OyabunLayout({
   // 親分(owner)以外は管理画面に入れない（子分は自分の画面へ）
   if (!auth.ctx.isOwner) redirect('/driver/schedule')
 
-  return <OyabunShell email={auth.ctx.email ?? ''}><AdminBody>{children}</AdminBody></OyabunShell>
+  // 運営者専用メニュー（取引先インポート等）の出し分け用。
+  // ⚠️ OPERATOR_USER_IDS の値そのものはクライアントに渡さず、判定結果の boolean のみ渡す。
+  const operatorAuth = await requireOperator()
+
+  return (
+    <OyabunShell email={auth.ctx.email ?? ''} isOperator={operatorAuth.ok}>
+      <AdminBody>{children}</AdminBody>
+    </OyabunShell>
+  )
 }
