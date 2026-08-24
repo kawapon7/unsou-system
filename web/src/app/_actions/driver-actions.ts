@@ -191,8 +191,8 @@ export async function approvePaymentNotice(noticeId: string): Promise<ActionResu
   //    （更新後に投げると「承認は済んだのにエラー表示」になる）
   const tenantId = await getCurrentTenantId()
 
-  // driver 承認確定: status='locked' に加え approval_status / locked も同期。
-  // （表示・管理画面は approval_status を参照するため両列を揃える）
+  // driver 承認確定: 正本は approval_status + locked。
+  // ⚠️ status は廃止予定の派生値（読む側は無い）。列 DROP（Phase 3）まで同期を続ける。
   const { error: updateErr } = await db
     .from('payment_notices')
     .update({

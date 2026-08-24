@@ -331,6 +331,8 @@ async function finalizePaymentNotice(
         contractor_id:          contractorId,
         notice_month:           noticeMonthDate,
         target_month:           noticeMonthDate,
+        // ⚠️ status は廃止予定の派生値（正本は approval_status + locked）。読む側は無い。
+        //    DEFAULT 追加マイグレーション適用まで互換で書く（billing/actions.ts の生成側と同じ）。
         status:                 'locked',
         subtotal_registered:    a.subtotalRegistered,
         tax_registered:         a.taxRegistered,
@@ -487,6 +489,8 @@ export async function proxyApprovePaymentNotice(
     .from('payment_notices')
     .update({
       approval_status: 'approved_by_proxy',
+      // ⚠️ status は廃止予定の派生値。UPDATE 経路は DEFAULT が付いても値が変わらないため、
+      //    列 DROP（Phase 3）まで同期を続ける（読む側は無い）。
       status:          'locked',
       locked:          true,
       locked_at:       new Date().toISOString(),

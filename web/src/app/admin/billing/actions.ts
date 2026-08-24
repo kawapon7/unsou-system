@@ -680,7 +680,7 @@ export async function generatePaymentNotice(
   // 既存レコードを確認して INSERT or UPDATE
   const { data: existing } = await db
     .from('payment_notices')
-    .select('id, status, approval_status, locked')
+    .select('id, approval_status, locked')
     // ⚠️ 一意制約は (contractor_id, notice_month) で tenant_id を含まない。
     //    service クライアントは RLS を通らないため tenant_id で必ず絞る。
     .eq('tenant_id', tenantId)
@@ -688,11 +688,13 @@ export async function generatePaymentNotice(
     .eq('notice_month', targetMonth)
     .maybeSingle()
 
-  // 子分が承認（status='locked'）/ approved / locked のいずれかなら再生成不可
+  // 承認済み（approved）またはロック済みなら再生成不可。
+  // ⚠️ status 列は読まない（派生値の段階的廃止・2026-08-24）。status='locked' を書く
+  //    全経路（本人承認・代理承認・確定ロック）は同時に locked=true を書くため、
+  //    locked の判定だけで漏れはない。
   if (existing && (
     existing.approval_status === 'approved' ||
-    existing.locked === true ||
-    existing.status === 'locked'
+    existing.locked === true
   )) {
     return { data: null, error: '支払通知書はロック済みのため再生成できません。' }
   }
@@ -707,6 +709,9 @@ export async function generatePaymentNotice(
     //    （DBのCHECK制約 payment_notices_status_check）。
     //    'issued' / 'paid' は invoices（請求書）側の語彙であり、ここで使うと
     //    「new row violates check constraint」で生成が必ず失敗する。
+    // ⚠️ status は廃止予定の派生値（正本は approval_status + locked）。読む側は無い。
+    //    列が NOT NULL・DEFAULT なしのため互換で書いている。DEFAULT 追加の
+    //    マイグレーション（payment_notices_status_default）適用後にこの行を削除する。
     status:                 'unapproved',
     subtotal_registered:    a.subtotalRegistered,
     tax_registered:         a.taxRegistered,
