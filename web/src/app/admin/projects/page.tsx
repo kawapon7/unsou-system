@@ -64,6 +64,7 @@ type ProjectForm = {
   buy_amount:     string
   cancelled:      boolean
   unit_type:      string
+  category:       string
   driver_visible: boolean
   department_id:  string
 }
@@ -77,6 +78,7 @@ const defaultForm = (): ProjectForm => ({
   buy_amount:     '',
   cancelled:      false,
   unit_type:      'quantity',
+  category:       'transport',
   driver_visible: true,
   department_id:  '',
 })
@@ -198,6 +200,17 @@ function ProjectFormFields({
         <Field label="案件名" required>
           <input className={inputCls} value={form.project_name} onChange={e => set('project_name', e.target.value)} required />
         </Field>
+        <div className="col-span-2">
+          <Field label="区分">
+            <select className={selectCls} value={form.category} onChange={e => set('category', e.target.value)}>
+              <option value="transport">輸送系</option>
+              <option value="work">作業系（デバンニング・荷役等）</option>
+            </select>
+            <p className="mt-1 text-xs text-zinc-400">
+              支払通知書の並び順と「※人員結果は別紙参照」の判定に使います。
+            </p>
+          </Field>
+        </div>
         <div className="col-span-2">
           <Field label="荷主" required>
             <select className={selectCls} value={form.client_id} onChange={e => handleClientChange(e.target.value)} required>
@@ -731,6 +744,7 @@ export default function ProjectsPage() {
       buy_amount:     row.buy_amount != null ? String(row.buy_amount) : '',
       cancelled:      row.status === 'cancelled',
       unit_type:      row.unit_type,
+      category:       row.category ?? 'transport',
       driver_visible: (row as any).driver_visible ?? true,
       department_id:  row.department_id ?? '',
     })
@@ -761,6 +775,7 @@ export default function ProjectsPage() {
         buy_amount:     form.buy_amount !== '' ? Number(form.buy_amount) : null,
         status:         form.cancelled ? 'cancelled' : 'accepted',
         unit_type:      form.unit_type,
+        category:       form.category,
         driver_visible: form.driver_visible,
         department_id:  form.department_id || null,
       } as any
