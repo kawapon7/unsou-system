@@ -233,3 +233,117 @@ describe('normalizeName / projectKey', () => {
   })
 })
 
+const validProject = {
+  '荷主': 'テスト商事', '部署': '物流部', '案件名': '広島定期便', '区分': '輸送系',
+  '委託先': '山田運送', '売上単価': '15000', '仕入単価': '12000',
+}
+const existingWithClient = {
+  ...noExisting,
+  clientNames: ['テスト商事'],
+  clientUseDepartments: { 'テスト商事': true },
+  departmentKeys: [departmentKey('テスト商事', '物流部')],
+  contractorNames: ['山田運送'],
+}
+
+describe('案件シート 正常系', () => {
+  it('案件行が変換される', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [validProject] },
+      existingWithClient,
+    )
+    expect(r.errors).toEqual([])
+    expect(r.data!.projects).toHaveLength(1)
+    expect(r.data!.projects[0]).toMatchObject({
+      clientName: 'テスト商事',
+      departmentName: '物流部',
+      contractorName: '山田運送',
+    })
+    expect(r.data!.projects[0].payload).toMatchObject({
+      project_name: '広島定期便',
+      category: 'transport',
+      sale_amount: 15000,
+      buy_amount: 12000,
+      unit_type: 'quantity',
+      status: 'accepted',
+      driver_visible: true,
+    })
+  })
+
+  it('区分「作業系」は category=work になる', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '区分': '作業系' }] },
+      existingWithClient,
+    )
+    expect(r.errors).toEqual([])
+    expect(r.data!.projects[0].payload).toMatchObject({ category: 'work' })
+  })
+
+  it('委託先と仕入単価は空欄でよい', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '委託先': '', '仕入単価': '' }] },
+      existingWithClient,
+    )
+    expect(r.errors).toEqual([])
+    expect(r.data!.projects[0].contractorName).toBeNull()
+    expect(r.data!.projects[0].payload).toMatchObject({ buy_amount: null })
+  })
+
+  it('全角数字とカンマ区切りを受け入れる', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '売上単価': '１５，０００', '仕入単価': '12,000' }] },
+      existingWithClient,
+    )
+    expect(r.errors).toEqual([])
+    expect(r.data!.projects[0].payload).toMatchObject({ sale_amount: 15000, buy_amount: 12000 })
+  })
+})
+
+describe('案件シート エラー系', () => {
+  it('荷主・案件名・区分・売上単価の空欄はエラー', () => {
+    const r = validateAndConvert(
+      {
+        contractors: [], clients: [], departments: [],
+        projects: [{ ...validProject, '荷主': '', '案件名': '', '区分': '', '売上単価': '' }],
+      },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    const cols = r.errors.map(e => e.column)
+    expect(cols).toEqual(expect.arrayContaining(['荷主', '案件名', '区分', '売上単価']))
+  })
+
+  it('区分が列挙値以外ならエラー', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '区分': '配送' }] },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors[0]).toMatchObject({ sheet: '案件', column: '区分' })
+  })
+
+  it('単価が負数や文字混じりならエラー', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '売上単価': '-100', '仕入単価': '1万円' }] },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.map(e => e.column)).toEqual(expect.arrayContaining(['売上単価', '仕入単価']))
+  })
+
+  it('ガイド行と記入例行はスキップされる', () => {
+    const r = validateAndConvert(
+      {
+        contractors: [], clients: [], departments: [],
+        projects: [
+          { ...validProject, '荷主': '※必須' },
+          { ...validProject, '荷主': '例）株式会社サンプル商事' },
+          validProject,
+        ],
+      },
+      existingWithClient,
+    )
+    expect(r.errors).toEqual([])
+    expect(r.data!.projects).toHaveLength(1)
+  })
+})
+

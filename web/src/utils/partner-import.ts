@@ -133,6 +133,15 @@ function emptyToNull(v: string | undefined): string | null {
   return v === undefined || v === '' ? null : v
 }
 
+const CATEGORY_MAP: Record<string, string> = { '輸送系': 'transport', '作業系': 'work' }
+
+/** '15,000' '１５０００' を 15000 にする。0以上の整数として解釈できなければ null。 */
+function parseAmount(v: string): number | null {
+  const s = v.normalize('NFKC').replace(/,/g, '').trim()
+  if (!/^\d+$/.test(s)) return null
+  return Number(s)
+}
+
 // ── 請求先（clients） ────────────────────────────────────
 
 function validateAndConvertClients(
@@ -430,6 +439,70 @@ function validateAndConvertDepartments(
   return results
 }
 
+// ── 案件（projects） ─────────────────────────────────────
+// この関数では必須・区分・数値のみ扱う。参照解決（荷主・部署・委託先の実在確認）と
+// 重複検査は別タスクで追加する。
+
+function validateAndConvertProjects(
+  rows: RawRow[],
+  errors: RowError[],
+): ConvertedImport['projects'] {
+  const sheet = SHEET_NAMES.projects
+  const results: ConvertedImport['projects'] = []
+
+  rows.forEach((row, index) => {
+    if (isExampleRow(row)) return
+    if (isBlankRow(row)) return
+
+    const clientName = row['荷主'] ?? ''
+    if (!clientName) pushError(errors, sheet, index, '荷主', '必須項目です')
+
+    const projectName = row['案件名'] ?? ''
+    if (!projectName) pushError(errors, sheet, index, '案件名', '必須項目です')
+
+    const categoryLabel = row['区分'] ?? ''
+    if (!categoryLabel) {
+      pushError(errors, sheet, index, '区分', '必須項目です')
+    } else if (!(categoryLabel in CATEGORY_MAP)) {
+      pushError(errors, sheet, index, '区分', `「${Object.keys(CATEGORY_MAP).join('」「')}」のいずれかで入力してください`)
+    }
+
+    const saleRaw = row['売上単価'] ?? ''
+    const sale = saleRaw === '' ? null : parseAmount(saleRaw)
+    if (saleRaw === '') {
+      pushError(errors, sheet, index, '売上単価', '必須項目です')
+    } else if (sale === null) {
+      pushError(errors, sheet, index, '売上単価', '0以上の整数で入力してください')
+    }
+
+    const buyRaw = row['仕入単価'] ?? ''
+    const buy = buyRaw === '' ? null : parseAmount(buyRaw)
+    if (buyRaw !== '' && buy === null) {
+      pushError(errors, sheet, index, '仕入単価', '0以上の整数で入力してください')
+    }
+
+    const deptName = row['部署'] ?? ''
+    const contractorName = row['委託先'] ?? ''
+
+    results.push({
+      clientName,
+      departmentName: deptName === '' ? null : deptName,
+      contractorName: contractorName === '' ? null : contractorName,
+      payload: {
+        project_name: projectName,
+        category: CATEGORY_MAP[categoryLabel] ?? categoryLabel,
+        sale_amount: sale ?? 0,
+        buy_amount: buy,
+        unit_type: 'quantity',
+        status: 'accepted',
+        driver_visible: true,
+      },
+    })
+  })
+
+  return results
+}
+
 // ── エントリポイント ─────────────────────────────────────
 
 export function validateAndConvert(
@@ -445,11 +518,11 @@ export function validateAndConvert(
     file.clients.filter(r => !isExampleRow(r)).map(r => r['会社名']).filter(Boolean),
   )
   const departments = validateAndConvertDepartments(file.departments, errors, fileClientNames, existing)
+  const projects = validateAndConvertProjects(file.projects, errors)
 
   if (errors.length > 0) {
     return { data: null, errors }
   }
 
-  // 案件（projects）の検証・変換は別タスクで実装する。ここでは型を満たすための空配列。
-  return { data: { clients, contractors, departments, projects: [] }, errors: [] }
+  return { data: { clients, contractors, departments, projects }, errors: [] }
 }
