@@ -196,6 +196,16 @@ describe('validateAndConvert エラー系（すべて全件中止 data:null）',
   })
 })
 
+describe('departmentKey', () => {
+  it('NUL文字区切りのキーを返す', () => {
+    expect(departmentKey('テスト商事', '物流部')).toBe('テスト商事 物流部')
+  })
+
+  it('会社名に区切りらしき文字が含まれても衝突しない', () => {
+    expect(departmentKey('A 社', 'B')).not.toBe(departmentKey('A', ' 社B'))
+  })
+})
+
 describe('TEMPLATE_HEADERS', () => {
   it('3シート分のヘッダが定義されている', () => {
     expect(TEMPLATE_HEADERS.contractors).toContain('名前')
