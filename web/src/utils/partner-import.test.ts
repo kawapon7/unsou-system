@@ -347,3 +347,119 @@ describe('案件シート エラー系', () => {
   })
 })
 
+describe('案件シート 参照解決と重複', () => {
+  it('同一ファイル内の請求先・部署・委託先で解決できる', () => {
+    const r = validateAndConvert(
+      {
+        clients: [validClient],                       // テスト商事・部署を使う=あり
+        departments: [validDept],                     // テスト商事・物流部
+        contractors: [validContractor],                // 山田運送
+        projects: [{ ...validProject, '委託先': '山田運送' }],
+      },
+      noExisting,
+    )
+    expect(r.errors).toEqual([])
+    expect(r.data!.projects).toHaveLength(1)
+  })
+
+  it('どちらにも無い荷主はエラー', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '荷主': '知らない会社' }] },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.column === '荷主')).toBe(true)
+  })
+
+  it('どちらにも無い委託先はエラー', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '委託先': '知らない運送' }] },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.column === '委託先')).toBe(true)
+  })
+
+  it('部署を使う荷主で部署が空欄ならエラー', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '部署': '' }] },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.column === '部署')).toBe(true)
+  })
+
+  it('部署を使わない荷主に部署が書かれていたらエラー', () => {
+    const existing = {
+      ...existingWithClient,
+      clientUseDepartments: { 'テスト商事': false },
+      departmentKeys: [],
+    }
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [validProject] },
+      existing,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.column === '部署' && e.reason.includes('部署を使わない'))).toBe(true)
+  })
+
+  it('存在しない部署名はエラー', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '部署': '経理部' }] },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.column === '部署')).toBe(true)
+  })
+
+  it('ファイル内で荷主・部署・案件名が重複したらエラー', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [validProject, validProject] },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.column === '案件名')).toBe(true)
+  })
+
+  it('表記ゆれ（全角空白・全角英数字）も重複として検出する', () => {
+    const r = validateAndConvert(
+      {
+        contractors: [], clients: [], departments: [],
+        projects: [validProject, { ...validProject, '案件名': '広島　定期便' }],
+      },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.column === '案件名')).toBe(true)
+  })
+
+  it('既存DBと重複したらエラー', () => {
+    const existing = {
+      ...existingWithClient,
+      projectKeys: [projectKey('テスト商事', '物流部', '広島定期便')],
+    }
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [validProject] },
+      existing,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.reason.includes('既に登録されている'))).toBe(true)
+  })
+
+  it('部署が違えば同じ案件名でも通る', () => {
+    const existing = {
+      ...existingWithClient,
+      departmentKeys: [departmentKey('テスト商事', '物流部'), departmentKey('テスト商事', '第二物流部')],
+    }
+    const r = validateAndConvert(
+      {
+        contractors: [], clients: [], departments: [],
+        projects: [validProject, { ...validProject, '部署': '第二物流部' }],
+      },
+      existing,
+    )
+    expect(r.errors).toEqual([])
+    expect(r.data!.projects).toHaveLength(2)
+  })
+})
+

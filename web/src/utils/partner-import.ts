@@ -440,15 +440,20 @@ function validateAndConvertDepartments(
 }
 
 // ── 案件（projects） ─────────────────────────────────────
-// この関数では必須・区分・数値のみ扱う。参照解決（荷主・部署・委託先の実在確認）と
-// 重複検査は別タスクで追加する。
 
 function validateAndConvertProjects(
   rows: RawRow[],
   errors: RowError[],
+  fileClientNames: Set<string>,
+  fileUseDepartments: Map<string, boolean>,
+  fileDeptKeys: Set<string>,
+  fileContractorNames: Set<string>,
+  existing: ExistingSets,
 ): ConvertedImport['projects'] {
   const sheet = SHEET_NAMES.projects
   const results: ConvertedImport['projects'] = []
+  const seenKeys = new Set<string>()
+  const existingProjectKeys = existing.projectKeys ?? []
 
   rows.forEach((row, index) => {
     if (isExampleRow(row)) return
@@ -484,6 +489,50 @@ function validateAndConvertProjects(
     const deptName = row['部署'] ?? ''
     const contractorName = row['委託先'] ?? ''
 
+    // 荷主の存在確認（ファイル内 or 既存DB）
+    const clientKnown = fileClientNames.has(clientName) || existing.clientNames.includes(clientName)
+    if (clientName && !clientKnown) {
+      pushError(errors, sheet, index, '荷主', '請求先シートにも既存データにも見つかりません')
+    }
+
+    // 部署の要否。ファイル内の請求先シートを優先し、無ければ既存DBの設定を見る
+    const usesDept = fileUseDepartments.get(clientName) ?? existing.clientUseDepartments?.[clientName]
+    if (clientName && clientKnown && usesDept !== undefined) {
+      if (usesDept && !deptName) {
+        pushError(errors, sheet, index, '部署', 'この荷主は部署を使う設定です。部署名を入力してください')
+      }
+      if (!usesDept && deptName) {
+        pushError(errors, sheet, index, '部署', 'この荷主は部署を使わない設定です。部署は空欄にしてください')
+      }
+    }
+
+    // 部署の存在確認
+    if (clientName && deptName) {
+      const key = departmentKey(clientName, deptName)
+      if (!fileDeptKeys.has(key) && !existing.departmentKeys.includes(key)) {
+        pushError(errors, sheet, index, '部署', '部署シートにも既存データにも見つかりません')
+      }
+    }
+
+    // 委託先の存在確認（任意項目。書かれていれば照合する）
+    if (contractorName
+      && !fileContractorNames.has(contractorName)
+      && !existing.contractorNames.includes(contractorName)) {
+      pushError(errors, sheet, index, '委託先', '委託先シートにも既存データにも見つかりません')
+    }
+
+    // 重複検査（案件名の表記ゆれは projectKey 側で吸収）
+    if (clientName && projectName) {
+      const key = projectKey(clientName, deptName === '' ? null : deptName, projectName)
+      if (seenKeys.has(key)) {
+        pushError(errors, sheet, index, '案件名', 'ファイル内で荷主+部署+案件名が重複しています')
+      }
+      seenKeys.add(key)
+      if (existingProjectKeys.includes(key)) {
+        pushError(errors, sheet, index, '案件名', '既に登録されている案件です')
+      }
+    }
+
     results.push({
       clientName,
       departmentName: deptName === '' ? null : deptName,
@@ -518,7 +567,30 @@ export function validateAndConvert(
     file.clients.filter(r => !isExampleRow(r)).map(r => r['会社名']).filter(Boolean),
   )
   const departments = validateAndConvertDepartments(file.departments, errors, fileClientNames, existing)
-  const projects = validateAndConvertProjects(file.projects, errors)
+
+  const fileUseDepartments = new Map<string, boolean>()
+  for (const r of file.clients) {
+    if (isExampleRow(r) || isBlankRow(r)) continue
+    const name = r['会社名'] ?? ''
+    if (name) fileUseDepartments.set(name, (r['部署を使う'] ?? '') === 'あり')
+  }
+
+  const fileDeptKeys = new Set(
+    file.departments
+      .filter(r => !isExampleRow(r) && !isBlankRow(r))
+      .map(r => departmentKey(r['請求先名'] ?? '', r['部署名'] ?? '')),
+  )
+
+  const fileContractorNames = new Set(
+    file.contractors
+      .filter(r => !isExampleRow(r) && !isBlankRow(r))
+      .map(r => r['名前'] ?? '')
+      .filter(Boolean),
+  )
+
+  const projects = validateAndConvertProjects(
+    file.projects, errors, fileClientNames, fileUseDepartments, fileDeptKeys, fileContractorNames, existing,
+  )
 
   if (errors.length > 0) {
     return { data: null, errors }
