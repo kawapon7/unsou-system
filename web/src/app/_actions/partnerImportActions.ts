@@ -100,14 +100,15 @@ export async function importPartners(file: ImportFile): Promise<ImportResult> {
     departmentIdByKey.set(departmentKey(d.clientName, String(d.payload.name)), r.data!.id)
     inserted.departments++
   }
+  const contractorIdByName = new Map<string, string>()
+  for (const c of contractorsRes.data ?? []) contractorIdByName.set(c.name, c.id)
+
   for (const payload of contractors) {
     const r = await createContractor(payload as ContractorInsert)
     if (r.error) return partialFailure('委託先', inserted, r.error)
+    contractorIdByName.set(r.data!.name, r.data!.id)
     inserted.contractors++
   }
-
-  const contractorIdByName = new Map<string, string>()
-  for (const c of contractorsRes.data ?? []) contractorIdByName.set(c.name, c.id)
 
   const codes = buildProjectCodes(existingProjects.map(p => p.project_code), projects.length)
 

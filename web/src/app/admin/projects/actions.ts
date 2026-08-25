@@ -280,12 +280,18 @@ export async function fetchProjectsForImport(): Promise<ActionResult<{
     .eq('tenant_id', tenantId)
   if (error) return { data: null, error: error.message }
 
-  const rows = (data ?? []).map((r: any) => ({
-    project_code:    r.project_code ?? null,
-    project_name:    r.project_name as string,
-    client_name:     r.clients?.company_name ?? '',
-    department_name: r.client_departments?.name ?? null,
-  }))
+  const rows = (data ?? []).map((r) => {
+    const raw = r as typeof r & {
+      clients: { company_name: string } | null
+      client_departments: { name: string } | null
+    }
+    return {
+      project_code:    raw.project_code ?? null,
+      project_name:    raw.project_name as string,
+      client_name:     raw.clients?.company_name ?? '',
+      department_name: raw.client_departments?.name ?? null,
+    }
+  })
   return { data: rows, error: null }
 }
 
