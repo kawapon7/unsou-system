@@ -598,3 +598,14 @@ export function validateAndConvert(
 
   return { data: { clients, contractors, departments, projects }, errors: [] }
 }
+
+/** 案件コードを連番で採番する。既存の `P` + 数字 形式の最大値の次から始める。
+ *  突発案件が生成する `SP-YYYYMMDD-XXXXX` 形式（project-actions.ts）は接頭辞が違うため衝突しない。 */
+export function buildProjectCodes(existingCodes: (string | null)[], count: number): string[] {
+  let max = 0
+  for (const code of existingCodes) {
+    const m = /^P(\d+)$/.exec(code ?? '')
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  return Array.from({ length: count }, (_, i) => `P${String(max + 1 + i).padStart(4, '0')}`)
+}

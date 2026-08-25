@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { validateAndConvert, departmentKey, TEMPLATE_HEADERS, normalizeName, projectKey } from './partner-import'
+import { validateAndConvert, departmentKey, TEMPLATE_HEADERS, normalizeName, projectKey, buildProjectCodes } from './partner-import'
 
 const noExisting = { clientNames: [], contractorNames: [], contractorEmails: [], departmentKeys: [] }
 
@@ -463,3 +463,21 @@ describe('案件シート 参照解決と重複', () => {
   })
 })
 
+
+describe('buildProjectCodes', () => {
+  it('既存が無ければ P0001 から始まる', () => {
+    expect(buildProjectCodes([], 3)).toEqual(['P0001', 'P0002', 'P0003'])
+  })
+
+  it('既存の最大値の次から続ける', () => {
+    expect(buildProjectCodes(['P0001', 'P0007', 'P0003'], 2)).toEqual(['P0008', 'P0009'])
+  })
+
+  it('P形式でないコード（突発案件のSP-…）や null は無視する', () => {
+    expect(buildProjectCodes(['SP-20260824-AB12X', null, 'P0002'], 1)).toEqual(['P0003'])
+  })
+
+  it('4桁を超えたら桁が増える', () => {
+    expect(buildProjectCodes(['P9999'], 1)).toEqual(['P10000'])
+  })
+})
