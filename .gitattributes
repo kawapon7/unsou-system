@@ -1,0 +1,25 @@
+# ソースコードは、NUL文字などのバイナリ的なバイトを含んでいても常にテキストとして差分表示する。
+#
+# 経緯（2026-08-25）: web/src/utils/partner-import.ts に区切り文字としてリテラルのNUL文字が
+# 埋め込まれ、git がこのファイルをバイナリ扱いにしていた。その結果、
+#   1. 差分が `Bin 16667 bytes` としか出ず、レビューが不可能になった
+#   2. HANDOVER §2-6S のコミット前シークレット走査（git diff --cached | grep ...）が
+#      差分を1行も受け取らないまま「異常なし」を返した（fail-open）
+# 実験で、シークレットを含む変更が実際に0件と報告されることを確認済み。
+#
+# `diff` 属性は「NULを含んでいてもテキストとして扱う」ことだけを指定する。
+# ⚠️ `text=auto` のような包括指定は使わないこと。改行コードの正規化が走り、
+#    全ファイルに巨大な差分が出る。ここでは改行には一切触れない。
+*.ts   diff
+*.tsx  diff
+*.js   diff
+*.jsx  diff
+*.mjs  diff
+*.cjs  diff
+*.json diff
+*.md   diff
+*.sql  diff
+*.css  diff
+*.html diff
+*.yml  diff
+*.yaml diff

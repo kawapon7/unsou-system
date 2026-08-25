@@ -546,9 +546,24 @@ web/.open-next/
 
 ```bash
 # ステージング予定ファイルのシークレット漏れチェック
-git diff --cached | grep -E "SERVICE_ROLE_KEY|GEMINI_API_KEY|RESEND_API_KEY|ENCRYPTION_KEY"
+# --text は必須。これが無いと、gitがバイナリと判定したファイルの差分が1行も渡らず、
+# 中身を見ないまま「異常なし」を返す（fail-open）。
+git diff --cached --text | grep -E "SERVICE_ROLE_KEY|GEMINI_API_KEY|RESEND_API_KEY|ENCRYPTION_KEY"
 # 何も出力されなければ安全
 ```
+
+⚠️ **この検査が素通りした実例（2026-08-25）**: `web/src/utils/partner-import.ts` に区切り文字として
+リテラルのNUL文字が埋め込まれていたため、gitがこのファイルをバイナリ扱いにし、差分が
+`Bin 16667 bytes` としか出ない状態が数日続いた。この間、上の走査は**このファイルを一切見ずに**
+「異常なし」を返していた（シークレットを含む変更が0件と報告されることを実験で確認済み）。
+
+対策は2つ入れてある。**どちらも「差分が見える状態」を保つためのもの**であり、片方だけでは不十分:
+1. リポジトリ直下の `.gitattributes` で主要なソース拡張子に `diff` 属性を付与し、NULを含んでいても
+   テキストとして差分を出すようにした（cloneした全マシンで自動的に効く）
+2. 上のコマンドの `--text`（`.gitattributes` に列挙していない拡張子を埋める保険）
+
+ソースコードにリテラルのNUL文字を書かないこと。区切り文字として必要な場合は必ずエスケープ表記
+（``）で書く。`file <path>` が `data` を返したら混入している。
 
 #### ステップ3：純粋なソースコード差分のみのステージング
 
