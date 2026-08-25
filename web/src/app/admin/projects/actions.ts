@@ -262,6 +262,33 @@ export async function upsertProjectPayee(
   return { data: undefined, error: null }
 }
 
+/** インポートの重複検査・採番用。案件コードと (荷主名・部署名・案件名) だけを引く軽量版。 */
+export async function fetchProjectsForImport(): Promise<ActionResult<{
+  project_code: string | null
+  project_name: string
+  client_name: string
+  department_name: string | null
+}[]>> {
+  const auth = await requireOwner()
+  if (!auth.ok) return { data: null, error: auth.error }
+  const tenantId = await getCurrentTenantId()
+  const supabase = createServiceClient()
+
+  const { data, error } = await supabase
+    .from('projects')
+    .select('project_code, project_name, clients(company_name), client_departments(name)')
+    .eq('tenant_id', tenantId)
+  if (error) return { data: null, error: error.message }
+
+  const rows = (data ?? []).map((r: any) => ({
+    project_code:    r.project_code ?? null,
+    project_name:    r.project_name as string,
+    client_name:     r.clients?.company_name ?? '',
+    department_name: r.client_departments?.name ?? null,
+  }))
+  return { data: rows, error: null }
+}
+
 export async function deleteProjectPayee(payeeId: string): Promise<ActionResult<void>> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
