@@ -198,7 +198,7 @@ describe('validateAndConvert エラー系（すべて全件中止 data:null）',
 
 describe('departmentKey', () => {
   it('NUL文字区切りのキーを返す', () => {
-    expect(departmentKey('テスト商事', '物流部')).toBe('テスト商事 物流部')
+    expect(departmentKey('テスト商事', '物流部')).toBe('テスト商事\u0000物流部')
   })
 
   it('会社名に区切りらしき文字が含まれても衝突しない', () => {
