@@ -1102,9 +1102,11 @@ export type Database = {
           },
         ]
       }
+      // ⚠️ category は手で追記（2026-08-25）。generate_typescript_types の全再生成は本機能と無関係な差分が大量に出るため見送った
       projects: {
         Row: {
           buy_amount: number | null
+          category: string
           client_id: string
           contractor_id: string | null
           created_at: string
@@ -1127,6 +1129,7 @@ export type Database = {
         }
         Insert: {
           buy_amount?: number | null
+          category?: string
           client_id: string
           contractor_id?: string | null
           created_at?: string
@@ -1149,6 +1152,7 @@ export type Database = {
         }
         Update: {
           buy_amount?: number | null
+          category?: string
           client_id?: string
           contractor_id?: string | null
           created_at?: string

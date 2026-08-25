@@ -18,7 +18,7 @@ import { getDeductionRate } from '@/utils/transitional-deduction'
 import { computePaymentNoticeAmounts } from '@/utils/payment-notice-calc'
 import { toHHMM } from '@/utils/time-format'
 import { resolveDocumentFormat } from '@/utils/document-formats'
-import { buildOobaSubject, isWorkTypeProject } from '@/utils/ooba-invoice-lines'
+import { buildOobaSubject, isWorkCategory } from '@/utils/ooba-invoice-lines'
 
 type ActionResult<T> = { data: T; error: null } | { data: null; error: string }
 
@@ -81,7 +81,7 @@ export async function fetchInvoicePdfData(
       .eq('client_id', clientId)
       .eq('invoice_month', `${yearMonth}-01`)
       .maybeSingle(),
-    service.from('projects').select('id, project_name').eq('client_id', clientId),
+    service.from('projects').select('id, project_name, category').eq('client_id', clientId),
     // getCompanyInfo が返す CompanyInfo は document_format_key を持たないため別クエリで引く
     service.from('companies').select('document_format_key').eq('tenant_id', tenantId).maybeSingle(),
   ])
@@ -97,7 +97,7 @@ export async function fetchInvoicePdfData(
   const companyFormatKey = companyFormatRes.data?.document_format_key ?? undefined
   const invoice  = invoiceRes.data
   const projects = projectsRes.data ?? []
-  const projMap  = new Map(projects.map(p => [p.id, p.project_name]))
+  const projMap  = new Map(projects.map(p => [p.id, p as { id: string; project_name: string; category: string | null }]))
   const projIds  = projects.map(p => p.id)
 
   // ⚠️ 2026-08-02 まで存在しない列 `quantity` / `tax_excluded_sales` を select しており、
@@ -141,7 +141,8 @@ export async function fetchInvoicePdfData(
   }
 
   const lines: InvoicePdfLine[] = rawRows.map(r => {
-    const projectName = r.project_id ? (projMap.get(r.project_id) ?? '（案件なし）') : '（案件なし）'
+    const proj         = r.project_id ? projMap.get(r.project_id) : undefined
+    const projectName  = proj?.project_name ?? '（案件なし）'
     const rule         = r.project_id ? ruleMap.get(r.project_id) : undefined
     // 個数制（piece/hybrid）以外は日数制扱い。calculation_type を見ずに piece_count を
     // そのまま出すと、日数制の案件でも「○本」と誤表記されるため rule で判定する。
@@ -152,7 +153,8 @@ export async function fetchInvoicePdfData(
       quantity:    r.piece_count ?? 0,
       netAmount:   calcWorkAmount(r, rule, 'selling'),
       pieceCount:  isPieceBased ? (r.piece_count ?? null) : null,
-      isWorkType:  isWorkTypeProject(projectName),
+      // 案件が紐づかない記録（突発・マスタ外）は輸送系扱い。従来も '（案件なし）' は false だった
+      isWorkType:  isWorkCategory(proj?.category),
       contractorName: r.contractor_id ? (contractorNameMap.get(r.contractor_id) ?? null) : null,
     }
   })
