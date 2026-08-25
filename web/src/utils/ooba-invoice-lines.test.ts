@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { aggregateOobaInvoiceRows, layoutOobaInvoiceRows, buildOobaSubject, toReiwa, isWorkTypeProject } from './ooba-invoice-lines'
+import { aggregateOobaInvoiceRows, layoutOobaInvoiceRows, buildOobaSubject, toReiwa, isWorkCategory } from './ooba-invoice-lines'
 
 const line = (p: Partial<import('@/app/_actions/pdf-actions').InvoicePdfLine>) => ({
   workDate: '2026-06-01', projectName: 'X', quantity: 1, netAmount: 0, pieceCount: null, isWorkType: false, ...p,
@@ -8,9 +8,19 @@ const line = (p: Partial<import('@/app/_actions/pdf-actions').InvoicePdfLine>) =
 describe('ooba-invoice-lines', () => {
   it('令和変換', () => { expect(toReiwa(2026)).toBe(8); expect(toReiwa(2019)).toBe(1) })
   it('件名', () => { expect(buildOobaSubject('2026-06')).toBe('R8．6月度 業務委託費') })
-  it('作業系判定', () => {
-    expect(isWorkTypeProject('協和冷蔵デバンニング作業')).toBe(true)
-    expect(isWorkTypeProject('フジフィルム 2t配送')).toBe(false)
+  it('カテゴリが work の案件だけ作業系として扱う', () => {
+    expect(isWorkCategory('work')).toBe(true)
+    expect(isWorkCategory('transport')).toBe(false)
+  })
+
+  it('カテゴリ未設定（案件なしの記録など）は作業系として扱わない', () => {
+    expect(isWorkCategory(null)).toBe(false)
+    expect(isWorkCategory(undefined)).toBe(false)
+  })
+
+  it('案件名に「作業」を含んでもカテゴリが transport なら作業系ではない', () => {
+    // 文字列依存が切れたことの確認。名前は判定に一切使わない
+    expect(isWorkCategory('transport')).toBe(false)
   })
   it('日数制は案件ごとに日数で束ね、単価は金額÷日数', () => {
     const rows = aggregateOobaInvoiceRows([
