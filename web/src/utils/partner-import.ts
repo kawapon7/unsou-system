@@ -13,6 +13,7 @@ export type ImportFile = {
   contractors: RawRow[]
   clients: RawRow[]
   departments: RawRow[]
+  projects: RawRow[]
 }
 
 export type RowError = {
@@ -27,24 +28,47 @@ export type ExistingSets = {
   contractorNames: string[]
   contractorEmails: string[]
   departmentKeys: string[]
+  // ここから案件インポート用。省略時は空として扱い、既存の呼び出しを壊さない
+  clientUseDepartments?: Record<string, boolean>
+  projectKeys?: string[]
 }
 
 // 部署の重複検査キー。区切りに通常の文字列が使わないNUL文字を使い、
 // 会社名・部署名それぞれに区切り文字が含まれていても衝突しないようにする。
+// ⚠️ 区切りのNUL文字はソース上エスケープ表記で書くこと。リテラルのNUL文字を埋め込むとファイルがバイナリ扱いになり git diff もシークレット走査も効かなくなる
 export function departmentKey(clientName: string, deptName: string): string {
   return `${clientName}\u0000${deptName}`
+}
+
+/** 比較専用の正規化。NFKCで全角英数字を半角化 → 空白を全除去 → 小文字化。
+ *  ⚠️ 保存する値には使わない。表示名はExcelに書かれたままにする。 */
+export function normalizeName(s: string): string {
+  return s.normalize('NFKC').replace(/\s+/g, '').toLowerCase()
+}
+
+/** 案件の重複検査キー。荷主・部署は完全一致で照合済みの値をそのまま使い、
+ *  案件名だけ表記ゆれを吸収して比較する。部署なしは空文字。 */
+export function projectKey(clientName: string, deptName: string | null, projectName: string): string {
+  return `${clientName}\u0000${deptName ?? ''}\u0000${normalizeName(projectName)}`
 }
 
 export type ConvertedImport = {
   clients: Array<Record<string, unknown>>
   departments: Array<{ clientName: string; payload: Record<string, unknown> }>
   contractors: Array<Record<string, unknown>>
+  projects: Array<{
+    clientName: string
+    departmentName: string | null
+    contractorName: string | null
+    payload: Record<string, unknown>
+  }>
 }
 
 export const SHEET_NAMES = {
   contractors: '委託先',
   clients: '請求先',
   departments: '部署',
+  projects: '案件',
 } as const
 
 export const TEMPLATE_HEADERS = {
@@ -61,6 +85,9 @@ export const TEMPLATE_HEADERS = {
     '銀行名', '支店名', '口座種別', '口座番号', '口座名義',
   ],
   departments: ['請求先名', '部署名', '担当者名', 'メール', '電話'],
+  projects: [
+    '荷主', '部署', '案件名', '区分', '委託先', '売上単価', '仕入単価',
+  ],
 } as const
 
 // ── 内部定数（page.tsx の定義と一致させること） ─────────────
@@ -423,5 +450,6 @@ export function validateAndConvert(
     return { data: null, errors }
   }
 
-  return { data: { clients, contractors, departments }, errors: [] }
+  // 案件（projects）の検証・変換は別タスクで実装する。ここでは型を満たすための空配列。
+  return { data: { clients, contractors, departments, projects: [] }, errors: [] }
 }

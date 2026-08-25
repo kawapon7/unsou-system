@@ -162,7 +162,7 @@ export default function ImportClient() {
         return
       }
 
-      next = { clients: [], departments: [], contractors: [] }
+      next = { clients: [], departments: [], contractors: [], projects: [] }
       for (const key of SHEET_ORDER) {
         const ws = wb.Sheets[SHEET_NAMES[key]]
         // blankrows: true で空行もインデックスを保持したまま取得する（行番号ズレ防止）。
