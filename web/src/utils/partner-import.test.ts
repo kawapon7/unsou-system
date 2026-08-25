@@ -371,6 +371,16 @@ describe('案件シート 参照解決と重複', () => {
     expect(r.errors.some(e => e.column === '荷主')).toBe(true)
   })
 
+  it('荷主が未知で部署も書かれている行は荷主のエラーのみで、部署のエラーは出ない', () => {
+    const r = validateAndConvert(
+      { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '荷主': '知らない会社', '部署': '経理部' }] },
+      existingWithClient,
+    )
+    expect(r.data).toBeNull()
+    expect(r.errors.some(e => e.column === '荷主')).toBe(true)
+    expect(r.errors.some(e => e.column === '部署')).toBe(false)
+  })
+
   it('どちらにも無い委託先はエラー', () => {
     const r = validateAndConvert(
       { contractors: [], clients: [], departments: [], projects: [{ ...validProject, '委託先': '知らない運送' }] },

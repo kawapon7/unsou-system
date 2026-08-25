@@ -222,7 +222,7 @@ export default function ImportClient() {
       <div>
         <h1 className="text-lg font-semibold text-zinc-900">取引先一括インポート</h1>
         <p className="mt-1 text-sm text-zinc-500">
-          初期導入時に請求先・部署・委託先をまとめて登録します（運営者専用）。
+          初期導入時に請求先・部署・委託先・案件をまとめて登録します（運営者専用）。
         </p>
       </div>
 

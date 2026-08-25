@@ -506,8 +506,8 @@ function validateAndConvertProjects(
       }
     }
 
-    // 部署の存在確認
-    if (clientName && deptName) {
+    // 部署の存在確認（荷主が解決できていない場合は判定不能なのでスキップ）
+    if (clientName && clientKnown && deptName) {
       const key = departmentKey(clientName, deptName)
       if (!fileDeptKeys.has(key) && !existing.departmentKeys.includes(key)) {
         pushError(errors, sheet, index, '部署', '部署シートにも既存データにも見つかりません')
