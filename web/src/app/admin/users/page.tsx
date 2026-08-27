@@ -97,6 +97,7 @@ function EditModal({
   onSaved: () => void
 }) {
   const [role, setRole]                 = useState<UserRole>(user.role)
+  const [displayName, setDisplayName]   = useState(user.display_name ?? '')
   const [contractorId, setContractorId] = useState(user.contractor_id ?? '')
   const [password, setPassword]         = useState('')
   const [confirm, setConfirm]           = useState('')
@@ -117,6 +118,7 @@ function EditModal({
     setLoading(true)
     const result = await updateUser(user.id, {
       role: role !== user.role ? role : undefined,
+      displayName: displayName.trim() !== (user.display_name ?? '') ? displayName : undefined,
       password: password || undefined,
       contractorId: role === 'driver' && contractorId !== user.contractor_id
         ? (contractorId || null)
@@ -132,7 +134,7 @@ function EditModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="w-full max-w-md rounded-xl bg-white shadow-xl max-h-[90vh] flex flex-col">
         <div className="border-b border-zinc-100 px-6 py-4 shrink-0">
-          <h2 className="text-base font-semibold text-zinc-900">ユーザーを編集</h2>
+          <h2 className="text-base font-semibold text-zinc-900">アカウントを編集</h2>
           <p className="mt-0.5 text-xs text-zinc-400">{user.email}</p>
         </div>
         <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4 overflow-y-auto flex-1">
@@ -151,6 +153,18 @@ function EditModal({
                 <span className="text-sm text-zinc-700">ドライバー</span>
               </label>
             </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-zinc-700 mb-1">
+              表示名<span className="ml-1 text-xs text-zinc-400">（未入力の場合はメールアドレスを表示）</span>
+            </label>
+            <input
+              type="text"
+              value={displayName}
+              onChange={e => { setDisplayName(e.target.value); setIsDirty(true) }}
+              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 placeholder:text-zinc-400"
+              placeholder="例: 大場 太郎"
+            />
           </div>
           {role === 'driver' && (
             <div>
@@ -416,6 +430,7 @@ function AdminModal({
   onCreated: () => void
 }) {
   const [step, setStep]           = useState<1 | 2>(1)
+  const [displayName, setDisplayName] = useState('')
   const [email, setEmail]         = useState('')
   const [password, setPassword]   = useState('')
   const [confirm, setConfirm]     = useState('')
@@ -442,7 +457,7 @@ function AdminModal({
     setError(null)
     if (!currentPw) { setError('現在のパスワードを入力してください'); return }
     setLoading(true)
-    const result = await createAdminUser(email, password, currentPw)
+    const result = await createAdminUser(email, password, currentPw, displayName)
     setLoading(false)
     if (result.error) { setError(result.error); return }
     onCreated()
@@ -460,6 +475,18 @@ function AdminModal({
         {step === 1 ? (
           <form onSubmit={handleNext} className="px-6 py-5 space-y-4">
             {error && <p className="rounded-lg bg-red-50 px-4 py-3 text-sm text-red-600">{error}</p>}
+            <div>
+              <label className="block text-sm font-medium text-zinc-700 mb-1">
+                表示名<span className="ml-1 text-xs text-zinc-400">（未入力の場合はメールアドレスを表示）</span>
+              </label>
+              <input
+                type="text"
+                value={displayName}
+                onChange={e => { setDisplayName(e.target.value); setIsDirty(true) }}
+                className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900 outline-none focus:border-zinc-400 focus:ring-1 focus:ring-zinc-200 placeholder:text-zinc-400"
+                placeholder="例: 大場 太郎"
+              />
+            </div>
             <div>
               <label className="block text-sm font-medium text-zinc-700 mb-1">メールアドレス</label>
               <input
@@ -655,7 +682,7 @@ export default function UsersPage() {
   }
 
   async function handleDelete(user: ManagedUser) {
-    if (!window.confirm(`「${user.email}」を削除しますか？\nこの操作は取り消せません。`)) return
+    if (!window.confirm(`「${user.display_name ?? user.email}」を削除しますか？\nこの操作は取り消せません。`)) return
     setDeletingId(user.id)
     const result = await deleteUser(user.id)
     setDeletingId(null)
@@ -670,7 +697,7 @@ export default function UsersPage() {
     <div className="px-4 py-6 max-w-3xl mx-auto space-y-8">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold text-zinc-900">ユーザー管理</h1>
+          <h1 className="text-xl font-semibold text-zinc-900">アカウント管理</h1>
           <p className="mt-0.5 text-sm text-zinc-500">管理者・ドライバーのアカウントを管理します</p>
         </div>
         <div className="flex gap-2">
@@ -810,11 +837,13 @@ function UserRow({
     <div className="flex items-center justify-between px-5 py-3.5 gap-4">
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-sm font-medium text-zinc-900 truncate">{user.email}</span>
+          <span className="text-sm font-medium text-zinc-900 truncate">{user.display_name ?? user.email}</span>
           <RoleBadge role={user.role} />
         </div>
-        {user.contractor_name && (
-          <p className="mt-0.5 text-xs text-zinc-400">{user.contractor_name}</p>
+        {(user.display_name || user.contractor_name) && (
+          <p className="mt-0.5 text-xs text-zinc-400">
+            {[user.display_name ? user.email : null, user.contractor_name].filter(Boolean).join(' ・ ')}
+          </p>
         )}
       </div>
       <div className="flex items-center gap-2 shrink-0">

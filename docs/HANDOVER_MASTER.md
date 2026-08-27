@@ -1402,6 +1402,16 @@ web/
 
 ### 5-4. 直近の作業履歴（新しい順）
 
+#### 2026-08-27（本番: おおば運送テナント作成・masterアカウント発行）
+
+**✅ 本番DB（lsgv）に「おおば運送」テナントと master アカウントを作成（A社とは別の新規テナント・ボス決定）。**
+
+- `tenants`: `b8c87f7d-3814-4355-b0b8-bd016850f04d` / name=おおば運送
+- master: `oobaunsou@gmail.com`（auth UUID `6b6810c4-080f-461c-9efc-866904d1eee5`、role=master、パスワードはボスがダッシュボードで設定・Claude未知）
+- 手順: ボスがダッシュボードで Auth ユーザー作成 → SQL Editor で DOブロック実行（tenants INSERT＋`raw_app_meta_data.tenant_id` 焼き込み＋`public.users` の tenant_id 付け替え）。⚠️**学び①**: MCP から lsgv に到達できるようになっていた（8/24記録の「届かない」は解消）が、**読み取り専用**のため本番書き込みは従来どおりボスの SQL Editor。⚠️**学び②**: ダッシュボードでの Auth ユーザー作成時、トリガーが `public.users` 行を自動作成し **tenant_id が既存テナント（A社）で入る**。新テナント用ユーザーは作成後に必ず tenant_id を付け替えること（`create-tenant.mjs` の INSERT はこのトリガーと衝突するため、次回スクリプトを使う場合は要修正）。
+- 検証済み（読み取り）: 両ユーザーの `public.users.tenant_id` と `app_metadata.tenant_id` が一致、A社側は無傷。
+- **残り（ボスの画面操作）**: `oobaunsou@gmail.com` でログイン → 設定›自社情報を登録（未登録の間は帳票 fail-closed）→ 様式を「おおば運送様式」に変更 → 角印 `oobaunsou_mihon/IMG_6712.PNG` を登録。
+
 #### 2026-08-25（案件一括インポート: 実装〜本番適用まで完了）
 
 **✅ 取引先インポートに4枚目シート「案件」を追加し、本番適用（マイグレーション→デプロイの順）まで完了。**
@@ -1496,7 +1506,7 @@ web/
 3. **本番ログイン不能の切り分け**: Chrome・Claude ブラウザとも「正しくありません」。Supabase auth ログで Worker 経由の試行が `invalid_credentials` と判明（複数ログインの制限ではない。Safari は Cookie が生きていただけ）。ダッシュボードの recovery メールは `admin@hibiki.com` が invalid 扱いで送れない。**`web/scripts/reset-user-password.mjs` で再設定して復旧**（確認プロンプトは `y` ではなく `yes`）。
 4. ローカル検証環境: `web/.env.local` は本番向けに戻した。ローカル DB 向けは `web/.env.local.local-dev`（gitignore）。戻すときは `cp web/.env.local.local-dev web/.env.local` → dev サーバー再起動。ローカル Supabase は `supabase stop` でメモリ解放。
 5. **本番画面の一巡をボスが確認済み**（自社情報の新項目・請求/支払管理・発行控え、いずれも正常）。
-6. **配員表は別アプリ `~/Claude/shift-app-1t-van`（Next.js＋Prisma/Neon、岩国・徳山コースのドライバーシフト管理、PDF/JPEG 出力）で作る予定（ボス記憶・2026-08-24）。** 実物 `おおば運送 配員表 2026.7月.xlsx` は同アプリ直下と `oobaunsou_mihon/` にある。HIBIKI との連携（配員表→稼働実績の取り込み等）は未設計。⚠️ 同アプリも dev サーバーが port 3000 を使うため、HIBIKI と同時起動時は `Next.js dev (3001)` を使うこと。**HIBIKI との連携はしない（郵便輸送は同アプリの管轄・ボス決定 2026-08-24）。** **次**: ~~見本の①②＝担当者の確認~~（その4で完了）→ おおば運送テナント作成＋角印登録 → RLS テナント基準化（10/1）。
+6. **配員表は別アプリ `~/Claude/shift-app-1t-van`（Next.js＋Prisma/Neon、岩国・徳山コースのドライバーシフト管理、PDF/JPEG 出力）で作る予定（ボス記憶・2026-08-24）。** 実物 `おおば運送 配員表 2026.7月.xlsx` は同アプリ直下と `oobaunsou_mihon/` にある。HIBIKI との連携（配員表→稼働実績の取り込み等）は未設計。⚠️ 同アプリも dev サーバーが port 3000 を使うため、HIBIKI と同時起動時は `Next.js dev (3001)` を使うこと。**HIBIKI との連携はしない（郵便輸送は同アプリの管轄・ボス決定 2026-08-24）。** **次**: ~~見本の①②＝担当者の確認~~（その4で完了）→ ~~おおば運送テナント作成~~（2026-08-27完了・§5-4参照）＋角印登録（残・ボスの画面操作）→ RLS テナント基準化（10/1）。
 
 #### 2026-08-23（帳票様式再現の要件定義／リモート開発環境の整備）
 

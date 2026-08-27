@@ -11,6 +11,8 @@ export type UserRole = 'master' | 'driver'
 export type ManagedUser = {
   id: string
   email: string
+  // 表示名（auth.users.user_metadata.display_name）。未設定は null → UI はメール表示にフォールバック
+  display_name: string | null
   role: UserRole
   contractor_id: string | null
   contractor_name: string | null
@@ -61,9 +63,13 @@ export async function listUsers(): Promise<ActionResult<ManagedUser[]>> {
       const rawRole = pub?.role ?? u.user_metadata?.role ?? 'sub'
       const role: UserRole = rawRole === 'master' ? 'master' : 'driver'
       const contractor = contractorByEmail[u.email!] ?? null
+      const displayName = typeof u.user_metadata?.display_name === 'string'
+        ? u.user_metadata.display_name.trim()
+        : ''
       return {
         id: u.id,
         email: u.email!,
+        display_name: displayName || null,
         role,
         contractor_id: contractor?.id ?? null,
         contractor_name: contractor?.name ?? null,
@@ -82,7 +88,8 @@ export async function listUsers(): Promise<ActionResult<ManagedUser[]>> {
 export async function createAdminUser(
   email: string,
   password: string,
-  currentPassword: string
+  currentPassword: string,
+  displayName?: string
 ): Promise<ActionResult> {
   const auth = await requireOwner()
   if (!auth.ok) return { data: null, error: auth.error }
@@ -102,11 +109,13 @@ export async function createAdminUser(
   // ⚠️ 2026-08-23 P0: 新規ユーザーは作成時に所属テナントを app_metadata と users.tenant_id の両方に書く。
   //    どちらも本人は書き換えられない（service_role 専用）。これが無いと getCurrentTenantId() が throw する。
   const tenantId = await getCurrentTenantId()
+  const trimmedName = displayName?.trim()
   const { data: authData, error: authErr } = await db.auth.admin.createUser({
     email,
     password,
     email_confirm: true,
     app_metadata: { tenant_id: tenantId },
+    ...(trimmedName ? { user_metadata: { display_name: trimmedName } } : {}),
   })
   if (authErr) return { data: null, error: authErr.message }
 
@@ -186,6 +195,7 @@ export async function updateUser(
     role?: UserRole
     password?: string
     contractorId?: string | null
+    displayName?: string
   }
 ): Promise<ActionResult> {
   const auth = await requireOwner()
@@ -203,6 +213,18 @@ export async function updateUser(
   // auth側：パスワード変更
   if (opts.password) {
     const { error } = await db.auth.admin.updateUserById(userId, { password: opts.password })
+    if (error) return { data: null, error: error.message }
+  }
+
+  // auth側：表示名変更（user_metadata は丸ごと置換されるAPIのため、既存メタを読んでマージする）
+  if (opts.displayName !== undefined) {
+    const { data: authUser, error: getErr } = await db.auth.admin.getUserById(userId)
+    if (getErr || !authUser?.user) return { data: null, error: 'ユーザー情報を取得できません' }
+    const merged = {
+      ...authUser.user.user_metadata,
+      display_name: opts.displayName.trim() || null,
+    }
+    const { error } = await db.auth.admin.updateUserById(userId, { user_metadata: merged })
     if (error) return { data: null, error: error.message }
   }
 
