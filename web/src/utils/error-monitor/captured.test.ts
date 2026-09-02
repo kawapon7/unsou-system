@@ -63,6 +63,19 @@ describe('captured', () => {
     await expect(captured('login', async () => { throw redirectErr }, undefined, d)).rejects.toBe(redirectErr)
     expect(d.sink.record).not.toHaveBeenCalled()
   })
+  it('Next の notFound() も再スローする（記録しない）', async () => {
+    const d = makeDeps()
+    const notFoundErr = Object.assign(new Error('NEXT_NOT_FOUND'), { digest: 'NEXT_NOT_FOUND' })
+    await expect(captured('login', async () => { throw notFoundErr }, undefined, d)).rejects.toBe(notFoundErr)
+    expect(d.sink.record).not.toHaveBeenCalled()
+  })
+  it('Error でない値が throw されても固定文言に変換して記録する', async () => {
+    const d = makeDeps()
+    const r = await captured('upsertSchedule', async () => { throw 'boom' }, undefined, d)
+    expect(r).toEqual({ data: null, error: GENERIC_ERROR_MESSAGE })
+    expect(d.sink.record).toHaveBeenCalledTimes(1)
+    expect(d.sink.record.mock.calls[0][0].message).toContain('boom')
+  })
   it('sink が例外を投げても戻り値は変わらない', async () => {
     const d = makeDeps()
     d.sink.record.mockRejectedValue(new Error('db down'))

@@ -42,12 +42,17 @@ function hasErrorString(v: unknown): v is { error: string } {
  * ⚠️ @opennextjs/cloudflare の getCloudflareContext は Workers 外で throw するため try で囲む（未検証: Workers 実機で waitUntil が取れるかは Task 13 の導通で確認）。
  */
 async function runAfterResponse(task: () => Promise<void>): Promise<void> {
+  const p = task()
   try {
     const mod = await import(/* @vite-ignore */ '@opennextjs/cloudflare')
     const ctx = (mod as { getCloudflareContext?: () => { ctx?: { waitUntil?: (p: Promise<unknown>) => void } } }).getCloudflareContext?.()
-    if (ctx?.ctx?.waitUntil) { ctx.ctx.waitUntil(task()); return }
-  } catch { /* Workers 外 */ }
-  await task()
+    if (ctx?.ctx?.waitUntil) { ctx.ctx.waitUntil(p); return }
+  } catch { /* Workers 外、または waitUntil 取得に失敗 */ }
+  try {
+    await p
+  } catch (e) {
+    console.error('[error-monitor] runAfterResponse 失敗:', e instanceof Error ? e.message : e)
+  }
 }
 
 /**
@@ -56,9 +61,10 @@ async function runAfterResponse(task: () => Promise<void>): Promise<void> {
  */
 export async function reportError(
   input: { source: Source; actionName: string; message: string; stack?: string | null; ctx?: CaptureContext },
-  deps: Deps = getDeps(),
+  deps?: Deps,
 ): Promise<void> {
   try {
+    const d = deps ?? getDeps()
     const message = mask(input.message || '(no message)', MESSAGE_MAX)
     const stack   = input.stack ? mask(input.stack, STACK_MAX) : null
     const event: ErrorEvent = {
@@ -73,12 +79,12 @@ export async function reportError(
       userId:       input.ctx?.userId ?? null,
       contractorId: input.ctx?.contractorId ?? null,
     }
-    const rec = await deps.sink.record(event)
-    const now = deps.now?.() ?? new Date()
-    if (deps.isProduction && shouldNotifyImmediately(event, rec, now)) {
+    const rec = await d.sink.record(event)
+    const now = d.now?.() ?? new Date()
+    if (d.isProduction && shouldNotifyImmediately(event, rec, now)) {
       const mail = buildImmediateMail(event, rec, now)
-      await deps.send(mail.subject, mail.text)
-      await deps.sink.markNotified(rec.id)
+      await d.send(mail.subject, mail.text)
+      await d.sink.markNotified(rec.id)
     }
   } catch (e) {
     console.error('[error-monitor] 記録/通知に失敗:', e instanceof Error ? e.message : e)
@@ -97,7 +103,7 @@ export async function captured<T>(
   actionName: string,
   fn: () => Promise<T>,
   ctx?: CaptureContext,
-  deps: Deps = getDeps(),
+  deps?: Deps,
 ): Promise<T | { data: null; error: string }> {
   let result: T
   try {
@@ -119,7 +125,7 @@ export function capturedRoute<A extends unknown[]>(
   routeName: string,
   handler: (...args: A) => Promise<Response>,
   source: 'route' | 'cron' = 'route',
-  deps: Deps = getDeps(),
+  deps?: Deps,
 ): (...args: A) => Promise<Response> {
   return async (...args: A) => {
     try {
