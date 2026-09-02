@@ -50,7 +50,8 @@ describe('buildDigestMail', () => {
     const m = buildDigestMail('2026-09-01', [
       { severity: 'critical', tenant_id: 't1', action_name: 'a', source: 'action', count: 7, message: 'y'.repeat(200) },
     ])
-    expect(m.subject).toContain('1件')
+    expect(m.subject).toContain('1種')
+    expect(m.subject).toContain('7件')
     expect(m.text).toContain('critical')
     expect(m.text).toContain('×7')
     expect(m.text).not.toContain('y'.repeat(121))

@@ -42,10 +42,10 @@ export function buildImmediateMail(e: ErrorEvent, r: ErrorRecordResult, now: Dat
 
 export function buildDigestMail(day: string, rows: DigestRow[]): { subject: string; text: string } {
   const total = rows.reduce((s, r) => s + r.count, 0)
-  const subject = `【HIBIKI】エラー日次まとめ ${day}: ${rows.length}件`
   if (rows.length === 0) {
     return { subject: `【HIBIKI】エラー日次まとめ ${day}: 0件`, text: `${day} のエラーはありませんでした。（監視は稼働中）` }
   }
+  const subject = `【HIBIKI】エラー日次まとめ ${day}: ${rows.length}種 / ${total}件`
   const lines = rows.map((r) =>
     `[${r.severity}] ${r.action_name} (${r.source}) tenant=${r.tenant_id} ×${r.count}\n    ${r.message.slice(0, 120)}`,
   )
