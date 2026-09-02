@@ -125,3 +125,18 @@ export async function deliverAlertEmail(params: {
 
   return { data: { status, messageId }, error: null }
 }
+
+/**
+ * 管理者（ADMIN_ALERT_EMAIL）宛ての運用通知。エラー監視の即時メール・日次まとめが使う。
+ * 認可チェックは行わない（呼び出し元はサーバー内部のみ）。notification_logs には記録しない
+ * （委託先向け通知の台帳であり、運用通知を混ぜない）。
+ */
+export async function sendAdminAlertEmail(
+  subject: string,
+  text: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const to = process.env.ADMIN_ALERT_EMAIL?.trim()
+  if (!to) return { ok: false, error: 'ADMIN_ALERT_EMAIL が未設定です' }
+  const r = await sendViaResend(to, subject, text)
+  return 'error' in r ? { ok: false, error: r.error } : { ok: true }
+}
