@@ -21,3 +21,12 @@ jobs:
           echo "base: $BASE_URL"
           curl -f -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
             "$BASE_URL/api/cron/defensive-alerts"
+
+      # エラー監視の日次まとめ（前日分・0件でも送る）。URL は上と同じく APP_BASE_URL 変数経由。
+      - name: Call error-digest cron endpoint
+        if: always()
+        env:
+          BASE_URL: ${{ vars.APP_BASE_URL || 'https://unsou-system.hibiki-app.workers.dev' }}
+        run: |
+          curl -f -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            "$BASE_URL/api/cron/error-digest"
