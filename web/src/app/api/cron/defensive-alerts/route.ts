@@ -8,6 +8,7 @@ import {
   buildPendingNoticeMessage,
 } from '@/app/_actions/defensiveAlertQueries'
 import { deliverAlertEmail } from '@/app/_actions/emailCore'
+import { capturedRoute } from '@/utils/error-monitor/captured'
 
 type AlertJob = {
   contractorId: string
@@ -21,7 +22,7 @@ type AlertJob = {
 // GitHub Actions（毎日 JST 9:00）から x-cron-secret ヘッダー付きで呼ばれる。
 // fail-closed: シークレット不一致・未設定の場合は DB・メール処理を一切行わない。
 
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   const secret   = req.headers.get('x-cron-secret')
   const expected = process.env.CRON_SECRET
 
@@ -105,3 +106,6 @@ export async function GET(req: NextRequest) {
     errors,
   })
 }
+
+// 予期しない例外（既存の try/catch を抜けるもの）を error_logs に critical で記録し 500 を返す
+export const GET = capturedRoute('cron/defensive-alerts', handleGet, 'cron')
