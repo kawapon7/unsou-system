@@ -2665,8 +2665,14 @@ web/src/
 └── utils/
     ├── tenant.ts                       getCurrentTenantId（dev='local-dev'固定）
     ├── smsLink.ts                      SMS URLスキーム生成
-    └── crypto.ts                       AES-256-GCM 暗号化（encryptText / decryptText）
+    ├── crypto.ts                       AES-256-GCM 暗号化（encryptText / decryptText）
+    └── error-monitor/                  ★ 本番エラー監視（2026-09-02）。captured() で Server Action 本体を包む
+        ├── captured.ts                 captured / capturedRoute / reportError
+        ├── critical-actions.ts         即時メール対象の Action 名（export 名と完全一致させる）
+        └── mask.ts / classify.ts / fingerprint.ts / sink.ts / notify.ts
 ```
+
+`app/_actions/errorReportActions.ts`（`reportClientError`。error.tsx からのクライアントエラー報告）、`app/api/cron/error-digest/route.ts`（エラー日次まとめ + 90日保持削除）も同様に追加された。
 
 ### 5-6. 主要 Server Actions
 
@@ -2758,7 +2764,10 @@ web/src/
 | `invoices` | 請求書 | **一意性は部分索引2本**（2026-08-03張り替え）: 部署ありは (client_id, department_id, invoice_month)、部署なしは (client_id, invoice_month)。書き込みは必ず `utils/invoice-writer.ts` 経由 |
 | `approval_history` | 承認履歴 | UPDATE/DELETE 全ロール禁止（不変ログ） |
 | `notification_logs` | アラート送信ログ | INSERT-only RLS |
+| `error_logs` | 本番エラー記録（fingerprint×日×tenant で集約） | service_role 専用（RLS有効・ポリシーなし）。書込は RPC record_error_log のみ。不変ログ規約の対象外。90日で削除 |
 | `users` | ユーザーロール管理 | `public.users(id, email, role, created_at, contractor_id)`。⚠️**2026-08-17訂正: `contractor_id` は存在する**（uuid・nullable・`contractors(id)` へFK）。以前ここに「存在しない」と書いていたのは誤り。`20260706000000_add_missing_users_contractor_id.sql` で追加済みで、`getAuthContext()` が `select('role, contractor_id')` で読んでいる。**この列を消すと本番の権限誤判定が再発する**（列欠落でクエリ全体が失敗し role が常に `contractor` にフォールバックした事故が実際にあった）。なお**ドライバーとの紐づけ自体は `contractors.email` 一致方式が正本**で、下記5-8の説明はそのまま有効 |
+
+⚠️ `error_logs` のマイグレーション（`supabase/migrations/20260902000000_error_logs.sql`）は**テスト DB には適用済み・本番 DB は未適用**（Task 13 で適用予定）。
 
 ### 5-8. 認証・権限のルール
 
@@ -2794,10 +2803,12 @@ web/src/
 ```env
 RESEND_API_KEY          # メール送信（未設定 → コンソール出力のみ）
 RESEND_FROM_EMAIL       # 送信元アドレス
-ADMIN_ALERT_EMAIL       # アラート通知先アドレス
+ADMIN_ALERT_EMAIL       # アラート通知先アドレス（エラー監視の即時メール・日次まとめの宛先でもある）
 DEV_CONTRACTOR_ID       # dev 環境の contractor_id 固定値
 ENCRYPTION_KEY          # AES-256-GCM キー（32バイト・Gitコミット禁止）
 ```
+
+`.github/workflows/defensive-alerts-cron.yml` は同一 workflow から `/api/cron/error-digest`（エラー日次まとめ + 90日保持削除）も呼ぶ（2026-09-02追加）。設計は `docs/superpowers/specs/2026-09-02-error-monitoring-design.md` を参照。
 
 ### 5-11. 開発環境の起動
 
