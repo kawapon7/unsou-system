@@ -5,7 +5,18 @@ describe('mask', () => {
   it('Postgres の Failing row を丸ごと落とす', () => {
     const s = 'duplicate key\nDETAIL: Failing row contains (a1, みずほ, 1234567, タナカ).\nHINT: x'
     const out = mask(s, 2000)
-    expect(out).toContain('DETAIL: [row omitted]')
+    expect(out).toContain('DETAIL: [omitted]')
+    expect(out).not.toContain('1234567')
+    expect(out).toContain('HINT: x')
+  })
+  it('DETAIL: 行はすべて落とす（Key (...)=(...) 形式も）', () => {
+    const out = mask('duplicate key value violates unique constraint\nDETAIL: Key (contractor_name)=(株式会社テスト) already exists.', 2000)
+    expect(out).toContain('DETAIL: [omitted]')
+    expect(out).not.toContain('株式会社テスト')
+  })
+  it('括弧を含む行データでも DETAIL 行末まで落とす', () => {
+    const out = mask('DETAIL: Failing row contains (1, 株式会社ABC(東京), 1234567).\nHINT: x', 2000)
+    expect(out).not.toContain('東京')
     expect(out).not.toContain('1234567')
     expect(out).toContain('HINT: x')
   })

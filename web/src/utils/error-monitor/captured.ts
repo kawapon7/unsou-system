@@ -2,7 +2,7 @@ import { mask, MESSAGE_MAX, STACK_MAX } from './mask'
 import { isSystemError, severityFor } from './classify'
 import { fingerprint } from './fingerprint'
 import { createSupabaseSink } from './sink'
-import { shouldNotifyImmediately, buildImmediateMail } from './notify'
+import { shouldNotifyImmediately, buildImmediateMail, NOTIFY_SUPPRESS_MS } from './notify'
 import { sendAdminAlertEmail } from '@/app/_actions/emailCore'
 import type { CaptureContext, ErrorEvent, ErrorSink, Source } from './types'
 
@@ -10,7 +10,7 @@ export const GENERIC_ERROR_MESSAGE = '処理に失敗しました'
 
 export type Deps = {
   sink:         ErrorSink
-  send:         (subject: string, text: string) => Promise<unknown>
+  send:         (subject: string, text: string) => Promise<{ ok: boolean }>
   isProduction: boolean
   now?:         () => Date
 }
@@ -81,10 +81,15 @@ export async function reportError(
     }
     const rec = await d.sink.record(event)
     const now = d.now?.() ?? new Date()
-    if (d.isProduction && shouldNotifyImmediately(event, rec, now)) {
-      const mail = buildImmediateMail(event, rec, now)
-      await d.send(mail.subject, mail.text)
-      await d.sink.markNotified(rec.id)
+    if (d.isProduction && shouldNotifyImmediately(event)) {
+      // 先に通知権を原子的に取得する。並行して同じエラーが N 件出ても送信は1通に収まる
+      const claimed = await d.sink.claimNotification(rec.id, NOTIFY_SUPPRESS_MS)
+      if (claimed) {
+        const mail = buildImmediateMail(event, rec, now)
+        const r = await d.send(mail.subject, mail.text)
+        // 送信に失敗したまま notified_at を残すと次の60分が黙るため、権利を返す（ベストエフォート）
+        if (!r.ok) await d.sink.releaseNotification(rec.id)
+      }
     }
   } catch (e) {
     console.error('[error-monitor] 記録/通知に失敗:', e instanceof Error ? e.message : e)

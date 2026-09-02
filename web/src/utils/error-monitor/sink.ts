@@ -34,8 +34,18 @@ export class SupabaseSink implements ErrorSink {
     return { id: row.id, count: row.count, notifiedAt: row.notified_at }
   }
 
-  async markNotified(id: string): Promise<void> {
-    const { error } = await this.rpc('mark_error_notified', { p_id: id })
+  /** notified_at の判定と更新を DB 側で原子的に行う。true を返した呼び出しだけが送信してよい */
+  async claimNotification(id: string, windowMs: number): Promise<boolean> {
+    const { data, error } = await this.rpc('claim_error_notification', {
+      p_id: id,
+      p_window_seconds: Math.ceil(windowMs / 1000),
+    })
+    if (error) throw new Error(error.message)
+    return data === true
+  }
+
+  async releaseNotification(id: string): Promise<void> {
+    const { error } = await this.rpc('release_error_notification', { p_id: id })
     if (error) throw new Error(error.message)
   }
 }

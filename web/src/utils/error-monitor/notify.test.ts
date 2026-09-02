@@ -9,19 +9,15 @@ const base: ErrorEvent = {
 const now = new Date('2026-09-02T03:00:00Z')
 
 describe('shouldNotifyImmediately', () => {
+  // 時間窓の抑制は DB の claim_error_notification（原子的）に移したため、ここは severity のみ見る
   it('normal は送らない', () => {
-    expect(shouldNotifyImmediately({ ...base, severity: 'normal' }, { id: 'i', count: 1, notifiedAt: null }, now)).toBe(false)
+    expect(shouldNotifyImmediately({ ...base, severity: 'normal' })).toBe(false)
   })
-  it('critical・未通知は送る', () => {
-    expect(shouldNotifyImmediately(base, { id: 'i', count: 1, notifiedAt: null }, now)).toBe(true)
+  it('critical は送る', () => {
+    expect(shouldNotifyImmediately(base)).toBe(true)
   })
-  it('60分以内に通知済みなら送らない', () => {
-    const recent = new Date(now.getTime() - NOTIFY_SUPPRESS_MS + 1000).toISOString()
-    expect(shouldNotifyImmediately(base, { id: 'i', count: 5, notifiedAt: recent }, now)).toBe(false)
-  })
-  it('60分を超えていれば送る', () => {
-    const old = new Date(now.getTime() - NOTIFY_SUPPRESS_MS - 1000).toISOString()
-    expect(shouldNotifyImmediately(base, { id: 'i', count: 5, notifiedAt: old }, now)).toBe(true)
+  it('抑制窓の定数は60分', () => {
+    expect(NOTIFY_SUPPRESS_MS).toBe(60 * 60 * 1000)
   })
 })
 

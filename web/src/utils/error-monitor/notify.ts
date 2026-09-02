@@ -1,6 +1,6 @@
 import type { ErrorEvent, ErrorRecordResult } from './types'
 
-/** 同一指紋の即時メールは60分に1通。spec §6 */
+/** 同一指紋の即時メールは60分に1通。抑制の判定自体は DB の claim_error_notification が原子的に行う。spec §6 */
 export const NOTIFY_SUPPRESS_MS = 60 * 60 * 1000
 
 export type DigestRow = {
@@ -12,10 +12,12 @@ export type DigestRow = {
   message:     string
 }
 
-export function shouldNotifyImmediately(e: ErrorEvent, r: ErrorRecordResult, now: Date = new Date()): boolean {
-  if (e.severity !== 'critical') return false
-  if (!r.notifiedAt) return true
-  return now.getTime() - new Date(r.notifiedAt).getTime() > NOTIFY_SUPPRESS_MS
+/**
+ * 即時通知の対象か。時間窓の抑制は DB 側（claim_error_notification）に持たせたため、ここは severity のみ見る。
+ * ⚠️ この関数が true でも、実際に送ってよいかは claimNotification の戻り値で決まる。
+ */
+export function shouldNotifyImmediately(e: ErrorEvent): boolean {
+  return e.severity === 'critical'
 }
 
 export function buildImmediateMail(e: ErrorEvent, r: ErrorRecordResult, now: Date = new Date()): { subject: string; text: string } {

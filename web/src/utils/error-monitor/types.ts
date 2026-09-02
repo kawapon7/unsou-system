@@ -24,7 +24,10 @@ export type ErrorRecordResult = {
 /** 記録先の抽象。第1実装は SupabaseSink。将来 SentrySink 等を足す */
 export interface ErrorSink {
   record(event: ErrorEvent): Promise<ErrorRecordResult>
-  markNotified(id: string): Promise<void>
+  /** 即時通知の権利を原子的に取得する。windowMs 以内に通知済みなら false（並行実行時の多重送信を防ぐ） */
+  claimNotification(id: string, windowMs: number): Promise<boolean>
+  /** 送信に失敗したとき取得した権利を返す（ベストエフォート） */
+  releaseNotification(id: string): Promise<void>
 }
 
 /** captured() に呼び出し元が任意で渡す文脈（getAuthContext を呼び直さない） */

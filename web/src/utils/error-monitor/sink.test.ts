@@ -28,9 +28,38 @@ describe('SupabaseSink.record', () => {
     const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: 'boom' } })
     await expect(new SupabaseSink(rpc).record(ev)).rejects.toThrow('boom')
   })
-  it('markNotified は mark_error_notified を呼ぶ', async () => {
+})
+
+describe('SupabaseSink.claimNotification', () => {
+  it('claim_error_notification を秒に換算した窓で呼び、結果を返す', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: true, error: null })
+    const ok = await new SupabaseSink(rpc).claimNotification('id1', 60 * 60 * 1000)
+    expect(rpc).toHaveBeenCalledWith('claim_error_notification', { p_id: 'id1', p_window_seconds: 3600 })
+    expect(ok).toBe(true)
+  })
+  it('false が返れば false', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: false, error: null })
+    expect(await new SupabaseSink(rpc).claimNotification('id1', 1000)).toBe(false)
+  })
+  it('ミリ秒は切り上げる', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: true, error: null })
+    await new SupabaseSink(rpc).claimNotification('id1', 1500)
+    expect(rpc).toHaveBeenCalledWith('claim_error_notification', { p_id: 'id1', p_window_seconds: 2 })
+  })
+  it('RPC エラーは throw', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: 'boom' } })
+    await expect(new SupabaseSink(rpc).claimNotification('id1', 1000)).rejects.toThrow('boom')
+  })
+})
+
+describe('SupabaseSink.releaseNotification', () => {
+  it('release_error_notification を呼ぶ', async () => {
     const rpc = vi.fn().mockResolvedValue({ data: null, error: null })
-    await new SupabaseSink(rpc).markNotified('id1')
-    expect(rpc).toHaveBeenCalledWith('mark_error_notified', { p_id: 'id1' })
+    await new SupabaseSink(rpc).releaseNotification('id1')
+    expect(rpc).toHaveBeenCalledWith('release_error_notification', { p_id: 'id1' })
+  })
+  it('RPC エラーは throw', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: null, error: { message: 'boom' } })
+    await expect(new SupabaseSink(rpc).releaseNotification('id1')).rejects.toThrow('boom')
   })
 })

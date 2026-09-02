@@ -1,13 +1,22 @@
 import { describe, it, expect, vi } from 'vitest'
 import { captured, capturedRoute, GENERIC_ERROR_MESSAGE, type Deps } from './captured'
+import { NOTIFY_SUPPRESS_MS } from './notify'
 import type { ErrorSink } from './types'
 
-function makeDeps(over: Partial<Deps> = {}): Deps & { sink: ErrorSink & { record: ReturnType<typeof vi.fn>; markNotified: ReturnType<typeof vi.fn> } } {
+type MockSink = ErrorSink & {
+  record:              ReturnType<typeof vi.fn>
+  claimNotification:   ReturnType<typeof vi.fn>
+  releaseNotification: ReturnType<typeof vi.fn>
+}
+type MockDeps = Deps & { sink: MockSink; send: ReturnType<typeof vi.fn> }
+
+function makeDeps(over: Partial<Deps> = {}): MockDeps {
   const sink = {
-    record: vi.fn().mockResolvedValue({ id: 'i', count: 1, notifiedAt: null }),
-    markNotified: vi.fn().mockResolvedValue(undefined),
+    record:              vi.fn().mockResolvedValue({ id: 'i', count: 1, notifiedAt: null }),
+    claimNotification:   vi.fn().mockResolvedValue(true),
+    releaseNotification: vi.fn().mockResolvedValue(undefined),
   }
-  return { sink, send: vi.fn().mockResolvedValue({ ok: true }), isProduction: true, ...over } as unknown as Deps & { sink: ErrorSink & { record: ReturnType<typeof vi.fn>; markNotified: ReturnType<typeof vi.fn> } }
+  return { sink, send: vi.fn().mockResolvedValue({ ok: true }), isProduction: true, ...over } as unknown as MockDeps
 }
 
 describe('captured', () => {
@@ -39,17 +48,35 @@ describe('captured', () => {
     expect(r).toEqual({ data: null, error: GENERIC_ERROR_MESSAGE })
     expect(d.sink.record.mock.calls[0][0].severity).toBe('critical')
   })
-  it('critical 例外は即時メールを送り markNotified する', async () => {
+  it('critical 例外は通知権を取得してから即時メールを送る', async () => {
     const d = makeDeps()
     await captured('upsertSchedule', async () => { throw new Error('x') }, undefined, d)
+    expect(d.sink.claimNotification).toHaveBeenCalledWith('i', NOTIFY_SUPPRESS_MS)
     expect(d.send).toHaveBeenCalledTimes(1)
-    expect(d.sink.markNotified).toHaveBeenCalledWith('i')
+    // 権利取得は送信より先（並行実行時の多重送信を防ぐ順序）
+    expect(d.sink.claimNotification.mock.invocationCallOrder[0])
+      .toBeLessThan(d.send.mock.invocationCallOrder[0])
+    expect(d.sink.releaseNotification).not.toHaveBeenCalled()
   })
-  it('60分以内に通知済みなら送らない', async () => {
+  it('通知権を取れなければ送らない（60分抑制は DB 側）', async () => {
     const d = makeDeps()
-    d.sink.record.mockResolvedValue({ id: 'i', count: 2, notifiedAt: new Date().toISOString() })
+    d.sink.claimNotification.mockResolvedValue(false)
     await captured('upsertSchedule', async () => { throw new Error('x') }, undefined, d)
     expect(d.send).not.toHaveBeenCalled()
+  })
+  it('送信が ok:false なら通知権を返す', async () => {
+    const d = makeDeps()
+    d.send.mockResolvedValue({ ok: false })
+    await captured('upsertSchedule', async () => { throw new Error('x') }, undefined, d)
+    expect(d.sink.releaseNotification).toHaveBeenCalledWith('i')
+  })
+  it('送信が reject しても戻り値は変わらない', async () => {
+    const d = makeDeps()
+    d.send.mockRejectedValue(new Error('resend down'))
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const r = await captured('upsertSchedule', async () => { throw new Error('x') }, undefined, d)
+    expect(r).toEqual({ data: null, error: GENERIC_ERROR_MESSAGE })
+    spy.mockRestore()
   })
   it('production でなければ記録はするがメールは送らない', async () => {
     const d = makeDeps({ isProduction: false })

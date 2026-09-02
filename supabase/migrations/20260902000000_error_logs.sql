@@ -56,10 +56,24 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
   RETURNING public.error_logs.id, public.error_logs.count, public.error_logs.notified_at;
 $$;
 
-CREATE OR REPLACE FUNCTION public.mark_error_notified(p_id uuid)
-RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
-  UPDATE public.error_logs SET notified_at = now() WHERE id = p_id;
+-- 即時通知の権利を原子的に取得する。p_window_seconds 以内に通知済みなら false。
+-- 判定と更新を1文にすることで、同一エラーが並行して起きても送信は1通に収まる。
+CREATE OR REPLACE FUNCTION public.claim_error_notification(p_id uuid, p_window_seconds integer)
+RETURNS boolean LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+  WITH c AS (
+    UPDATE public.error_logs SET notified_at = now()
+    WHERE id = p_id AND (notified_at IS NULL OR notified_at < now() - make_interval(secs => p_window_seconds))
+    RETURNING 1
+  ) SELECT EXISTS (SELECT 1 FROM c);
 $$;
+
+-- 送信に失敗したとき取得した権利を返す（ベストエフォート）
+CREATE OR REPLACE FUNCTION public.release_error_notification(p_id uuid)
+RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = public AS $$
+  UPDATE public.error_logs SET notified_at = NULL WHERE id = p_id;
+$$;
+
+DROP FUNCTION IF EXISTS public.mark_error_notified(uuid);
 
 -- 保持期限超の削除。戻り値は削除件数。
 CREATE OR REPLACE FUNCTION public.purge_error_logs(p_days integer)
@@ -72,8 +86,10 @@ BEGIN
 END $$;
 
 REVOKE ALL ON FUNCTION public.record_error_log(text,date,uuid,text,text,text,text,text,text,text,uuid) FROM PUBLIC, anon, authenticated;
-REVOKE ALL ON FUNCTION public.mark_error_notified(uuid) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.claim_error_notification(uuid,integer) FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION public.release_error_notification(uuid) FROM PUBLIC, anon, authenticated;
 REVOKE ALL ON FUNCTION public.purge_error_logs(integer) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.record_error_log(text,date,uuid,text,text,text,text,text,text,text,uuid) TO service_role;
-GRANT EXECUTE ON FUNCTION public.mark_error_notified(uuid) TO service_role;
+GRANT EXECUTE ON FUNCTION public.claim_error_notification(uuid,integer) TO service_role;
+GRANT EXECUTE ON FUNCTION public.release_error_notification(uuid) TO service_role;
 GRANT EXECUTE ON FUNCTION public.purge_error_logs(integer) TO service_role;

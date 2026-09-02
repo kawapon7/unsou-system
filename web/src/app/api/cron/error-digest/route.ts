@@ -7,6 +7,9 @@ import { sendAdminAlertEmail } from '@/app/_actions/emailCore'
 /** error_logs の保持日数。spec §5 */
 const RETENTION_DAYS = 90
 
+/** 1通に載せるエラー種別の上限 */
+const DIGEST_LIMIT = 200
+
 /** JST 基準の「前日」を YYYY-MM-DD で返す */
 function yesterdayJst(now: Date = new Date()): string {
   const jst = new Date(now.getTime() + 9 * 3600 * 1000)
@@ -32,19 +35,25 @@ async function handleGet(req: NextRequest) {
     .select('severity, tenant_id, action_name, source, count, message')
     .eq('day', day)
     .order('count', { ascending: false })
-    .limit(200)
+    .limit(DIGEST_LIMIT)
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const rows = (data ?? []) as DigestRow[]
   const mail = buildDigestMail(day, rows)
-  const sent = await sendAdminAlertEmail(mail.subject, mail.text)
+  // 上限 200 件に達している＝一部が欠けている可能性があるため本文で明示する
+  const text = rows.length === DIGEST_LIMIT ? `${mail.text}\n\n※ 上位200種のみ表示` : mail.text
+  const sent = await sendAdminAlertEmail(mail.subject, text)
 
   // 保持期限超の削除。失敗しても日次メールの結果は返す
   let purged: number | null = null
   try {
     const { data: n, error: pErr } = await db.rpc('purge_error_logs', { p_days: RETENTION_DAYS })
+    if (pErr) console.error('[error-digest] purge failed:', pErr.message)
     purged = pErr ? null : (n as number)
-  } catch { purged = null }
+  } catch (e) {
+    console.error('[error-digest] purge failed:', e instanceof Error ? e.message : e)
+    purged = null
+  }
 
   return NextResponse.json({ day, groups: rows.length, sent: sent.ok, sendError: sent.ok ? null : sent.error, purged })
 }
