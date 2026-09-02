@@ -4,6 +4,7 @@ import { revalidatePath } from 'next/cache'
 import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
+import { captured } from '@/utils/error-monitor/captured'
 import {
   requireOwner,
   resolveContractorId as sharedResolveContractorId,
@@ -269,36 +270,38 @@ export async function upsertSchedule(params: {
   date:      string
   status:    ScheduleStatus
 }): Promise<ActionResult<{ id: string }>> {
-  const tenantId = await getCurrentTenantId()
-  let contractorId: string | null
+  return captured('upsertSchedule', async () => {
+    const tenantId = await getCurrentTenantId()
+    let contractorId: string | null
 
-  const supabase = await createClient()
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) return { data: null, error: '未ログインです' }
-  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
-  const service = createServiceClient()
-  const db = service as any
+    const service = createServiceClient()
+    const db = service as any
 
-  const { data, error } = await db
-    .from('schedules')
-    .upsert(
-      {
-        contractor_id: contractorId,
-        project_id:    params.projectId,
-        date:          params.date,
-        status:        params.status,
-        tenant_id:     tenantId,
-        updated_at:    new Date().toISOString(),
-      },
-      { onConflict: 'contractor_id,date', ignoreDuplicates: false },
-    )
-    .select('id')
-    .single()
+    const { data, error } = await db
+      .from('schedules')
+      .upsert(
+        {
+          contractor_id: contractorId,
+          project_id:    params.projectId,
+          date:          params.date,
+          status:        params.status,
+          tenant_id:     tenantId,
+          updated_at:    new Date().toISOString(),
+        },
+        { onConflict: 'contractor_id,date', ignoreDuplicates: false },
+      )
+      .select('id')
+      .single()
 
-  if (error) return { data: null, error: error.message }
-  return { data: { id: data.id }, error: null }
+    if (error) return { data: null, error: error.message }
+    return { data: { id: data.id }, error: null }
+  })
 }
 
 // ================================================================
@@ -311,36 +314,38 @@ export async function bulkUpsertSchedules(params: {
   projectId: string | null
   status:    ScheduleStatus
 }): Promise<ActionResult<{ ids: string[]; count: number }>> {
-  if (!params.dates.length) return { data: { ids: [], count: 0 }, error: null }
+  return captured('bulkUpsertSchedules', async () => {
+    if (!params.dates.length) return { data: { ids: [], count: 0 }, error: null }
 
-  const tenantId = await getCurrentTenantId()
-  let contractorId: string | null
+    const tenantId = await getCurrentTenantId()
+    let contractorId: string | null
 
-  const supabase = await createClient()
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) return { data: null, error: '未ログインです' }
-  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
-  const now = new Date().toISOString()
-  const rows = params.dates.map(date => ({
-    contractor_id: contractorId!,
-    project_id:    params.projectId,
-    date,
-    status:        params.status,
-    tenant_id:     tenantId,
-    updated_at:    now,
-  }))
+    const now = new Date().toISOString()
+    const rows = params.dates.map(date => ({
+      contractor_id: contractorId!,
+      project_id:    params.projectId,
+      date,
+      status:        params.status,
+      tenant_id:     tenantId,
+      updated_at:    now,
+    }))
 
-  const db = createServiceClient() as any
-  const { data, error } = await db
-    .from('schedules')
-    .upsert(rows, { onConflict: 'contractor_id,date', ignoreDuplicates: false })
-    .select('id')
+    const db = createServiceClient() as any
+    const { data, error } = await db
+      .from('schedules')
+      .upsert(rows, { onConflict: 'contractor_id,date', ignoreDuplicates: false })
+      .select('id')
 
-  if (error) return { data: null, error: error.message }
-  const ids = (data ?? []).map((r: any) => r.id as string)
-  return { data: { ids, count: ids.length }, error: null }
+    if (error) return { data: null, error: error.message }
+    const ids = (data ?? []).map((r: any) => r.id as string)
+    return { data: { ids, count: ids.length }, error: null }
+  })
 }
 
 // ================================================================
