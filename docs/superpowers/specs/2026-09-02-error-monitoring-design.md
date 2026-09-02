@@ -80,7 +80,7 @@ utils/error-monitor/
 | 正常 | なし | そのまま返す |
 
 - **記録・通知の失敗は握りつぶす**。業務処理の結果を一切変えない（`try/catch` で囲み、失敗時は `console.error` のみ）
-- 文脈（`tenantId`, `userId`, `contractorId`）は `ctx?: AuthContext` を任意引数で受け取る。`captured` 内で `getAuthContext()` を呼び直さない（二重クエリ回避）。渡されなければ null
+- 文脈（`tenantId`, `userId`, `contractorId`）は `ctx?: CaptureContext` を任意引数で受け取る。`captured` 内で `getAuthContext()` を呼び直さない（二重クエリ回避）。渡されなければ null。**第1段の6本は本体内で文脈を取っているため ctx を渡せず、文脈なしで記録する。第2段で改良**
 - 例外時の UI 文言は固定「処理に失敗しました」。生メッセージは UI に出さない
 
 ### `isSystemError(message)`
