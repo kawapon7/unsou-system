@@ -1489,18 +1489,19 @@ advisor の警告が本番・テスト両方に出たことをきっかけに、
 | 漏洩パスワード保護 ON | **意図的に保留** | アナウンス後。事前に `WeakPasswordError` 確認 |
 | 「Disable legacy API keys」トグル | 未実施（6/15世代の JWT が有効なまま） | 押しても失うものは無いが実害も無い。優先度低 |
 | ブランチ運用への移行 | 未着手（ブランチ0本） | 腰を据えるとき向け |
-| 🙋 `web/.env.localecho` の中身確認 | 2026-09-03 発見・**帰宅後に実施** | 下記参照 |
+| ~~`web/.env.localecho` の中身確認~~ | ✅ **完了 2026-09-03**（残骸と判明・削除済み） | 完了。下記参照 |
 | 税理士確認待ち（経過措置の売上計上） | 変化なし | — |
 
-**`web/.env.localecho` について**（2026-09-03 発見）
+**`web/.env.localecho` について**（2026-09-03 発見 → ✅ 同日解決・削除済み）
 
-Air の `~/developer/unsou-system` 削除時に移したものと思われる env ファイルが1本増えている（`echo ... > .env.local` のタイプミス由来と推測）。
+Air の `~/developer/unsou-system` 削除時に移したものかと疑ったが、**実際は 8/24 の取引先一括インポート実装中のタイプミス由来**だった。
 
-- ✅ **git 漏洩リスクは無い**: `web/.gitignore:43` の `.env*` で除外され、追跡もされていない（`.env.local` の完全一致行だけなら漏れていた）。
-- ⏸ 未確認: **向き先がテスト（`hbpnh…`）か本番（`lsgv…`）か**、`.env.local` と同一かどうか。
-- 判定: テスト向き＆`.env.local` と同一なら残骸なので削除。**本番向きなら本番の認証情報がローカルにある状態**なので、扱いを決める。
-- ⚠️ `.env` 系は権限ルールで Claude 側から読めない（安全側の挙動・迂回しないこと）。確認はボスが手元で実行する:
-  `cd ~/dev/unsou-system/web && grep -o 'https://[a-z]*\.supabase\.co' .env.localecho; diff -q .env.local .env.localecho`
+- ✅ **git 漏洩リスクは無かった**: `web/.gitignore:43` の `.env*` で除外され、追跡もされていない。
+- ✅ **秘密情報ではなかった**: 中身は `OPERATOR_USER_IDS`（運営者ゲート用のUUIDリスト・110バイトの1行のみ）。認証情報ではない。
+- 成立経緯: 計画 `docs/superpowers/plans/2026-08-24-partner-import.md:559` の「`.env.local` から一時的に `OPERATOR_USER_IDS` を消す→404 を確認→戻す」手順で、`echo "OPERATOR_USER_IDS=..." >> .env.local` の `>>` とパスの間のスペースが抜け、`.env.localecho` が生成された。ファイル日時 8/24 20:06・110バイト・パーミッション 644（他の env は 600）と完全に整合。
+- 本番は Cloudflare Workers secret 側に設定済み（`docs/PARTNER_IMPORT_MANUAL.md:15`）のため、このファイルは本番に一切関与していない。
+- 対応: `.env.local` に `OPERATOR_USER_IDS` が存在することをボスが確認（`grep -c` → 1）したうえで `rm web/.env.localecho` を実行。env は本来の3本（`.env.local` / `.env.local.local-dev` / `.env.local.test-backup`）に復帰。
+- 教訓: `.env` 系は権限ルールで Claude 側から読めない（安全側の挙動・迂回しない）。**ファイルサイズ・日時・パーミッション・git 追跡状況だけで中身を読まずにここまで絞れる**ので、まず周辺情報から詰める。
 
 
 #### 2026-09-03（旧キーの棚卸し: 6/5発行JWTの失効を確認、直書き4ファイルを掃除）
