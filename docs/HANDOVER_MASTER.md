@@ -2776,7 +2776,7 @@ web/src/
 | `error_logs` | 本番エラー記録（fingerprint×日×tenant で集約） | service_role 専用（RLS有効・ポリシーなし）。書込は RPC record_error_log のみ。不変ログ規約の対象外。90日で削除 |
 | `users` | ユーザーロール管理 | `public.users(id, email, role, created_at, contractor_id)`。⚠️**2026-08-17訂正: `contractor_id` は存在する**（uuid・nullable・`contractors(id)` へFK）。以前ここに「存在しない」と書いていたのは誤り。`20260706000000_add_missing_users_contractor_id.sql` で追加済みで、`getAuthContext()` が `select('role, contractor_id')` で読んでいる。**この列を消すと本番の権限誤判定が再発する**（列欠落でクエリ全体が失敗し role が常に `contractor` にフォールバックした事故が実際にあった）。なお**ドライバーとの紐づけ自体は `contractors.email` 一致方式が正本**で、下記5-8の説明はそのまま有効 |
 
-⚠️ `error_logs` のマイグレーション（`supabase/migrations/20260902000000_error_logs.sql`）は**テスト DB には適用済み・本番 DB は未適用**（Task 13 で適用予定）。
+✅ `error_logs` のマイグレーション（`supabase/migrations/20260902000000_error_logs.sql`）は**テスト DB・本番 DB とも適用済み（本番は 2026-09-03、ボスが SQL Editor で実行・`schema_migrations` に 20260902000000 を記録・to_regclass/to_regproc で確認）**。教訓: 適用は本番デプロイより先。逆順にするとテーブルが無い状態で記録処理が走り、全て失敗する。
 
 ### 5-8. 認証・権限のルール
 
