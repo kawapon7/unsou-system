@@ -5,8 +5,19 @@
 
 import { createClient } from '../node_modules/@supabase/supabase-js/dist/index.mjs'
 
-const SUPABASE_URL     = 'https://hbpnhbsmsuhjyrohpluu.supabase.co'
-const SERVICE_ROLE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhicG5oYnNtc3Voanlyb2hwbHV1Iiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MDY4ODY5MSwiZXhwIjoyMDk2MjY0NjkxfQ.3-tCc-t7NWbBGH2oSd7k08iHWgeSGvMdLcK2sGGmmY8'
+// 認証情報はソースに書かない。.env.local から読む。
+// 実行例: node --env-file=.env.local scripts/debug-approval-flow.mjs
+function requireEnv(name) {
+  const v = process.env[name]
+  if (!v) {
+    console.error(`環境変数 ${name} が未設定です。実行例: node --env-file=.env.local scripts/debug-approval-flow.mjs`)
+    process.exit(1)
+  }
+  return v
+}
+
+const SUPABASE_URL     = requireEnv('NEXT_PUBLIC_SUPABASE_URL')
+const SERVICE_ROLE_KEY = requireEnv('SUPABASE_SERVICE_ROLE_KEY')
 
 const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } })
 

@@ -1,8 +1,19 @@
 import crypto from 'crypto'
 
-const SUPABASE_URL = 'https://hbpnhbsmsuhjyrohpluu.supabase.co'
-const ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhicG5oYnNtc3Voanlyb2hwbHV1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2ODg2OTEsImV4cCI6MjA5NjI2NDY5MX0.p1WyMnvm-CsFq15VOCNcXePl6SeASUrcxZFb67EOl68'
-const ENCRYPTION_KEY = 'af06d46182cc96d25feffd96806176f6'
+// 認証情報はソースに書かない。.env.local から読む。
+// 実行例: node --env-file=.env.local seed.mjs
+function requireEnv(name) {
+  const v = process.env[name]
+  if (!v) {
+    console.error(`環境変数 ${name} が未設定です。実行例: node --env-file=.env.local seed.mjs`)
+    process.exit(1)
+  }
+  return v
+}
+
+const SUPABASE_URL = requireEnv('NEXT_PUBLIC_SUPABASE_URL')
+const ANON_KEY = requireEnv('NEXT_PUBLIC_SUPABASE_ANON_KEY')
+const ENCRYPTION_KEY = requireEnv('ENCRYPTION_KEY')
 
 function encryptText(text) {
   const iv = crypto.randomBytes(12)
