@@ -10,6 +10,7 @@ import {
   isSpreadsheetSupported,
   type ExtractedInvoiceData,
 } from '@/utils/scan/aiExtractor'
+import { capturedRoute } from '@/utils/error-monitor/captured'
 
 const ALLOWED_TYPES = [
   'image/png',
@@ -65,7 +66,7 @@ async function upsertScanJob(params: {
 
 // ── Route Handler ─────────────────────────────────────────
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   // ── 認証チェック ──────────────────────────────────────
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
@@ -189,9 +190,11 @@ export async function POST(req: NextRequest) {
   }
 }
 
+export const POST = capturedRoute('scan/upload:POST', handlePost)
+
 // ── ジョブステータス照会 ──────────────────────────────────
 
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) {
@@ -225,3 +228,5 @@ export async function GET(req: NextRequest) {
     updatedAt: data['updated_at'],
   })
 }
+
+export const GET = capturedRoute('scan/upload:GET', handleGet)

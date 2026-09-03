@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
 import { computeInvoicePreview, type InvoicePreview } from '@/app/admin/sales/actions'
+import { capturedRoute } from '@/utils/error-monitor/captured'
 
 const TAX_LABEL: Record<string, string> = {
   exclusive: '外税（10%）',
@@ -9,7 +10,7 @@ const TAX_LABEL: Record<string, string> = {
 }
 
 // GET /api/hibiki/invoice/html?clientId=xxx&month=YYYY-MM
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest) {
   // 認証確認
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
@@ -34,6 +35,8 @@ export async function GET(req: NextRequest) {
     headers: { 'Content-Type': 'text/html; charset=utf-8' },
   })
 }
+
+export const GET = capturedRoute('hibiki/invoice/html', handleGet)
 
 // ── HTML 生成 ─────────────────────────────────────────────
 

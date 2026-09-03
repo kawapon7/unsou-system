@@ -5,6 +5,7 @@ import { createClient } from '@/utils/supabase/server'
 import { createServiceClient } from '@/utils/supabase/service'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+import { captured } from '@/utils/error-monitor/captured'
 import {
   parseGoogleFormCsv,
   parseGoogleSheetRows,
@@ -282,72 +283,74 @@ export async function submitWorkRecord(
   params: WorkRecordParams,
   options: { force?: boolean } = {},
 ): Promise<ActionResult<{ id: string; replaced: boolean }>> {
-  const tenantId = await getCurrentTenantId()
-  let contractorId: string | null
+  return captured('submitWorkRecord', async () => {
+    const tenantId = await getCurrentTenantId()
+    let contractorId: string | null
 
-  const supabase = await createClient()
-  const { data: { user }, error: authErr } = await supabase.auth.getUser()
-  if (authErr || !user) return { data: null, error: '未ログインです' }
-  contractorId = await resolveContractorId(user.id, user.email ?? undefined)
-  if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
+    const supabase = await createClient()
+    const { data: { user }, error: authErr } = await supabase.auth.getUser()
+    if (authErr || !user) return { data: null, error: '未ログインです' }
+    contractorId = await resolveContractorId(user.id, user.email ?? undefined)
+    if (!contractorId) return { data: null, error: '委託先レコードが見つかりません' }
 
-  const todayJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
-  if (params.date > todayJST) {
-    return { data: null, error: '完了報告は当日までしか登録できません' }
-  }
+    const todayJST = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Tokyo' })
+    if (params.date > todayJST) {
+      return { data: null, error: '完了報告は当日までしか登録できません' }
+    }
 
-  const db = createServiceClient() as any
-  const existing = await findDuplicates(db, contractorId, params.projectId, params.date, tenantId)
+    const db = createServiceClient() as any
+    const existing = await findDuplicates(db, contractorId, params.projectId, params.date, tenantId)
 
-  // 重複あり × force=false → フロントに確認モーダルを促す
-  if (existing.length > 0 && !options.force) {
-    return { data: null, error: 'DUPLICATE_EXISTS' }
-  }
+    // 重複あり × force=false → フロントに確認モーダルを促す
+    if (existing.length > 0 && !options.force) {
+      return { data: null, error: 'DUPLICATE_EXISTS' }
+    }
 
-  // 重複あり × force=true → 古いレコードを全件削除
-  let replaced = false
-  if (existing.length > 0 && options.force) {
-    const deleteIds = existing.map((r) => r.id)
-    const { error: delErr } = await db
+    // 重複あり × force=true → 古いレコードを全件削除
+    let replaced = false
+    if (existing.length > 0 && options.force) {
+      const deleteIds = existing.map((r) => r.id)
+      const { error: delErr } = await db
+        .from('work_records')
+        .delete()
+        .in('id', deleteIds)
+      if (delErr) return { data: null, error: `重複削除に失敗しました: ${delErr.message}` }
+      replaced = true
+    }
+
+    // 新規 INSERT
+    const pieceCount = params.pieceCount ?? null
+    const status = resolveWorkRecordStatus(pieceCount)
+
+    const { data: inserted, error: insertErr } = await db
       .from('work_records')
-      .delete()
-      .in('id', deleteIds)
-    if (delErr) return { data: null, error: `重複削除に失敗しました: ${delErr.message}` }
-    replaced = true
-  }
+      .insert({
+        contractor_id:  contractorId,
+        project_id:     params.projectId,
+        work_date:      params.date,
+        date:           params.date,
+        start_time:     params.startTime   ?? null,
+        end_time:       params.endTime     ?? null,
+        break_minutes:  params.breakMinutes ?? 0,
+        piece_count:    pieceCount,
+        note:           params.note        ?? null,
+        raw_spot_text:  params.rawSpotText ?? null,
+        status,
+        tenant_id:      tenantId,
+      })
+      .select('id')
+      .single()
 
-  // 新規 INSERT
-  const pieceCount = params.pieceCount ?? null
-  const status = resolveWorkRecordStatus(pieceCount)
+    if (insertErr || !inserted) {
+      return { data: null, error: insertErr?.message ?? '登録に失敗しました' }
+    }
 
-  const { data: inserted, error: insertErr } = await db
-    .from('work_records')
-    .insert({
-      contractor_id:  contractorId,
-      project_id:     params.projectId,
-      work_date:      params.date,
-      date:           params.date,
-      start_time:     params.startTime   ?? null,
-      end_time:       params.endTime     ?? null,
-      break_minutes:  params.breakMinutes ?? 0,
-      piece_count:    pieceCount,
-      note:           params.note        ?? null,
-      raw_spot_text:  params.rawSpotText ?? null,
-      status,
-      tenant_id:      tenantId,
-    })
-    .select('id')
-    .single()
+    revalidatePath('/driver')
+    revalidatePath('/admin/sales')
+    revalidatePath('/admin/dashboard')
 
-  if (insertErr || !inserted) {
-    return { data: null, error: insertErr?.message ?? '登録に失敗しました' }
-  }
-
-  revalidatePath('/driver')
-  revalidatePath('/admin/sales')
-  revalidatePath('/admin/dashboard')
-
-  return { data: { id: inserted.id, replaced }, error: null }
+    return { data: { id: inserted.id, replaced }, error: null }
+  })
 }
 
 // ================================================================

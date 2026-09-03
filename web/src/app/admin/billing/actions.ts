@@ -4,6 +4,7 @@ import { createServiceClient } from '@/utils/supabase/service'
 import type { Database } from '@/types/supabase'
 import { getCurrentTenantId } from '@/utils/tenant'
 import { requireOwner } from '@/utils/auth'
+import { captured } from '@/utils/error-monitor/captured'
 import { closingRange, formatLocalDate } from '@/utils/closing-period'
 import { calcTransitionalDeduction } from '@/utils/transitional-deduction'
 import { fiscalYearRange, fiscalYearLabel } from '@/utils/fiscal-year'
@@ -638,183 +639,187 @@ export async function generatePaymentNotice(
   /** 親分が手で入れる調整額（±円）。未指定なら保存済みの値を引き継ぐ */
   manualAdjustment?: number,
 ): Promise<ActionResult<{ id: string; totalAmount: number }>> {
-  const auth = await requireOwner()
-  if (!auth.ok) return { data: null, error: auth.error }
-  const tenantId = await getCurrentTenantId()
-  const supabase = createServiceClient()
-  const targetMonth = `${yearMonth}-01`
+  return captured('generatePaymentNotice', async () => {
+    const auth = await requireOwner()
+    if (!auth.ok) return { data: null, error: auth.error }
+    const tenantId = await getCurrentTenantId()
+    const supabase = createServiceClient()
+    const targetMonth = `${yearMonth}-01`
 
-  // ⚠️ Server Action は画面を介さず直接呼べるため、検証をクライアント側に置かない。
-  //    未検証だと 0.5 のような小数がそのまま numeric 列に入り金額に小数が乗るほか、
-  //    大きな負値で「差引支給額がマイナスの支払通知書」を作れてしまう。
-  const MAX_MANUAL_ADJUSTMENT = 1_000_000
-  if (manualAdjustment !== undefined) {
-    if (!Number.isInteger(manualAdjustment)) {
-      return { data: null, error: '調整額は整数で指定してください。' }
+    // ⚠️ Server Action は画面を介さず直接呼べるため、検証をクライアント側に置かない。
+    //    未検証だと 0.5 のような小数がそのまま numeric 列に入り金額に小数が乗るほか、
+    //    大きな負値で「差引支給額がマイナスの支払通知書」を作れてしまう。
+    const MAX_MANUAL_ADJUSTMENT = 1_000_000
+    if (manualAdjustment !== undefined) {
+      if (!Number.isInteger(manualAdjustment)) {
+        return { data: null, error: '調整額は整数で指定してください。' }
+      }
+      if (Math.abs(manualAdjustment) > MAX_MANUAL_ADJUSTMENT) {
+        return { data: null, error: `調整額は ±${MAX_MANUAL_ADJUSTMENT.toLocaleString()} 円以内で指定してください。` }
+      }
     }
-    if (Math.abs(manualAdjustment) > MAX_MANUAL_ADJUSTMENT) {
-      return { data: null, error: `調整額は ±${MAX_MANUAL_ADJUSTMENT.toLocaleString()} 円以内で指定してください。` }
+
+    // ── 金額算出は共通モジュールへ集約（utils/payment-notice-calc.ts） ──
+    // ⚠️ 同じ計算が _actions/billing-actions.ts の finalizePaymentNotice にも重複しており、
+    //    そちらが劣化コピーになっていた（2026-08-02 に一本化）。
+    //    ここに計算式を書き戻すと、また 2 経路で金額が食い違う。
+    const { data: a, error: calcErr } = await computePaymentNoticeAmounts(
+      supabase,
+      { tenantId, contractorId, yearMonth, manualAdjustment },
+    )
+    if (calcErr || !a) return { data: null, error: calcErr ?? '支払通知書の金額算出に失敗しました' }
+
+    // ⚠️ 差引支給額がマイナスの通知書は作らせない。調整額の符号ミスをここで止める。
+    if (a.totalAmount < 0) {
+      return {
+        data: null,
+        error: `差引支給額がマイナス（${a.totalAmount.toLocaleString()}円）になります。調整額を見直してください。`,
+      }
     }
-  }
 
-  // ── 金額算出は共通モジュールへ集約（utils/payment-notice-calc.ts） ──
-  // ⚠️ 同じ計算が _actions/billing-actions.ts の finalizePaymentNotice にも重複しており、
-  //    そちらが劣化コピーになっていた（2026-08-02 に一本化）。
-  //    ここに計算式を書き戻すと、また 2 経路で金額が食い違う。
-  const { data: a, error: calcErr } = await computePaymentNoticeAmounts(
-    supabase,
-    { tenantId, contractorId, yearMonth, manualAdjustment },
-  )
-  if (calcErr || !a) return { data: null, error: calcErr ?? '支払通知書の金額算出に失敗しました' }
+    const db = supabase as any
 
-  // ⚠️ 差引支給額がマイナスの通知書は作らせない。調整額の符号ミスをここで止める。
-  if (a.totalAmount < 0) {
-    return {
-      data: null,
-      error: `差引支給額がマイナス（${a.totalAmount.toLocaleString()}円）になります。調整額を見直してください。`,
-    }
-  }
-
-  const db = supabase as any
-
-  // 既存レコードを確認して INSERT or UPDATE
-  const { data: existing } = await db
-    .from('payment_notices')
-    .select('id, approval_status, locked')
-    // ⚠️ 一意制約は (contractor_id, notice_month) で tenant_id を含まない。
-    //    service クライアントは RLS を通らないため tenant_id で必ず絞る。
-    .eq('tenant_id', tenantId)
-    .eq('contractor_id', contractorId)
-    .eq('notice_month', targetMonth)
-    .maybeSingle()
-
-  // 承認済み（approved）またはロック済みなら再生成不可。
-  // ⚠️ status 列は読まない（派生値の段階的廃止・2026-08-24）。status='locked' を書く
-  //    全経路（本人承認・代理承認・確定ロック）は同時に locked=true を書くため、
-  //    locked の判定だけで漏れはない。
-  if (existing && (
-    existing.approval_status === 'approved' ||
-    existing.locked === true
-  )) {
-    return { data: null, error: '支払通知書はロック済みのため再生成できません。' }
-  }
-
-  // ⚠️ 生成時点では「未承認(pending)」で起票する。承認は子分（driver）が
-  //    driver-actions.approvePaymentNotice で行い、その時に status='locked' /
-  //    approval_status='approved' へ確定する。ここで approved 固定にすると
-  //    承認フロー（合意証跡）が成立しないため厳禁。
-  const noticePayload = {
-    target_month:           targetMonth,
-    // ⚠️ payment_notices.status の許可値は 'unapproved' | 'approved' | 'locked' のみ
-    //    （DBのCHECK制約 payment_notices_status_check）。
-    //    'issued' / 'paid' は invoices（請求書）側の語彙であり、ここで使うと
-    //    「new row violates check constraint」で生成が必ず失敗する。
-    // ⚠️ status は廃止予定の派生値（正本は approval_status + locked）。読む側は無い。
-    //    列が NOT NULL・DEFAULT なしのため互換で書いている。DEFAULT 追加の
-    //    マイグレーション（payment_notices_status_default）適用後にこの行を削除する。
-    status:                 'unapproved',
-    subtotal_registered:    a.subtotalRegistered,
-    tax_registered:         a.taxRegistered,
-    subtotal_unregistered:  a.subtotalUnregistered,
-    tax_unregistered:       a.taxUnregistered,
-    deduction_unregistered: a.deductionUnregistered,
-    subtotal_exempt:        a.subtotalExempt,
-    total_excluding_tax:    a.totalExcludingTax,
-    total_tax:              a.totalTax,
-    total_deduction:        a.totalDeduction,
-    insurance_deduction:    a.insuranceDeduction,
-    // ⚠️ adjustment_amount には「実際に適用した調整（自動端数補正＋手入力）」を入れる。
-    //    PDF・一覧・total_amount はこの列だけを見る。手動分の内訳は manual_adjustment。
-    adjustment_amount:      a.adjustment,
-    manual_adjustment:      a.manualAdjustment,
-    approval_status:        'pending',
-    // ⚠️ 2026-08-02 追加。この経路は内訳列と total_amount を一切書いておらず、
-    //    生成された支払通知書は DB 上 total_amount=0・内訳すべて 0 のままだった
-    //    （一覧画面は total_excluding_tax + total_tax - total_deduction + adjustment で
-    //     その場で計算し直しており、列の欠落が表面化していなかった）。
-    //    PDF は deduction_rate を印字し、年度累計は labor_*/expense_* を積むため、実値を保存する。
-    labor_tax_excluded:     a.laborTaxExcluded,
-    labor_tax:              a.laborTax,
-    deduction_rate:         a.deductionRate,
-    deduction:              a.deduction,
-    expense_tax_excluded:   a.expenseTaxExcluded,
-    expense_tax:            a.expenseTax,
-    total_amount:           a.totalAmount,
-  }
-
-  let noticeId: string
-  if (existing?.id) {
-    const { data: updated, error: uErr } = await db
+    // 既存レコードを確認して INSERT or UPDATE
+    const { data: existing } = await db
       .from('payment_notices')
-      .update(noticePayload)
-      .eq('id', existing.id)
+      .select('id, approval_status, locked')
+      // ⚠️ 一意制約は (contractor_id, notice_month) で tenant_id を含まない。
+      //    service クライアントは RLS を通らないため tenant_id で必ず絞る。
       .eq('tenant_id', tenantId)
-      .select('id')
-      .single()
-    if (uErr) return { data: null, error: uErr.message }
-    noticeId = updated.id
-  } else {
-    const { data: inserted, error: iErr } = await db
-      .from('payment_notices')
-      // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる
-      .insert({ tenant_id: tenantId, contractor_id: contractorId, notice_month: targetMonth, ...noticePayload })
-      .select('id')
-      .single()
-    if (iErr) return { data: null, error: iErr.message }
-    noticeId = inserted.id
-  }
+      .eq('contractor_id', contractorId)
+      .eq('notice_month', targetMonth)
+      .maybeSingle()
 
-  return { data: { id: noticeId, totalAmount: a.totalAmount }, error: null }
+    // 承認済み（approved）またはロック済みなら再生成不可。
+    // ⚠️ status 列は読まない（派生値の段階的廃止・2026-08-24）。status='locked' を書く
+    //    全経路（本人承認・代理承認・確定ロック）は同時に locked=true を書くため、
+    //    locked の判定だけで漏れはない。
+    if (existing && (
+      existing.approval_status === 'approved' ||
+      existing.locked === true
+    )) {
+      return { data: null, error: '支払通知書はロック済みのため再生成できません。' }
+    }
+
+    // ⚠️ 生成時点では「未承認(pending)」で起票する。承認は子分（driver）が
+    //    driver-actions.approvePaymentNotice で行い、その時に status='locked' /
+    //    approval_status='approved' へ確定する。ここで approved 固定にすると
+    //    承認フロー（合意証跡）が成立しないため厳禁。
+    const noticePayload = {
+      target_month:           targetMonth,
+      // ⚠️ payment_notices.status の許可値は 'unapproved' | 'approved' | 'locked' のみ
+      //    （DBのCHECK制約 payment_notices_status_check）。
+      //    'issued' / 'paid' は invoices（請求書）側の語彙であり、ここで使うと
+      //    「new row violates check constraint」で生成が必ず失敗する。
+      // ⚠️ status は廃止予定の派生値（正本は approval_status + locked）。読む側は無い。
+      //    列が NOT NULL・DEFAULT なしのため互換で書いている。DEFAULT 追加の
+      //    マイグレーション（payment_notices_status_default）適用後にこの行を削除する。
+      status:                 'unapproved',
+      subtotal_registered:    a.subtotalRegistered,
+      tax_registered:         a.taxRegistered,
+      subtotal_unregistered:  a.subtotalUnregistered,
+      tax_unregistered:       a.taxUnregistered,
+      deduction_unregistered: a.deductionUnregistered,
+      subtotal_exempt:        a.subtotalExempt,
+      total_excluding_tax:    a.totalExcludingTax,
+      total_tax:              a.totalTax,
+      total_deduction:        a.totalDeduction,
+      insurance_deduction:    a.insuranceDeduction,
+      // ⚠️ adjustment_amount には「実際に適用した調整（自動端数補正＋手入力）」を入れる。
+      //    PDF・一覧・total_amount はこの列だけを見る。手動分の内訳は manual_adjustment。
+      adjustment_amount:      a.adjustment,
+      manual_adjustment:      a.manualAdjustment,
+      approval_status:        'pending',
+      // ⚠️ 2026-08-02 追加。この経路は内訳列と total_amount を一切書いておらず、
+      //    生成された支払通知書は DB 上 total_amount=0・内訳すべて 0 のままだった
+      //    （一覧画面は total_excluding_tax + total_tax - total_deduction + adjustment で
+      //     その場で計算し直しており、列の欠落が表面化していなかった）。
+      //    PDF は deduction_rate を印字し、年度累計は labor_*/expense_* を積むため、実値を保存する。
+      labor_tax_excluded:     a.laborTaxExcluded,
+      labor_tax:              a.laborTax,
+      deduction_rate:         a.deductionRate,
+      deduction:              a.deduction,
+      expense_tax_excluded:   a.expenseTaxExcluded,
+      expense_tax:            a.expenseTax,
+      total_amount:           a.totalAmount,
+    }
+
+    let noticeId: string
+    if (existing?.id) {
+      const { data: updated, error: uErr } = await db
+        .from('payment_notices')
+        .update(noticePayload)
+        .eq('id', existing.id)
+        .eq('tenant_id', tenantId)
+        .select('id')
+        .single()
+      if (uErr) return { data: null, error: uErr.message }
+      noticeId = updated.id
+    } else {
+      const { data: inserted, error: iErr } = await db
+        .from('payment_notices')
+        // ⚠️ F0で tenant_id の DEFAULT を撤去したため、明示的に渡さないと NOT NULL 違反になる
+        .insert({ tenant_id: tenantId, contractor_id: contractorId, notice_month: targetMonth, ...noticePayload })
+        .select('id')
+        .single()
+      if (iErr) return { data: null, error: iErr.message }
+      noticeId = inserted.id
+    }
+
+    return { data: { id: noticeId, totalAmount: a.totalAmount }, error: null }
+  })
 }
 
 /** 対象月の全委託先分を一括生成 */
 export async function generateAllPaymentNotices(
   yearMonth: string,
 ): Promise<ActionResult<{ generated: number; errors: string[] }>> {
-  const auth = await requireOwner()
-  if (!auth.ok) return { data: null, error: auth.error }
-  const tenantId = await getCurrentTenantId()
-  const supabase = createServiceClient()
+  return captured('generateAllPaymentNotices', async () => {
+    const auth = await requireOwner()
+    if (!auth.ok) return { data: null, error: auth.error }
+    const tenantId = await getCurrentTenantId()
+    const supabase = createServiceClient()
 
-  // 締め日は委託先ごとに異なるため、対象委託先の洗い出しは「前月1日〜当月末日」に広げる。
-  // 実際の集計期間は generatePaymentNotice 側で各委託先の closing_day により再度絞り込まれる。
-  const [yy, mm]  = yearMonth.split('-').map(Number)
-  const fetchFrom = new Date(yy, mm - 2, 1)
-  const fetchTo   = new Date(yy, mm, 0)
+    // 締め日は委託先ごとに異なるため、対象委託先の洗い出しは「前月1日〜当月末日」に広げる。
+    // 実際の集計期間は generatePaymentNotice 側で各委託先の closing_day により再度絞り込まれる。
+    const [yy, mm]  = yearMonth.split('-').map(Number)
+    const fetchFrom = new Date(yy, mm - 2, 1)
+    const fetchTo   = new Date(yy, mm, 0)
 
-  const { data: workRows, error: wErr } = await supabase
-    .from('work_records')
-    .select('contractor_id')
-    .eq('tenant_id', tenantId)
-    .gte('work_date', fetchFrom.toISOString().slice(0, 10))
-    .lte('work_date', fetchTo.toISOString().slice(0, 10))
-    .not('contractor_id', 'is', null)
-  if (wErr) return { data: null, error: wErr.message }
+    const { data: workRows, error: wErr } = await supabase
+      .from('work_records')
+      .select('contractor_id')
+      .eq('tenant_id', tenantId)
+      .gte('work_date', fetchFrom.toISOString().slice(0, 10))
+      .lte('work_date', fetchTo.toISOString().slice(0, 10))
+      .not('contractor_id', 'is', null)
+    if (wErr) return { data: null, error: wErr.message }
 
-  const candidateIds = [...new Set((workRows ?? []).map((r: any) => r.contractor_id as string))]
+    const candidateIds = [...new Set((workRows ?? []).map((r: any) => r.contractor_id as string))]
 
-  // 自社区分（is_internal）の委託先は通知書を作らない。generatePaymentNotice 側でも弾くが、
-  // ここで除外しないと errors に毎月「対象外」が積まれて一括生成が失敗扱いに見えるため先に落とす。
-  const { data: extRows, error: cErr } = await supabase
-    .from('contractors')
-    .select('id')
-    .eq('tenant_id', tenantId)
-    .eq('is_internal', false)
-    .in('id', candidateIds.length ? candidateIds : ['00000000-0000-0000-0000-000000000000'])
-  if (cErr) return { data: null, error: cErr.message }
-  const ids = (extRows ?? []).map((r: any) => r.id as string)
+    // 自社区分（is_internal）の委託先は通知書を作らない。generatePaymentNotice 側でも弾くが、
+    // ここで除外しないと errors に毎月「対象外」が積まれて一括生成が失敗扱いに見えるため先に落とす。
+    const { data: extRows, error: cErr } = await supabase
+      .from('contractors')
+      .select('id')
+      .eq('tenant_id', tenantId)
+      .eq('is_internal', false)
+      .in('id', candidateIds.length ? candidateIds : ['00000000-0000-0000-0000-000000000000'])
+    if (cErr) return { data: null, error: cErr.message }
+    const ids = (extRows ?? []).map((r: any) => r.id as string)
 
-  const results = await Promise.allSettled(
-    ids.map(id => generatePaymentNotice(id, yearMonth)),
-  )
+    const results = await Promise.allSettled(
+      ids.map(id => generatePaymentNotice(id, yearMonth)),
+    )
 
-  let generated = 0
-  const errors: string[] = []
-  for (const r of results) {
-    if (r.status === 'fulfilled' && !r.value.error) generated++
-    else if (r.status === 'fulfilled' && r.value.error) errors.push(r.value.error)
-    else if (r.status === 'rejected') errors.push(String(r.reason))
-  }
+    let generated = 0
+    const errors: string[] = []
+    for (const r of results) {
+      if (r.status === 'fulfilled' && !r.value.error) generated++
+      else if (r.status === 'fulfilled' && r.value.error) errors.push(r.value.error)
+      else if (r.status === 'rejected') errors.push(String(r.reason))
+    }
 
-  return { data: { generated, errors }, error: null }
+    return { data: { generated, errors }, error: null }
+  })
 }

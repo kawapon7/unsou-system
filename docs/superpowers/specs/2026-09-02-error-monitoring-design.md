@@ -98,7 +98,7 @@ API route 5本（`admin/defensive-alerts`, `scan/upload`, `cron/defensive-alerts
 ## 4. マスキング（保存前・全経路共通）
 
 `mask(text)` を message / stack 双方に適用してから保存する。
-1. Postgres `DETAIL: Failing row contains (...)` → `DETAIL: [row omitted]`（行データ丸ごと混入の最大経路）
+1. Postgres の `DETAIL:` 行（`Failing row contains (...)` / `Key (col)=(値) already exists.` 等）→ 行末まで丸ごと `DETAIL: [omitted]`（行データ丸ごと混入の最大経路。括弧の入れ子や書式に依存させない）
 2. 6桁以上の連続数字（ハイフン区切り含む）→ `[digits]`（口座番号・電話番号）
 3. メールアドレス → `***@domain`
 4. `eyJ` 始まりの英数列（JWT）、`re_` / `sk_` / `AIza` 始まりのキー → `[token]`
@@ -134,6 +134,11 @@ REVOKE ALL ON public.error_logs FROM PUBLIC, anon, authenticated;
 - `fingerprint` = sha256(`source|action_name|正規化message`) の先頭16桁。正規化 = UUID → `<uuid>`、数字列 → `<n>`、空白圧縮
 - 同一 `(fingerprint, day, tenant_id)` は1行に集約し `count` 加算・`last_seen_at` 更新（UPSERT）。`tenant_id` NULL は UNIQUE で別行になるため、NULL を固定値 `00000000-0000-0000-0000-000000000000` に写像して保存する
 - `approval_history` / `notification_logs` の不変ログ規約の対象外。UPDATE（count 加算・notified_at）は許容。DELETE は保持期限の cron のみ
+- RPC（すべて SECURITY DEFINER・service_role のみ EXECUTE 可）
+  - `record_error_log(...)` — UPSERT。`(id, count, notified_at)` を返す
+  - `claim_error_notification(p_id uuid, p_window_seconds integer) → boolean` — 即時通知の権利を**原子的に**取得。`notified_at` の判定と更新を1文で行い、窓内に通知済みなら false
+  - `release_error_notification(p_id uuid)` — 送信失敗時に `notified_at` を NULL に戻す
+  - `purge_error_logs(p_days integer) → integer` — 保持期限超の削除件数
 - 保持 90 日。日次 cron（§6）で `last_seen_at < now() - 90 days` を削除
 - 書き込みは service_role のみ（`createServiceClient`）。クライアント直アクセス不可
 
@@ -145,7 +150,11 @@ REVOKE ALL ON public.error_logs FROM PUBLIC, anon, authenticated;
 - `normal`: それ以外（boundary 含む）
 
 ### 即時メール（critical のみ）
-- 同一 `fingerprint` は **60分に1通**。`error_logs.notified_at` が 60 分以内なら送らない
+- 同一 `fingerprint` は **60分に1通**。抑制は DB の `claim_error_notification(id, 3600)` が担う
+  - アプリ側は「送信の前に権利を取得する（claim-before-send）」。true を返した呼び出しだけが送信する
+  - 判定と更新を分けると、`Promise.allSettled` 等で同一エラーが N 件並行したとき N 通送ってしまうため、必ず DB 側で原子的に行う
+  - 送信が失敗（`ok: false`）したら `release_error_notification` で権利を返す。失敗したまま `notified_at` を残すと次の60分が黙るため
+  - `shouldNotifyImmediately()` は severity のみ判定する（時間窓は DB 側）
 - 宛先 `ADMIN_ALERT_EMAIL`（既存 env）。送信条件: `NODE_ENV === 'production'` かつ宛先設定あり。**新規 env は追加しない**
 - 本文: action_name / severity / tenant_id / 発生時刻 / マスク済み message（先頭300字）/ 当日 count
 - 送信は `getCloudflareContext().ctx.waitUntil` があればそれで応答後に実行、取れない環境では await にフォールバック

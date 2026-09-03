@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@/utils/supabase/server'
+import { capturedRoute } from '@/utils/error-monitor/captured'
 
 // VOICE仕様書 §2-4 種別自動判定ルール準拠
 const EXPENSE_RULES: { type: string; keywords: string[] }[] = [
@@ -51,7 +52,7 @@ function parseIntent(text: string) {
   return { intent: 'unknown' }
 }
 
-export async function POST(req: NextRequest) {
+async function handlePost(req: NextRequest) {
   const supabase = await createClient()
   const { data: { user }, error: authError } = await supabase.auth.getUser()
   if (authError || !user) {
@@ -72,3 +73,5 @@ export async function POST(req: NextRequest) {
   const result = parseIntent(body.text)
   return NextResponse.json(result, { status: 200 })
 }
+
+export const POST = capturedRoute('hibiki/voice/intent', handlePost)
