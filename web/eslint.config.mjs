@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // @opennextjs/cloudflare のビルド成果物（wrangler がデプロイする worker.js と assets）。
+    // 除外しないと 3 万件超の警告が出て src/ の本物の指摘が埋もれる。
+    ".open-next/**",
   ]),
 ]);
 
