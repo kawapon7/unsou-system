@@ -1303,7 +1303,7 @@ web/
 | ✅ 完了 2026-09-02 | **ENCRYPTION_KEY ローテーション（6/21 流出分の残件）** | Air 側フォルダ廃止時の env 比較で、6/21 流出時（§2-6S）の `ENCRYPTION_KEY` が 7/1〜02 のローテーション対象から漏れて今日まで同値だったことが判明（API キーは再発行で済むが暗号化キーは再暗号化が要るため対象外になっていたと推定）。**対応**: 本番 DB（`hibiki-production`）・テスト DB（`hbpnhbsm`）とも `contractors`/`companies` の口座4列（bank_name/bank_branch/account_number/account_holder）が 0 件であることを SQL で確認したうえで、①`openssl rand -base64 24` で新キー（32文字）生成 ②`web/.env.local`・`.env.local.local-dev`・`.env.local.test-backup` の3ファイルを新キーに書き換え ③`wrangler secret put ENCRYPTION_KEY` で本番 Worker（`unsou-system`）へ投入（Success 確認）④一時ファイル・旧 env バックアップを削除。検証: 新キーで `encryptText`→`decryptText` の往復成功、`crypto.test.ts` 12件パス。旧キーで暗号化されたデータは存在しないため再暗号化スクリプトは不要だった。**旧キーは完全に廃棄済み**（以後、旧キー由来の暗号文が出てきたら復号不能＝データ不整合として扱う）。✅**残件は 2026-09-03 に解決**: 旧DB `hbpnhbsm` の Legacy JWT keys（6/5 発行の anon/service_role）は **6/15 のキー再生成で失効済み**だった（ソース直書きのJWTを `iat` でデコードして特定・§5-4 の 2026-09-03 参照）。ダッシュボードの 「Disable legacy API keys」自体は未実施だが、現行キーで運用しておらず実害なし・優先度低。関連: Air 側にしか無かった `backup/action-queue-shim` は origin に push 済み（本流の a2b182e で代替済みのため実質不要）、Air の `~/developer/unsou-system` は削除して以後 CRD 経由で mini セッションを共有する運用 |
 | ✅ 完了 2026-08-25 | **案件一括インポート（取引先インポートに4枚目シート「案件」を追加）** | **✅本番適用まで完了（2026-08-25）**: ①本番DBにマイグレーション適用（ボスがSQL Editorで実行）→ `projects.category` が `NOT NULL DEFAULT 'transport'`・CHECK制約付きで存在することを確認 ②`feature/project-import` を main へ merge・push（`883c47a`）→ Actions run `32853370530` success（1m17s）③本番疎通確認: `/login`=200、未ログインの `/admin/ops/import`=307→`/login`。⚠️**残タスク**: SQL Editorで適用したため `supabase_migrations.schema_migrations` に `20260825000000` の記録が入っていない（マイグレーション自体は冪等なので、次回 `supabase db push` 時に再適用＋記録されて自然に解消する。急ぎで直すなら `insert into supabase_migrations.schema_migrations (version, name) values ('20260825000000','projects_category') on conflict do nothing;` をSQL Editorで実行）。⚠️**A社に渡すDriveのテンプレと記入ガイドは3シート版のまま。案件シート入りの4シート版に差し替えが必要**。以下は実装時の記録: 既存の取引先一括インポート（`/admin/ops/import`・運営者専用）のテンプレに4枚目シート「案件」を追加。列は「荷主／部署／案件名／区分／委託先／売上単価／仕入単価」の順（荷主・案件名・区分・売上単価は必須、部署は荷主が部署を使う設定のときのみ必須、区分は`輸送系`/`作業系`のいずれかでそれ以外はエラー、委託先・仕入単価は任意）。案件コードは自動採番（`P0001`形式、テンプレに列なし）。重複判定は「荷主＋部署＋案件名」（全角半角・空白・大小文字の違いは無視して比較するが、保存名はExcel記載のまま）。案件シートは任意（無い旧テンプレも案件0件として取り込める）。従来どおり1件でもエラーがあれば全件中止。あわせて `projects` テーブルに区分（カテゴリ）列を追加し、おおば様式の帳票が「作業系案件」を判定する材料を案件名の文字列マッチからこの列に変更（案件登録画面にも区分の選択欄を追加）。**E2E実測（テスト環境）**: 4シート1ファイルで請求先1件・部署1件・委託先1件・案件2件の登録に成功、案件コードが`P0001`から連番、区分・単価・荷主/部署/委託先の紐づけをDBで確認。同一ファイルを再投入すると案件2件を含む6件の重複を検出して全件中止、DB件数は不変。案件シートの無い旧テンプレは「案件0件」として取り込めることも確認。検証後、テストデータは削除済み。**本番適用は「マイグレーション適用 → デプロイ」の順を厳守すること**（逆にすると `projects.category` 列が無い状態で新コードが動き、帳票生成が失敗する）。マイグレーションファイルは `supabase/migrations/20260825000000_projects_category.sql`。運用手順は `docs/PARTNER_IMPORT_MANUAL.md`（案件シート節を追記済み）。**本番適用（マイグレーション・デプロイとも）はまだ行っていない** |
 | ✅ 完了 2026-08-24 | **取引先一括インポート機能（実装・E2E・本番デプロイ・secret設定まで全完了）** | **✅Cloudflare secret 設定完了（2026-08-24）**: ボスが `wrangler secret put OPERATOR_USER_IDS`（値=本番管理者UUID `0573b242-93b1-…`）を実行、`wrangler secret list` で登録を確認。未ログインアクセスは引き続き307→`/login`（フェイルクローズ維持）。**運営者=本番管理者アカウントのみで機能は本番有効化済み。残作業なし**。同日追加改善: テンプレDLはボスがExcelで開けることを実機確認（最後の未検証項目クローズ）。ボス要望でテンプレ2行目に必須/任意ガイド行を追加（1列目「※」始まりは例）行と同様データとして取り込まない・テスト233件パス・`f09fdf3` でデプロイ済み、run `32727281743` success）（本番でのログイン後の画面表示確認はボスの次回ログイン時についでに一瞥すれば十分）。以下は経緯: | 実装（Task 1-4: `requireOperator` ガード・検証モジュール・`importPartners` Server Action・`/admin/ops/import` 画面＋nav出し分け）は完了。**本番で使うにはデプロイ前に Cloudflare Workers の secret に `OPERATOR_USER_IDS=<ボスの本番管理者UUID `0573b242-…` で始まるID>` を設定すること**（未設定のままデプロイしても画面は全員404で安全側に倒れるだけで、機能が使えない）。**Task 5（結合確認）の実施結果・制約**: ①ローカルdevサーバー（`ALLOW_DEV_AUTH_BYPASS=false` の現状設定）で `/admin/ops/import` へ未ログインアクセス→ `middleware.ts` が `/login` へリダイレクトすることを `read_page` で確認（フェイルクローズ動作の実測）。②`.env.local` の読み書きが権限設定で禁止されており、かつログインパスワード入力はアシスタントの禁止事項のため、**運営者としてログインした状態での画面確認・実ファイルアップロードのE2Eは未実施**（過去の同種タスクでも同じ制約に当たっている、2026-08-24付近の記録参照）。③代替検証: `parseOperatorIds`/`isOperatorId`（fail-closed）・`crypto`・`partner-import` の単体テスト30件、および `vitest run` 全体227件が全てpass。④`validateAndConvert` を `npx tsx` で直接実行し、委託先2件・請求先1件・部署1件の正常系（0エラー・変換後payload生成）／必須欄空＋列挙値ゆれの異常系（6エラー検出・`data: null`）／既存DBと同名の重複投入想定（5エラー検出・`data: null`＝全件中止）の3パターンを実データで確認済み。⑤DB側の暗号化照合は `execute_sql`（プロジェクト `hbpnhbsmsuhjyrohpluu`）で `contractors`/`clients` が投入前ベースラインの0件であることを確認（`plaintext_leak=0` はこの0件により自明。**実データ投入後の再検証は未実施**）。⑥nav（`admin/nav.tsx`＋`admin/shell.tsx`）で `operatorOnly` フラグが `isOperator` によってフィルタされる実装をコードレベルで確認。**✅画面E2E完了（2026-08-24・ローカルdev＋テストDB hbpnhbsm）**: ボスが `admin@hibiki.com`（UUID `33259c12-…`）で手動ログイン＋`.env.local` に `OPERATOR_USER_IDS=<同UUID>` を追記して実施。①運営者ゲート通過・navに「取引先インポート」表示を確認 ②テンプレと同一ヘッダ・シート構成のテストxlsx（請求先1・部署1・委託先2）をアップロード→プレビュー（形式チェック通過・件数表示）→投入成功（「請求先1件・部署1件・委託先2件を登録しました」） ③投入後DBで `account_number` が72桁の暗号文（平文の口座番号を含まない）・口座空欄はNULL を `execute_sql` で確認 ④同一ファイルを再投入→サーバー側検証エラー6件（既存重複・シート/行/列/理由表示）で全件中止、DB件数不変（1/2/1）を確認。**未実施はテンプレDLボタンのファイル保存動作のみ**（ブラウザペインのDL制約。ただしテンプレ生成コードと同一定数から作ったファイルがパース成功しており、テンプレ⇄パーサの整合は実証済み）。テストデータ（E2Eテスト商事株式会社／検証部／E2Eテスト運送／E2Eテスト急便）は確認後にボス指示で削除済み（テストDBは投入前の0件ベースラインに復帰）。**本番投入前の残作業は Cloudflare secret `OPERATOR_USER_IDS`（本番管理者UUID）の設定のみ**。**✅main統合・本番デプロイ完了（2026-08-24）**: `feature/partner-import` を main へ merge・push（`7dcc923`）、Actions run `32721799346` success。本番で `/login`=200・未ログインの `/admin/ops/import`=307→`/login` を確認（secret未設定のためログイン後も404のフェイルクローズ状態。ボスが Cloudflare dashboard → Workers → unsou-system → Settings → Variables and Secrets で `OPERATOR_USER_IDS` に本番管理者UUID（`0573b242-…`）を設定すれば有効化） |
-| ⏭ **次はこれ**（2026-08-26 更新） | **フィールドテスト開始準備の仕上げ** | **2026-08-26時点の残タスク**: ①🙋ボス: A社の共有先メールアドレスが分かったらDriveフォルダを限定共有する（リンク共有は使わない）②✅完了確認 2026-08-26: DriveのテンプレXLSXと記入ガイドは既に4シート版（案件シート入り・列は荷主/部署/案件名/区分/委託先/売上単価/仕入単価）に差し替え済みだった（両ファイルとも2026-08-26 4:30 JST更新をDrive上で確認）③✅完了 2026-08-26: 本番台帳へ `20260825000000` のINSERTをボスがSQL Editorで実行し、`schema_migrations` 最新行に `projects_category` が載ったことを確認済み④🙋ボス: 本番で自社情報の登録（未登録のうちは帳票系が fail-closed）⑤🙋ボス: 旧DB `hbpnhbsm` の Auth 設定から本番URLを外す（誤ログイン防止・任意）⑥A社実マスタ収集→投入（他人待ち・クリティカルパス）。以下は2026-08-24夜時点の状態: 取引先インポートは実装・E2E・本番有効化・マニュアル整備まで全完了（詳細は上の完了行）。A社受け渡し用に Google Drive フォルダ「HIBIKI_取引先インポート（A社）」（`drive.google.com/drive/folders/1tuE24woNaB3WMXHRaFr7GkGxsmNKFfN1`・kawapon7@gmail.com のDrive）を作成し、最新テンプレxlsxと記入ガイド（Googleドキュメント）を配置済み。**次の一手＝A社の共有先メールアドレスが分かったらフォルダを限定共有する**（リンク共有は使わない）。運営側手順は `docs/PARTNER_IMPORT_MANUAL.md`（2026-08-24追加）。同日追加デプロイ: アカウント管理画面で運営者アカウントを「システムサポート」表記化（メール非表示・本人以外の変更/削除をサーバー側拒否、`08a6e06`）。以下は従来のタスク一覧: ①🙋ボス: 本番URL（unsou-system.hibiki-app.workers.dev）に**新管理者アカウント**（8/24作成・UUID `0573b242-…`）でログイン（**ログイン自体は8/24済み**・アカウント管理画面の表示確認済み） → **自社情報の登録**（未実施。未登録のうちは帳票系が fail-closed でエラー）②🙋ボス: 旧DB `hbpnhbsm` の Auth 設定から本番URLを外す（誤ログイン防止・任意）③A社実マスタ収集→投入（他人待ち・クリティカルパス）④投入後: 代表者の委託先登録＋子分アカウント発行（`2026-08-22-owner-driver-handover.md` §4 C）⑤✅Pro化完了（2026-08-24・`hibiki-production-org` plan=pro を get_organization で確認。事業者購入で登録。日次バックアップ7日分・自動停止なしの状態で実データ投入に進める）。⑤bコンピュートサイズ **Nano→Micro に変更完了（2026-08-25）**: Freeで作ったプロジェクトをPro化した経緯から `infra_compute_size=nano` のまま残っており（プラットフォームAPI `/platform/projects/{ref}` で確認。有料プランではNanoもMicro同額課金＝損な状態だった）、ボスがダッシュボード Settings→Compute and Disk から Micro に変更。**追加費用ゼロ**（$10のコンピュートクレジット内）。検証: status が RESIZING→ACTIVE_HEALTHY に復帰、`pg_settings` が effective_cache_size 384MB→768MB・maintenance_work_mem 32→64MB・shared_buffers 224→256MB と倍増（メモリ0.5→1GBの反映）、本番 `/login` 200 を確認。⚠️本番インフラの変更APIはClaude Code側の安全機構でブロックされるため、この種の操作はボスがダッシュボードで実施すること（検証はアシスタント側で可能）。開発側の残りは「重・保留」＝ status Phase 2 適用・B社前のRLS見直し・フィールドテスト後UX |
+| ⏭ **次はこれ**（2026-09-03 更新） | **フィールドテスト開始準備の仕上げ** | **2026-09-03 更新**: ①は✅完了（`oobaunsou@gmail.com` に編集者権限で共有済み・先方が8/26に記入開始）。⑤も引き続き任意。新規の残件として **RLS ポリシー未設定8件（30分コースで確定・`docs/hibiki-rls-handoff.md`）** と **漏洩パスワード保護 ON（意図的に保留中）** が加わった。当日の全体像は §5-4 の「2026-09-03 まとめ」を参照。<br>**2026-08-26時点の残タスク**: ①✅完了 2026-09-03: A社の共有先メールアドレスが分かったらDriveフォルダを限定共有する（リンク共有は使わない）②✅完了確認 2026-08-26: DriveのテンプレXLSXと記入ガイドは既に4シート版（案件シート入り・列は荷主/部署/案件名/区分/委託先/売上単価/仕入単価）に差し替え済みだった（両ファイルとも2026-08-26 4:30 JST更新をDrive上で確認）③✅完了 2026-08-26: 本番台帳へ `20260825000000` のINSERTをボスがSQL Editorで実行し、`schema_migrations` 最新行に `projects_category` が載ったことを確認済み④🙋ボス: 本番で自社情報の登録（未登録のうちは帳票系が fail-closed）⑤🙋ボス: 旧DB `hbpnhbsm` の Auth 設定から本番URLを外す（誤ログイン防止・任意）⑥A社実マスタ収集→投入（他人待ち・クリティカルパス）。以下は2026-08-24夜時点の状態: 取引先インポートは実装・E2E・本番有効化・マニュアル整備まで全完了（詳細は上の完了行）。A社受け渡し用に Google Drive フォルダ「HIBIKI_取引先インポート（A社）」（`drive.google.com/drive/folders/1tuE24woNaB3WMXHRaFr7GkGxsmNKFfN1`・kawapon7@gmail.com のDrive）を作成し、最新テンプレxlsxと記入ガイド（Googleドキュメント）を配置済み。**次の一手＝A社の共有先メールアドレスが分かったらフォルダを限定共有する**（リンク共有は使わない）。運営側手順は `docs/PARTNER_IMPORT_MANUAL.md`（2026-08-24追加）。同日追加デプロイ: アカウント管理画面で運営者アカウントを「システムサポート」表記化（メール非表示・本人以外の変更/削除をサーバー側拒否、`08a6e06`）。以下は従来のタスク一覧: ①🙋ボス: 本番URL（unsou-system.hibiki-app.workers.dev）に**新管理者アカウント**（8/24作成・UUID `0573b242-…`）でログイン（**ログイン自体は8/24済み**・アカウント管理画面の表示確認済み） → **自社情報の登録**（未実施。未登録のうちは帳票系が fail-closed でエラー）②🙋ボス: 旧DB `hbpnhbsm` の Auth 設定から本番URLを外す（誤ログイン防止・任意）③A社実マスタ収集→投入（他人待ち・クリティカルパス）④投入後: 代表者の委託先登録＋子分アカウント発行（`2026-08-22-owner-driver-handover.md` §4 C）⑤✅Pro化完了（2026-08-24・`hibiki-production-org` plan=pro を get_organization で確認。事業者購入で登録。日次バックアップ7日分・自動停止なしの状態で実データ投入に進める）。⑤bコンピュートサイズ **Nano→Micro に変更完了（2026-08-25）**: Freeで作ったプロジェクトをPro化した経緯から `infra_compute_size=nano` のまま残っており（プラットフォームAPI `/platform/projects/{ref}` で確認。有料プランではNanoもMicro同額課金＝損な状態だった）、ボスがダッシュボード Settings→Compute and Disk から Micro に変更。**追加費用ゼロ**（$10のコンピュートクレジット内）。検証: status が RESIZING→ACTIVE_HEALTHY に復帰、`pg_settings` が effective_cache_size 384MB→768MB・maintenance_work_mem 32→64MB・shared_buffers 224→256MB と倍増（メモリ0.5→1GBの反映）、本番 `/login` 200 を確認。⚠️本番インフラの変更APIはClaude Code側の安全機構でブロックされるため、この種の操作はボスがダッシュボードで実施すること（検証はアシスタント側で可能）。開発側の残りは「重・保留」＝ status Phase 2 適用・B社前のRLS見直し・フィールドテスト後UX |
 | ✅ 完了 2026-06-20 | 本番Resendキー設定・動作確認 | `RESEND_API_KEY` を `web/.env.local` に設定。`kawapon7@gmail.com` へのテスト送信で受信確認済み |
 | ✅ 完了 2026-06-20 | 承認フロー UI 実機テスト | 全4項目 PASS。開発者アンロックUI（モーダル）を `/admin/billing` ② タブに追加。billing-actions.ts のバグ4件修正（カラム名・TZ・dev認証・未存在カラム） |
 | ✅ 完了 2026-06-21 | ドライバー案件フィルターのフィールドテスト | 別セッションで解決済み |
@@ -1403,39 +1403,93 @@ web/
 
 ### 5-4. 直近の作業履歴（新しい順）
 
-#### 2026-09-03 その2（開発環境の手当て・MCP接続先変更・Drive 共有の現況）
+#### 2026-09-03 まとめ（当日の全作業・Air と mini の両機分を統合）
 
-セッション記録から復元した記録（当日の作業がセッション断で複数に分断されたため後追いで整理）。コードの変更は無く、**環境・運用まわりの変更**が中心。
+当日は作業が **Air と mini の2台・計9セッション**に分断され、うち1区間はセッション記録が失われた。
+後日この節を書くにあたり、両機のセッション記録を掘り起こして復元した。**この節が当日の正本**（下の「旧キーの棚卸し」節は当日その場で書かれた詳細記録で、内容は生きている）。
 
-**⚠️ Supabase MCP コネクタの接続先をテスト組織 → 本番組織に変更（ボスが実施）**
+**機械の役割**（この日に確定）
+- **mini（BLACKICE）** = リポジトリの唯一の実体（`~/dev/unsou-system`）。ビルド・コミット・デプロイはすべてここ。
+- **Air（ICEBREAKER）** = 端末。リポジトリを持たず、`ssh mini` で mini に作業させる。Air の Claude セッション記録は Air の `~/.claude/projects/-Users-kawasakiatsushi-Claude/` 配下にあり、**mini からは Tailscale 経由の ssh でしか読めない**（`ssh kawasakiatsushi@100.105.0.109`。ユーザー名が mini と違う点に注意）。
 
-- 変更後、MCP から見えるのは `hibiki-production`（ref `lsgvnxiuidvwefihjbcu`）のみ。テスト側（`kawapon7's Org` / `hbpnhbsmsuhjyrohpluu`）は見えない。
-- **これは `execute_sql` / `apply_migration` が本番 DB に直接当たることを意味する。** 以後、MCP 経由の SQL は実行前に必ず内容を提示して確認を取る（CLAUDE.md §2「本番への変更は一括で進めない」）。
-- 従来の「MCP はテスト側しか見えない」という前提の記述は**すべて無効**。
+---
 
-**セッション消失とログ肥大（remote-control）への対処**
+**1. ✅ 本番エラー監視の導通確認 完了（mini）**
 
-- 事象: BLACKICE 側のセッションが会話の途中で見えなくなる／`~/.claude/remote-control.log` が肥大。
-- 対処: ログローテーションを launchd で常駐化。
-  - `~/.claude/scripts/rotate-remote-control-log.sh`（切り詰め方式・`~/.claude/logs/` に gz で退避）
-  - `~/Library/LaunchAgents/com.kawapon.claude-rc-logrotate.plist`（`launchctl bootstrap` 済み・稼働確認済み）
-  - `~/.claude/scripts/recent-sessions.sh`（直近セッションの一覧・復帰用）
-- 文書化（コミット `7182b7e`）: `docs/2026-09-03_セッション消失とログ肥大_やさしい解説.md` / `docs/RUNBOOK_セッション切断時の対処.md`
+`error_logs` の本番適用 → デプロイ → 意図的な例外 → `error_logs` 記録 → 即時メール着信まで一気通貫で実証。初回メール不着の原因は Cloudflare secret の `ADMIN_ALERT_EMAIL` 欠落だった。詳細は §5-6 の error-monitor 節を参照。
+
+**2. ✅ 旧キーの棚卸しと直書き認証情報の掃除（Air → ssh mini）**
+
+9/2 の積み残し「Legacy JWT keys が無効化済みか未確認」を解決（6/5発行＝失効済み）。直書きのあった4ファイルを環境変数読みに変更。詳細は次節。
+
+**3. ⚠️ Supabase の組織構成が判明し、MCP コネクタの接続先を本番組織へ変更**
+
+advisor の警告が本番・テスト両方に出たことをきっかけに、構成が整理された。
+
+| 組織 | プラン | プロジェクト |
+|---|---|---|
+| `hibiki-production-org` | **Pro** | `hibiki-production`（ref `lsgvnxiuidvwefihjbcu`）＝ HIBIKI 本番。マイグレーション68本 |
+| `kawapon7's Org` | Free（枠は2個で上限） | `unsou-system`（ref `hbpnhbsmsuhjyrohpluu`）＝ 旧開発DB・**全テーブル0件で事実上死んでいる** ／ `gyoumu-calendar`（ref `sbwsbhqeqcidgetxvasz`）＝ **HIBIKI とは別アプリ**・daily_records 1,056件で稼働中 |
+
+- **料金は組織単位**。プロジェクト単位ではない。無料組織のプロジェクトは Pro 限定機能が一切使えない。
+- **Supabase MCP（OAuth コネクタ）は同時に1組織しか見えない**（既知の制限・`supabase/mcp#304`）。ボスが再接続で `hibiki-production-org` を選択。
+- ⚠️ **したがって MCP の `execute_sql` / `apply_migration` は本番 DB に直接当たる。** 実行前に必ず内容を提示して確認を取る（CLAUDE.md §2）。「MCP はテスト側しか見えない」という旧記述は**すべて無効**。
+- 両組織を同時に見たい場合は PAT を `Authorization: Bearer` で渡す `.mcp.json` 方式（トークンは直書きせず `${VAR}` 参照）。現状 HIBIKI は本番だけ繋がっていれば足りるため未対応。
+- ドリフトの痕跡: `20260727141425_align_schema_with_production` / `20260820134500_align_with_production_actual` の2本は、本番をマイグレーション外で触った後始末。**別プロジェクトを test 環境にする方式は構造的にドリフトする**ため、中期的には Pro のブランチ機能へ移行するのが筋（現在ブランチ0本）。
+
+**4. 🆕 本番の RLS ポリシー未設定 8件 — 調査完了・実装は未着手**
+
+引き継ぎ資料 `docs/hibiki-rls-handoff.md`（Air で作成 → 9/3 に mini へ回収）。
+
+- 対象8テーブル: `tenants` / `contractors` / `client_departments` / `driver_project_assignments` / `expense_records` / `notification_reads` / `document_sequences` / `error_logs`
+- **これは穴ではなく「閉じ切り」**。RLS 有効＋ポリシー0本＝許可ゼロ＝ anon/authenticated から1行も読めない・書けない（fail closed）。advisor が WARN でなく **INFO** なのはそのため。GRANT と RLS は AND 条件なので、GRANT が付いていても RLS が全拒否していれば到達できない。
+- 唯一の論点は「クライアントから直接触る想定だったのに閉じている＝その機能が壊れている」か否か。
+- ✅ **その分岐は 2026-09-03 に mini 側で確認済み: 8テーブルへの `.from()` は全て Server Actions / サーバー側 utils からで、`'use client'` のファイルからの直接アクセスは 0件。** → **30分コース**（「意図的にポリシー不要」と明示するマイグレーションを置くだけ）で確定。半日コースには入らない。
+- `error_logs` は anon/authenticated への GRANT がそもそも無く、サーバー専用として正しい設計。**作業不要**。
+- 書式は既存の `rls_tighten_5tables` 等からコピーできる。設計判断が要るのは `tenants` のみ（テナント本体で `tenant_id` を持たない）。
+
+**5. ⏸ 漏洩パスワード保護（`auth_leaked_password_protection`）は意図的に保留**
+
+- 理由（ボス判断 2026-09-03）: 導入初期に複雑なパスワードを要求すると現場が混乱する。**まずシンプルなパスワードで運用を開始し、時期を見て「セキュリティ強化のため変更します」とアナウンスしてから ON にする**という段階導入。
+- ON にする前の必須確認: ログイン処理の **`WeakPasswordError` のハンドリング**（エラー全般を失敗扱いにしていると、既存ユーザーが全員ログイン不能に見える）。
+- なお無料組織側（`unsou-system` / `gyoumu-calendar`）は Pro 限定機能のため**そもそも有効化できず、警告は消せない**。設定ミスではない。
+
+**6. ✅ Air の `~/developer/unsou-system` を削除＝ mini へ一本化**
+
+- 理由（ボス判断）: 2台で並行開発すると事故る。
+- 削除前に mini・GitHub との差分を精査済み。**未push で失われた commit はゼロ**（実測: ローカル全ブランチが `origin/main` 比 +0、`main` と `origin/main` のハッシュ一致）。
+- Air からのコミットは今後も可能。ただし **Air 単体では不可で、必ず `ssh mini` 経由**になる。テザリング環境でも Tailscale で mini に到達できる（`blackice 100.90.116.42` / `icebreaker 100.105.0.109`）。
+
+**7. 開発環境の手当て（セッション消失・ログ肥大）**
+
+- `~/.claude/scripts/rotate-remote-control-log.sh`（切り詰め方式・`~/.claude/logs/` に gz 退避）＋ `~/Library/LaunchAgents/com.kawapon.claude-rc-logrotate.plist` を launchd 常駐化。
+- `~/.claude/scripts/recent-sessions.sh`（直近セッション一覧・復帰用）を追加。
+- 文書（コミット `7182b7e`）: `docs/2026-09-03_セッション消失とログ肥大_やさしい解説.md` / `docs/RUNBOOK_セッション切断時の対処.md`
 - 復帰手段の実測: `tmux` 上で `claude -r <session-id>` により切断済みセッションの再開に成功。
-- ⚠️ **この日の 12〜15時 JST の作業（旧キー棚卸し = 下のエントリ）のセッション記録は残っていない。** git のコミットと HANDOVER の記述だけが証跡。セッション断中の作業は記録が飛ぶ前提で、区切りごとに HANDOVER へ書くこと。
+- ⚠️ **12〜15時 JST の作業（旧キー棚卸し）のセッション記録は mini 側に存在しない。** Air 上のセッションが `ssh mini` でコマンドだけを流していたため、会話は Air 側にしか残らない。**機械をまたぐ作業は、区切りごとに HANDOVER に書くこと。**
 
-**おおば運送（案件一括インポート）の現況 — 先方の入力待ち**
+**8. おおば運送（案件一括インポート）— 先方の入力待ち**
 
-- Drive フォルダは `oobaunsou@gmail.com` に**編集者権限で共有済み**（リンク共有ではない）。§5-4 2026-08-26 の残タスク①「共有先アドレスが分かったら限定共有」は**完了**。
-- フォルダの中身: `HIBIKI_取引先インポート.xlsx`（4シート版・8/26 に先方が更新しサイズ増＝記入が進行中）／記入ガイド（案件シート対応版）／秘密保持誓約書（8/27）／ログインアカウント（8/27）。
-- 差し替え（8/25 19:30）→ 共有、の順序であることをボスが確認済み。**古い3シート版が先方に渡った可能性は無い。**
-- 方針（ボス判断）: 先方から記入完了の報告か質問が来るまで Drive のファイルには触れない。連絡が来たら検証 → 本番インポート画面から投入（手順は `docs/PARTNER_IMPORT_MANUAL.md`）。
+- Drive フォルダは `oobaunsou@gmail.com` に**編集者権限で共有済み**（リンク共有ではない）。8/26 の残タスク①「共有先アドレスが分かったら限定共有」は**完了**。
+- 中身: `HIBIKI_取引先インポート.xlsx`（4シート版・8/26 に先方が更新しサイズ増＝記入進行中）／記入ガイド（案件シート対応版）／秘密保持誓約書（8/27）／ログインアカウント（8/27）。
+- 差し替え（8/25 19:30）→ 共有、の順序をボスが確認済み。**古い3シート版が先方に渡った可能性は無い。**
+- 方針: 先方から記入完了の報告か質問が来るまで Drive のファイルには触れない。連絡が来たら検証 → 本番インポート画面から投入（`docs/PARTNER_IMPORT_MANUAL.md`）。
 
-**未解決の申し送り**
+---
 
-- 🙋 **`hibiki-rls-handoff.md` が mini（BLACKICE）に届いていない。** ホーム配下を全検索して0件。Air 側でどう渡したか（Downloads / AirDrop / git push）が不明なままで、RLS の引き継ぎ内容は未受領。
-- ⏸ **未push 2コミット**（`ae8ad40` / `b0dd2a1`、`main` は origin より ahead 2）。理由は下のエントリの通り、`deploy.yml` が `web/**` で発火し本番 Worker の再デプロイになるため。**次に `web/` を触るときにまとめて push する。**
-- ⏸ Supabase ダッシュボードの「Disable legacy API keys」は未実施のまま（下のエントリ参照）。
+**当日終了時点の保留一覧**
+
+| 件 | 状態 | 次の一手 |
+|---|---|---|
+| おおば運送 代表のエクセル記入 | **返送待ち**（実運用開始の最長パス） | 連絡が来るまで待つ |
+| 本番で自社情報を登録 | 未実施（未登録の間は帳票 fail-closed） | ボスが画面操作 |
+| 帳票様式を「おおば運送様式」へ＋角印登録 | 未実施 | `oobaunsou_mihon/IMG_6712.PNG` |
+| 代表者稼働の運用C（代表を委託先登録→子分アカウント発行） | マスタ投入待ちで着手不能 | エクセル受領後 |
+| **RLS ポリシー未設定8件** | 調査完了・実装未着手。**30分コースで確定** | `docs/hibiki-rls-handoff.md` §3 から |
+| 漏洩パスワード保護 ON | **意図的に保留** | アナウンス後。事前に `WeakPasswordError` 確認 |
+| 「Disable legacy API keys」トグル | 未実施（6/15世代の JWT が有効なまま） | 押しても失うものは無いが実害も無い。優先度低 |
+| ブランチ運用への移行 | 未着手（ブランチ0本） | 腰を据えるとき向け |
+| 税理士確認待ち（経過措置の売上計上） | 変化なし | — |
 
 #### 2026-09-03（旧キーの棚卸し: 6/5発行JWTの失効を確認、直書き4ファイルを掃除）
 
