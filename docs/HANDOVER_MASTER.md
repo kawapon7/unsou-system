@@ -2778,6 +2778,8 @@ web/src/
 
 ✅ `error_logs` のマイグレーション（`supabase/migrations/20260902000000_error_logs.sql`）は**テスト DB・本番 DB とも適用済み（本番は 2026-09-03、ボスが SQL Editor で実行・`schema_migrations` に 20260902000000 を記録・to_regclass/to_regproc で確認）**。教訓: 適用は本番デプロイより先。逆順にするとテーブルが無い状態で記録処理が走り、全て失敗する。
 
+✅ **本番導通確認完了（2026-09-03）**: main へマージ（`c594d9d`）→ deploy run 33712952660 success → owner が自社情報画面の一時ボタンで `upsertSchedule` 名義の例外を発生 → `error_logs` に critical 1行（message `conduction test [digits] ***@example.com`＝数字・メールのマスク実証、count 加算実証）→ 即時メール「【HIBIKI】エラー検知: upsertSchedule」が kawapon7@gmail.com に 13:19 JST 着信。**初回は届かなかった**: 原因は Cloudflare Workers の secret に `ADMIN_ALERT_EMAIL` が無かったこと（`wrangler secret list` で確認。`notified_at` が NULL のまま＝送信失敗→通知権返却の挙動）。同日 `wrangler secret put ADMIN_ALERT_EMAIL`（値 kawapon7@gmail.com）で是正。⚠️ この変数は防衛アラートの管理者宛フォールバックも使うため、それまで本番の管理者宛メールは一度も送れていなかったはず。`RESEND_FROM_EMAIL` は本番未設定（送信元 `onboarding@resend.dev`。独自ドメイン未認証のため Resend アカウントのアドレス宛にしか届かない。宛先を変えるならドメイン認証が先）。導通用 Action とボタンは確認後に削除済み。
+
 ### 5-8. 認証・権限のルール
 
 - `user_metadata.role = 'master'` → admin（親分）

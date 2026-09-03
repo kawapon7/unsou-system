@@ -3,7 +3,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { fetchCompanyForEdit, saveCompany, type CompanyFormValues } from './actions'
 import { listDocumentFormatOptions } from '@/utils/document-formats'
-import { throwForConductionTest } from '@/app/_actions/errorMonitorConductionActions' // TODO(error-monitor): 導通確認後に削除
 
 const EMPTY: CompanyFormValues = {
   name: '', invoice_reg_number: '', postal_code: '', address: '', phone: '', email: '',
@@ -301,13 +300,6 @@ export default function CompanySettingsPage() {
                      hover:bg-zinc-50 disabled:opacity-50"
         >
           取り消して再読み込み
-        </button>
-        {/* TODO(error-monitor): 導通確認後に削除 */}
-        <button
-          onClick={async () => { const r = await throwForConductionTest(); setError(r.error) }}
-          className="ml-auto rounded-md border border-red-300 px-3 py-2 text-xs text-red-700 hover:bg-red-50"
-        >
-          エラー監視 導通テスト
         </button>
       </div>
     </div>
