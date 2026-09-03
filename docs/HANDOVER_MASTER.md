@@ -2936,6 +2936,20 @@ web/src/
 - `approval_history` / `notification_logs` に UPDATE / DELETE を発行しない（不変ログ）
 - `ENCRYPTION_KEY` を Git にコミットしない
 
+#### Supabase MCP の取り扱い（2026-09-03 接続先変更後・必読）
+
+MCP コネクタの接続先を本番組織 `hibiki-production-org` に変更した。**`list_projects` で見えるのは `hibiki-production`（ref `lsgvnxiuidvwefihjbcu`）のみで、テスト側（`unsou-system` / ref `hbpnhbsmsuhjyrohpluu`）は見えない。**
+
+つまり **MCP の `execute_sql` / `apply_migration` は本番DBに直撃する**。「テストに当たるはず」という前提は成立しない。コネクタは read-only モードではなく、書き込み系ツールが露出している。
+
+| 操作 | 扱い |
+|---|---|
+| 読み取り（`list_tables` / `get_advisors` / `query_logs` / `list_migrations`） | **アシスタントが実行してよい**。無害で調査が速くなる |
+| 書き込み（`execute_sql` の INSERT/UPDATE/DELETE、`apply_migration`、`deploy_edge_function`） | **アシスタントは SQL を提示するだけ。実行はユーザーがダッシュボードで行う** |
+| `pause_project` / `restore_project` / `delete_branch` / `delete_project` | **使用禁止**。事故時に取り返しがつかない |
+
+`execute_sql` の SELECT も、件数が多くなる場合は `LIMIT` を付けてから実行する（§5 トークン消費）。
+
 ### 5-10. 環境変数
 
 ```env
