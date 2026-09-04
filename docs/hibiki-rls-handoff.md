@@ -89,3 +89,7 @@ rg -n "from\('(contractors|client_departments|document_sequences|driver_project_
 - ローカル PostgreSQL 16 の使い捨て DB で適用・再適用（冪等）・`set role anon` で拒否されることを確認済み（2026-09-04）
 
 本番適用はボスが SQL Editor で実施（手順は HANDOVER §5-2 の当該行）。適用後に `get_advisors(security)` で INFO 8 件が消えることを確認する。
+
+## 7. 本番適用 完了（2026-09-04）
+
+ボスが `hibiki-production` の SQL Editor で実行・台帳登録。実測: `_server_only` ポリシー 8 本・anon/authenticated GRANT 0 件・`schema_migrations` 68 本（ローカルと一致）・security advisor は漏洩パスワード保護の WARN 1 件のみ（INFO 8 件消滅）。本件クローズ。残るは §5 の 2 項目。
