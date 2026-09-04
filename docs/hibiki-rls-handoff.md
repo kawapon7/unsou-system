@@ -77,3 +77,15 @@ rg -n "from\('(contractors|client_departments|document_sequences|driver_project_
 - **漏洩パスワード保護**: 意図的に保留中。導入初期の混乱回避のため。アナウンス後に ON。
   ON する前に `WeakPasswordError` のハンドリング確認が必須（既存ユーザーのログイン自体は通るが、エラー全般を失敗扱いしていると全員ログイン不能に見える）。
 - **ブランチ運用への移行**: 現在ブランチ 0 本。無料組織の `unsou-system` を test 環境にする方式はドリフトを生む（`align_schema_with_production` / `align_with_production_actual` の 2 本がその後始末）。Pro なのでブランチが使える。
+
+## 6. 調査結果と対応（2026-09-04・mini）
+
+**§3 の分岐は「ヒットしない」側だった。** `web/src` 全域で 8 テーブルへの `.from()` は 54 箇所あるが、受け手は全て `createServiceClient()`（service_role・RLS バイパス）。anon キー側の `createClient()`（`utils/supabase/server.ts`）は `auth.getUser()` にしか使われておらず、`createBrowserClient` からの直クエリは 0 件。`internal.is_owner()` / `internal.my_contractor_id()` は SECURITY DEFINER なので、authenticated の GRANT を剥がしても既存ポリシーは壊れない。
+
+**対応 = `supabase/migrations/20260904000000_rls_server_only_8tables.sql`（30分コース）**
+- 8 テーブルに `service_role` 専用ポリシー `<table>_server_only` を 1 本ずつ置く（20260607 の contractors と同型。advisor の INFO 消し＋意図の宣言。機能上は無意味）
+- anon / authenticated への GRANT を全 REVOKE（多層防御。error_logs は元々なし）
+- `COMMENT ON TABLE` で「server-only」を残す
+- ローカル PostgreSQL 16 の使い捨て DB で適用・再適用（冪等）・`set role anon` で拒否されることを確認済み（2026-09-04）
+
+本番適用はボスが SQL Editor で実施（手順は HANDOVER §5-2 の当該行）。適用後に `get_advisors(security)` で INFO 8 件が消えることを確認する。
