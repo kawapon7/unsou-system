@@ -162,6 +162,31 @@ git checkout claude/backmini-remote-setup-n2z4hs
 | **正本（REMOTE_OPS.md）** | 困った時に最初に開く1枚 | 取扱説明書の目次ページ。詳しい話はそこからリンクで飛ぶ |
 | **クラウドセッション** | claude.ai 上の使い捨て環境で動く Claude | mini でも Air でもない「貸し会議室」。コードは読めるが mini の中身は触れない。ビルド検証も不可 |
 
+### tmux だけ、もう少しくわしく（机と窓）
+
+ふつうに `ssh mini` で Claude を動かすと、Claude は ssh の接続にぶら下がる。接続が切れた瞬間に Claude も終わる。
+tmux は mini の中に「机」を作って Claude をその上で動かす。ssh は「机を覗く窓」になる。窓が閉じても机は残る。
+
+```
+tmux なし:  Air ──ssh──▶ Claude              ← 線が切れると Claude も死ぬ
+tmux あり:  Air ──ssh──▶ [机 hibiki: Claude]  ← 線が切れても机は mini に残る
+```
+
+| やりたいこと | 操作 | 意味 |
+|---|---|---|
+| 机に座る（無ければ作る） | `ssh mini -t '/opt/homebrew/bin/tmux new -A -s hibiki'` | `-A` = あれば座り直す、無ければ新設。**常にこれだけ使う**（机が増えない） |
+| 机から離れる | **Ctrl-b を押して離し、すぐ d** | デタッチ。机は残る。正しい抜け方 |
+| 机の一覧 | `tmux ls` | `hibiki: 1 windows (attached)` など |
+| 机を片づける（普段不要） | `tmux kill-session -t hibiki` | Claude も終わる |
+
+- Ctrl-b は「tmux に話しかける合図」。直後の1キーだけが tmux への命令で、他は全部机の上の Claude に届く
+- **`exit` / Ctrl-d は机を片づける操作**。Claude も終わる。抜ける時は必ず Ctrl-b → d
+- 画面下の緑の帯が「tmux の中にいる」目印。帯が無ければ外
+- マウスホイールでスクロール可（`mouse on` 設定済み）。スクロール中は帯に `[0/1234]` が出る。`q` で戻る
+- Ctrl-b → d で抜けない時は間が空きすぎ。Ctrl-b を離して即 d
+- 同じリポジトリでデスクトップ版 Claude を同時に開かない（編集がぶつかる）
+- 通信が切れたら窓が閉じるだけ。戻ったら「机に座る」コマンドを打てば切れる前と同じ画面
+
 ### いま特に押さえておけばいい3つ
 
 1. **会話は mini に残る。切れるのは接続だけ。** 慌てて作り直さない
