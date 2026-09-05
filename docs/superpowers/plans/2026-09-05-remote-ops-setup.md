@@ -90,7 +90,11 @@ Air から `ssh mini ~/dev/unsou-system/ops/mini/doctor.sh` で OK/NG 表を出�
 ### 守ること
 
 1. **HIBIKI の Claude は必ず mini の tmux の中で動かす。** Air 上で HIBIKI の Claude を動かさない（Air の断がそのまま作業の断になる）
-2. **mini は自宅の固定回線に置き、テザリングに乗せない。** remote-control のアーカイブは mini 側の断で起きるので、ここが安定していれば起きない
+2. **mini は自宅回線に有線 LAN で置き、テザリングに乗せない。** remote-control のアーカイブは mini 側の断で起きるので、ここが安定していれば起きない
+   - 自宅回線はドコモ home 5G（ホームルーター）。**mini とルーターは LAN ケーブルで直結し、mini の Wi-Fi は切る**（有線・無線の両立ちは経路迷いで断が出る）。macOS の Wi-Fi 省電力・干渉による短い断を消せる
+   - LAN で安定するのは部屋の中の1区間だけ。home 5G 自体がモバイル回線で外に出ているため、上流の揺れは残る。LAN 化後1週間 `doctor.sh` で remote-control ログの `Reconnecting` 回数を見て、まだ切れるなら原因は home 5G 側と切り分ける
+   - home 5G はキャリア NAT で外からの直接接続不可。Tailscale は中継で越えるので現構成のままでよい。ルーターの自動再起動時は必ず切れるが、Tailscale・remote-control とも自動復帰し、会話は RUNBOOK 手順Aで再開できる
+   - 省電力: 「スリープさせない」＋「ネットワークアクセスによるスリープ解除」をオン
 3. **Air からは mosh を既定にする**（`brew install mosh` を両機に。`mosh mini -- tmux new -A -s hibiki`）。回線切替・トンネル・電波の途切れで表示が死なない
 4. mosh が使えない時の ssh は keepalive 付きで（Air の `~/.ssh/config`）:
    ```
