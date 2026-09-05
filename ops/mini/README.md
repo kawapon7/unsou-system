@@ -33,4 +33,5 @@ sleep 20; tail -5 ~/.claude/logs/rc-start.log
   - bootout → bootstrap で入れ替え: 同じ環境ID `env_01CA67…` に登録し直し、前サーバーの事前作成セッション `0a494143…` を `SessionStart:resume` で復帰
   - `kill` で「10分落ち」を疑似再現: 約60秒後に launchd が再実行し、**同じセッションに再度復帰**（`rc-start.log` に「continued session ended after 65s」→「trying --continue」）
   - ⚠️ `--continue` で立ち上がったサーバーは **single-session（最大1本）**。`--spawn=same-dir`（最大32本）と違い、iPhone から新しいセッションを増やせない。戻るのは「最後に記録された1本」だけで、前サーバーにぶら下がっていた他の4本は置き去り（`docs/REMOTE_OPS.md` 🚑 の1行で個別に戻す）
+  - 21:20 ごろ Wi-Fi → 有線 LAN に切替（Wi-Fi オフ）: 2分11秒の断ののち **同じプロセスがつなぎ直した**（`[bridge:poll] Reconnected after 2m 11s`。再起動なし・Tailscale も生存）
   - 未検証: 本物の10分通信断（Wi-Fi 断）で同じ結果になるか。仕組み上は同じ経路（プロセス終了→launchd→`--continue`）

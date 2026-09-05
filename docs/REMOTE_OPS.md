@@ -88,7 +88,7 @@ OK/NG の表が出る。NG 行の右端が §6 の見出し。
 |---|---|---|
 | デスクトップアプリ常時起動 | ログイン項目 ＋ 設定→Claude Code→「リモート制御を既定で有効」ON | セッションはアプリのプロセスに乗っている |
 | スリープ禁止 | `pmset`: sleep 0 / womp 1 | 寝ると外から届かない |
-| 回線 | 有線 LAN（Wi-Fi は切る） | 無線の短い断を消す。**2026-09-05 時点はまだ Wi-Fi（要対応）** |
+| 回線 | 有線 LAN（Wi-Fi は切る） | 無線の短い断を消す。2026-09-05 21:20 に有線化済み |
 | 常駐 remote-control | launchd `com.kawapon.claude-remote-control` → `rc-start.sh`（`--continue` → 無ければ新規、`--debug-file` へ記録） | 10分断で終了しても同じセッションに戻す（2026-09-05 `kill` で実測済み）。⚠️ `--continue` 中は**1本だけ**配信。iPhone で新しい会話を増やしたい時はデスクトップアプリ側で作る |
 | ログ | stdout は `/dev/null`。記録は `~/.claude/logs/remote-control-debug.log`。1時間ごとに 20MB 超で切り詰め | 9/3 の 81MB 再発防止 |
 | Tailscale | **入切しない** | 403 が3分続くと切断される公式仕様 |

@@ -43,7 +43,7 @@ fi
 if [ -s "$DEBUG_LOG" ]; then
   src="$DEBUG_LOG"
   tail -c 30000 "$src" > /tmp/doctor-rc-tail.$$ 2>/dev/null
-  okline=$(grep -anE 'Starting poll loop|Registered, server' /tmp/doctor-rc-tail.$$ | tail -1 | cut -d: -f1)
+  okline=$(grep -anE 'Starting poll loop|Registered, server|Reconnected after' /tmp/doctor-rc-tail.$$ | tail -1 | cut -d: -f1)
   ngline=$(grep -anEi 'Reconnecting|ECONNRESET|ETIMEDOUT|ENOTFOUND|fetch failed|Reconnect attempt' /tmp/doctor-rc-tail.$$ | tail -1 | cut -d: -f1)
   rm -f /tmp/doctor-rc-tail.$$
   if [ -z "$okline" ] && [ -z "$ngline" ]; then last=""; elif [ "${ngline:-0}" -gt "${okline:-0}" ]; then last=Reconnecting; else last=Connected; fi

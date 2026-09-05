@@ -1349,7 +1349,8 @@ web/
 - **正本 `docs/REMOTE_OPS.md` を新設**。先頭に復旧の1行（`cd ~/dev/unsou-system && claude --remote-control --resume <id>` を tmux 内で）、構成図、入口の決定表、プロジェクト置き場所ルール（既定 Air・mini は実データ/.env.local/本番権限/常駐が要る時だけ）、症状別対処。既存の `REMOTE_DEV_CHECK.md` / `RUNBOOK_セッション切断時の対処.md` / `2026-09-03_…やさしい解説.md` は残して正本からリンク
 - **`ops/mini/` 新設**: mini にしか無かった `~/.claude/scripts/*.sh` と launchd plist 3本（`__HOME__` 置換のテンプレ）を回収。`doctor.sh`（OK/NG 表・NG 行に対処見出し）、`install.sh`（冪等配布・launchd 読み直しはしない）、Air 用 `ssh_config.example`（keepalive）、変更前の退避 `backup/`
 - **常駐 remote-control を `--continue` ＋ `--debug-file` に切替**（9/3 の「10分落ちで前セッション置き去り」と「stdout スピナーで 81MB」の根治）。実測: 入れ替え後に同じ環境ID・同じセッション `0a494143…` に復帰、`kill` の疑似10分落ちでも約60秒後に同じセッションへ再復帰。**注意: `--continue` 起動は single-session（1本だけ）**。複数本の受け口ではなくなるが、主戦場はデスクトップアプリ経路なので許容。stdout は `/dev/null`、記録は `~/.claude/logs/remote-control-debug.log`（ログ切り詰めは debug ログも対象に変更）
-- 残: **mini の回線が Wi-Fi のまま**（`doctor.sh` の唯一の NG。有線 LAN 直結＋Wi-Fi オフはボス作業）。本物の10分通信断での復帰は未実測。tmux の机が3本（`hibiki` / `hibiki-161130` / `resume`）残っているので不要分は片づけてよい。段階②の残り: tmux 自動作成の launchd。段階③: mosh / Blink
+- 同日 21:20 ボスが **有線 LAN 直結＋Wi-Fi オフ**を実施。切替時 2分11秒の断ののち同じプロセスがつなぎ直し（再起動なし）。`doctor.sh` は全項目 OK に。
+- 残: 本物の10分通信断での復帰は未実測。tmux の机が3本（`hibiki` / `hibiki-161130` / `resume`）残っているので不要分は片づけてよい。段階②の残り: tmux 自動作成の launchd。段階③: mosh / Blink
 
 #### 2026-09-04 本番 RLS「ポリシー0本」8テーブルのサーバー専用化 適用完了（mini）
 
