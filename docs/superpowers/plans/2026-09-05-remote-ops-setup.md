@@ -1,0 +1,83 @@
+# リモート運用の仕組み化（BLACKICE / ICEBREAKER / iPhone）
+
+作成日: 2026-09-05（クラウドセッションで起案。**実装・検証は Mac mini（BLACKICE）上で行う**）
+
+## 目的
+
+バックミニ導入から約1か月。道具（Tailscale / ssh+tmux / remote-control / 画面共有 / クラウドセッション）は揃ったが、
+「どの入口を使うか」「困った時にどこを見るか」「今どういう状態か」が決まっておらず、リモート周りのトラブル対応に時間を取られている。
+新しい道具を増やさず、今ある部品を1つの仕組みにまとめる。
+
+## 現状の課題
+
+- 入口が4つあり、場面ごとの使い分けが決まっていない
+- 資料が4か所に散っている（`REMOTE_DEV_CHECK.md` / `RUNBOOK_セッション切断時の対処.md` / `2026-09-03_…やさしい解説.md` / HANDOVER 9/3 節）
+- mini 側の仕組み（`~/.claude/scripts/*.sh`、launchd plist 2本、`~/.tmux.conf`、Air の `~/.ssh/config`）がリポジトリ外で、再現できない
+- 状態（Tailscale / remote-control / tmux / dev サーバー / スリープ設定）を一発で見る手段がない
+- 移動中のテザリング⇄Wi-Fi 切替で ssh が切れる
+
+## 方針（4本柱）
+
+### 1. 入口を3つに固定する
+
+| 場面 | 使う入口 | 使わない |
+|---|---|---|
+| 外出先・スマホ・短い指示や確認 | iPhone の Claude アプリ（remote-control） | 画面共有 |
+| Air で腰を据えて作業 | `ssh mini` → tmux `hibiki` 内の CLI Claude | Air 単体でのリポジトリ操作 |
+| コード読み・仕様相談・mini 不要の作業 | クラウドセッション | ビルド検証（`npm ci` 不可） |
+| GUI が必要な時だけ | 画面共有の高パフォーマンスモード | 常用 |
+
+ルール: **1タスク1機械。機械をまたぐ時は HANDOVER に区切りを書いてから。**
+
+### 2. 正本を1枚にする: `docs/REMOTE_OPS.md`
+
+構成図・決定表・日常手順（つなぐ／抜ける／戻る）・症状別対処を統合。既存3ファイルは詳細版として残し、正本からリンクする。
+
+### 3. mini の仕組みをリポジトリ管理下に: `ops/mini/`
+
+- `recent-sessions.sh` / `rotate-remote-control-log.sh` を `~/.claude/scripts/` から回収
+- launchd plist 2本のテンプレート（`com.kawapon.claude-remote-control` / `com.kawapon.claude-rc-logrotate`）
+- `tmux.conf`、Air 側 `~/.ssh/config` 見本（`ServerAliveInterval` 付き）
+- `setup.sh`（冪等。何度実行しても同じ状態になる）
+- 秘密情報・実 IP・ユーザー名は含めず変数化
+
+### 4. 状態を一発で見る: `ops/mini/doctor.sh`
+
+Air から `ssh mini ~/dev/unsou-system/ops/mini/doctor.sh` で OK/NG 表を出す。
+
+- Tailscale 接続状態
+- remote-control の生死（launchctl）と、ログ末尾が `Connected` か `Reconnecting` か
+- tmux `hibiki` の有無
+- dev サーバー（3000）の起動有無
+- スリープ設定（`pmset -g`）・ディスク残量・remote-control ログのサイズ
+- NG 行には `REMOTE_OPS.md` の対処見出しを添える
+
+## 切断対策（追加）
+
+- **mosh 導入**（`brew install mosh`）。tmux と併用し、回線切替で接続が死なないようにする
+- **iPhone から同じ tmux に入る**: Blink Shell（mosh 対応）。remote-control 断時の予備経路
+- **remote-control の出力先を `--debug-file` へ切替**（9/3 保留分）。再起動で iPhone 側が一度切れるので手が空いた時に1回だけ
+- **tmux `hibiki` を mini 起動時に自動作成**（launchd 1本追加）
+
+## 進め方
+
+| 段階 | 内容 | 目安 |
+|---|---|---|
+| ① | `REMOTE_OPS.md` 正本、決定表、`doctor.sh`、ssh config の keepalive | 半日 |
+| ② | `ops/mini/` へスクリプト回収と `setup.sh`、`--debug-file` 切替、tmux 自動起動 | 半日 |
+| ③ | mosh、Blink Shell、必要なら Jump Desktop | 任意 |
+
+## mini で着手する時の手順
+
+```sh
+cd ~/dev/unsou-system
+git fetch origin claude/backmini-remote-setup-n2z4hs
+git checkout claude/backmini-remote-setup-n2z4hs
+# tmux hibiki 内で claude を起動し、この計画書を読ませて ① から開始
+```
+
+## 注意
+
+- `~/.claude/scripts/` と `~/Library/LaunchAgents/*.plist` の現物は mini にしかない。回収は mini 上で行う
+- `launchctl kickstart` を伴う作業（`--debug-file` 切替）は他セッションを巻き込むため、作業中のものが無いことを確認してから
+- 各スクリプトは mini で実行して結果を確認するまで「未検証」扱い
