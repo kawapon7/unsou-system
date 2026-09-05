@@ -8,6 +8,57 @@
 「どの入口を使うか」「困った時にどこを見るか」「今どういう状態か」が決まっておらず、リモート周りのトラブル対応に時間を取られている。
 新しい道具を増やさず、今ある部品を1つの仕組みにまとめる。
 
+## 最重要: Claude Code remote-control を安定させる（2026-09-05 追記・主戦場）
+
+**一番多いパターン**: 自宅 mini のデスクトップアプリで開いているセッションを、外出先の Air（デスクトップアプリ）または iPhone アプリで開いて続きをやる。
+アーカイブ・切断されていた時だけ ssh でターミナルから復旧する。
+→ 仕組み化の中心は ssh / tmux ではなく **remote-control そのもの**。以下は公式 docs（https://code.claude.com/docs/en/remote-control.md）で確認した事実に基づく。
+
+### 事実1: 動かし方が2つあり、通信断への強さが違う
+
+| 動かし方 | 正体 | mini 側の通信が切れた時 |
+|---|---|---|
+| デスクトップアプリのセッション（`/rc`、または「リモート制御を既定で有効」） | 対話モード | **回線が戻るまで再接続を試み続ける**（docs: retries for as long as the outage lasts） |
+| launchd 常駐の `claude remote-control` | サーバーモード | **約10分つながらないとプロセスが終了**（docs: gives up after roughly 10 minutes and exits）。launchd が再起動しても新サーバーになり、前のセッションはアーカイブ側へ |
+
+→ **9/3 の「消えた」はサーバーモードの10分ルール。** 主戦場のデスクトップアプリ経路は元々切れにくい方。補強すべきは常駐サーバー側。
+
+### 事実2: 端末（Air / iPhone）側の断は mini のセッションに影響しない
+
+セッションは mini のプロセス内にある。端末は覗いているだけ。Air のテザリングが切れても mini 側は何も起きない。
+
+### 事実3: 復旧は1行で「アプリの世界」に戻せる
+
+```sh
+# ssh mini → tmux hibiki の中で
+cd ~/dev/unsou-system && claude --remote-control --resume <セッションID>
+```
+
+これでそのセッションが再び Air / iPhone のアプリに出る。**作業はアプリで続ける。ターミナルで会話しない。** tmux は「窓を閉じても Claude が死なない入れ物」としてだけ使う。
+- セッション ID は `sh ~/.claude/scripts/recent-sessions.sh ~/dev/unsou-system`
+- 常駐サーバー側の再開は `claude remote-control --continue`（起動時のセッション）または `--session-id <id>`。**サーバー停止から約4時間以内**
+- **v2.1.228 以降**なら `--continue` / `--session-id` がアーカイブ済みセッションも自動で戻す → mini の `claude --version` を確認し、古ければ更新
+
+### mini 側で安定させる設定（優先順）
+
+1. **デスクトップアプリを常時起動。** セッションはアプリのプロセスに乗っている（docs: Local process must keep running）。ログイン項目に登録し、「設定 → Claude Code → リモート制御を既定で有効」をオン
+2. **有線 LAN・スリープ禁止**（前節）
+3. **launchd 常駐サーバーを `--continue` 付き＋`--debug-file` に直す。** 10分落ち → launchd 即再起動 → 同じセッションに復帰、を狙う。ログ肥大対策も同時に片づく。**mini で実測するまで未検証**
+4. **`claude` を v2.1.228 以上に更新**
+5. **`doctor.sh` にデスクトップアプリの生死（`pgrep`）と `claude --version` を追加**
+
+### 公式の注意点で運用に効くもの
+
+- ネットワーク / VPN 切替後に HTTP 403 が出ると **3分だけ再試行し、それ以上続くと切断** → **mini の Tailscale は触らない**（入切しない）
+- 対話モードは **1プロセスにつきリモートセッション1本**。複数持ちたい時はサーバーモード（既定32本）
+- サーバーモードでセッションが落ちた時は、端末から1通送ると再び配信される（docs: send a message from a connected device to serve it again）
+- `/plugin` `/resume` などはリモートから使えない（ローカル専用）
+- 権限プロンプト以外のダイアログは既定5分で期限切れ → 既定動作で閉じる（`dialogExpiry` で変更可）
+
+### 優先順位の組み替え
+
+この節の1〜5 を **段階①の先頭**に置く。`REMOTE_OPS.md` と `doctor.sh` はその次。mosh / Blink は「ssh 復旧経路の快適化」なので③のまま。
+
 ## 現状の課題
 
 - 入口が4つあり、場面ごとの使い分けが決まっていない
