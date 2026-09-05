@@ -1346,6 +1346,8 @@ web/
 
 #### 2026-09-05 リモート運用の仕組み化 段階①（mini・ブランチ `claude/backmini-remote-setup-n2z4hs`）
 
+> **同日夜に分離**: ここに書いた `ops/mini/`・`docs/REMOTE_OPS.md`・RUNBOOK・やさしい解説・計画書は HIBIKI と無関係なため `~/dev/blackice_note`（GitHub: kawapon7/blackice_note）へ移した。以下の相対パスはそのリポジトリ内（`ops/mini/` → `ops/`、計画書は `plans/`）。このリポジトリには案内の `docs/REMOTE_OPS.md` だけ残す。
+
 - **正本 `docs/REMOTE_OPS.md` を新設**。先頭に復旧の1行（`cd ~/dev/unsou-system && claude --remote-control --resume <id>` を tmux 内で）、構成図、入口の決定表、プロジェクト置き場所ルール（既定 Air・mini は実データ/.env.local/本番権限/常駐が要る時だけ）、症状別対処。既存の `REMOTE_DEV_CHECK.md` / `RUNBOOK_セッション切断時の対処.md` / `2026-09-03_…やさしい解説.md` は残して正本からリンク
 - **`ops/mini/` 新設**: mini にしか無かった `~/.claude/scripts/*.sh` と launchd plist 3本（`__HOME__` 置換のテンプレ）を回収。`doctor.sh`（OK/NG 表・NG 行に対処見出し）、`install.sh`（冪等配布・launchd 読み直しはしない）、Air 用 `ssh_config.example`（keepalive）、変更前の退避 `backup/`
 - **常駐 remote-control を `--continue` ＋ `--debug-file` に切替**（9/3 の「10分落ちで前セッション置き去り」と「stdout スピナーで 81MB」の根治）。実測: 入れ替え後に同じ環境ID・同じセッション `0a494143…` に復帰、`kill` の疑似10分落ちでも約60秒後に同じセッションへ再復帰。**注意: `--continue` 起動は single-session（1本だけ）**。複数本の受け口ではなくなるが、主戦場はデスクトップアプリ経路なので許容。stdout は `/dev/null`、記録は `~/.claude/logs/remote-control-debug.log`（ログ切り詰めは debug ログも対象に変更）
