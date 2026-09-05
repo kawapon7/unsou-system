@@ -59,6 +59,16 @@ cd ~/dev/unsou-system && claude --remote-control --resume <セッションID>
 
 この節の1〜5 を **段階①の先頭**に置く。`REMOTE_OPS.md` と `doctor.sh` はその次。mosh / Blink は「ssh 復旧経路の快適化」なので③のまま。
 
+## 実測（2026-09-05 mini・段階①）
+
+- `claude` は 2.1.261（>= 2.1.228）。pmset は sleep 0 / womp 1。デスクトップアプリ稼働中。**回線は Wi-Fi のまま（有線未接続）**
+- 常駐を `rc-start.sh`（`--continue` → 無ければ新規、`--debug-file`）に入れ替え。同じ環境ID `env_01CA67…` に再登録され、前サーバーの事前作成セッション `0a494143…` に復帰
+- `kill` で10分落ちを疑似再現 → 約60秒後に launchd が再実行し、同じセッションに再度復帰。**`--continue` 方式で成立**（`--session-id` / wrapper 追加は不要）
+- ただし `--continue` 起動は `spawnMode=single-session maxSessions=1`。常駐側は「1本を守る」係になり、複数本の受け口ではなくなる。主戦場はデスクトップアプリ経路なので許容
+- 引き継ぐ記録が無い時は1秒で exit 1（別ディレクトリで確認）→ ラッパーが新規起動に切り替える
+- stdout は `/dev/null` 化。旧ログ 18MB は増えなくなった。debug ログは起動直後 20KB
+- 本物の Wi-Fi 断10分は未実施（この会話も mini 上のため、こちらからは切らない）
+
 ## 現状の課題
 
 - 入口が4つあり、場面ごとの使い分けが決まっていない
@@ -171,7 +181,7 @@ Air から `ssh mini ~/dev/unsou-system/ops/mini/doctor.sh` で OK/NG 表を出�
 
 | 段階 | 内容 | 目安 |
 |---|---|---|
-| ① | `REMOTE_OPS.md` 正本、決定表、`doctor.sh`、ssh config の keepalive | 半日 |
+| ① | `REMOTE_OPS.md` 正本、決定表、`doctor.sh`、ssh config の keepalive | ✅ 2026-09-05 完了（`ops/mini/` 回収と `--debug-file` 切替も前倒しで実施） |
 | ② | `ops/mini/` へスクリプト回収と `setup.sh`、`--debug-file` 切替、tmux 自動起動 | 半日 |
 | ③ | mosh、Blink Shell、必要なら Jump Desktop | 任意 |
 

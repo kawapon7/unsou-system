@@ -1,0 +1,8 @@
+# Air（ICEBREAKER）側の ~/.ssh/config に足す見本。
+# HostName は Tailscale の MagicDNS 名。IP 直書きより回線切替に強い。
+# ServerAlive* は「まだいますよ」の相づち。無言で切られるのを防ぐ（30秒×3回 = 90秒無応答で切断扱い）。
+Host mini
+  HostName blackice
+  User __USER__
+  ServerAliveInterval 30
+  ServerAliveCountMax 3

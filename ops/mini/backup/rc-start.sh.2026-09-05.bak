@@ -1,0 +1,15 @@
+#!/bin/sh
+# launchd から呼ばれる Remote Control 起動ラッパー。
+# 旧デーモンが完全に消えるまで待ってから起動する（新環境が作られる事故の防止）。
+CLAUDE=/Users/atsushikawasaki/.local/bin/claude
+LOG=/Users/atsushikawasaki/.claude/remote-control.log
+cd /Users/atsushikawasaki/dev/unsou-system || exit 1
+i=0
+others(){ for p in $(pgrep -f "claude remote-control"); do [ "$p" = "$$" ] && continue; ps -o command= -p "$p" | grep -q -- "--help" && continue; echo "$p"; done; }
+while [ -n "$(others)" ]; do
+  i=$((i+1)); [ $i -ge 60 ] && break
+  sleep 1
+done
+echo "[$(date "+%F %T")] rc-start: waited ${i}s, starting $($CLAUDE --version 2>/dev/null)" >> "$LOG"
+$CLAUDE --version 2>/dev/null | awk "{print \$1}" > /Users/atsushikawasaki/.claude/rc-running-version
+exec $CLAUDE remote-control --spawn=same-dir
