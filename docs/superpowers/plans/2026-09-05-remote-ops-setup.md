@@ -238,6 +238,24 @@ tmux あり:  Air ──ssh──▶ [机 hibiki: Claude]  ← 線が切れて�
 - 同じリポジトリでデスクトップ版 Claude を同時に開かない（編集がぶつかる）
 - 通信が切れたら窓が閉じるだけ。戻ったら「机に座る」コマンドを打てば切れる前と同じ画面
 
+### launchd だけ、もう少しくわしく（常駐係の管理人と指示書）
+
+launchd は mac 標準の「常駐係の管理人」。「起動時にこれを立ち上げて、落ちたら立ち上げ直して」と頼む仕組み。頼み事は1件ずつ **plist**（指示書）に書いて `~/Library/LaunchAgents/` に置く。ログインすると自動で読まれる。
+
+| 指示書 | 頼んでいる内容 |
+|---|---|
+| `com.kawapon.claude-remote-control` | `claude remote-control` を常に動かす（iPhone とつなぐ糸の係） |
+| `com.kawapon.claude-rc-logrotate` | 1時間ごとにログの大きさを見て、太っていたら片づける係 |
+
+- 10分ルールでサーバーが終了すると launchd が立ち上げ直す。**今の指示書は「新しく始めろ」なので前のセッションが置き去りになる。** 「前のを引き継げ」（`--continue`）に書き換えるのが対策
+- ログイン項目との違い: ログイン項目は起動時に立ち上げるだけで、落ちても戻さない。launchd は落ちたら戻す。画面のある**デスクトップアプリはログイン項目**、画面のない**常駐サーバーは launchd**
+
+| やりたいこと | 命令 |
+|---|---|
+| 係が動いているか | `launchctl print gui/$(id -u)/com.kawapon.claude-remote-control \| grep -E 'state\|pid'` |
+| 止めて立ち上げ直す（iPhone の糸が一度切れる） | `launchctl kickstart -k gui/$(id -u)/com.kawapon.claude-remote-control` |
+| 指示書を書き換えた後に読み直させる | `launchctl bootout gui/$(id -u) <plist>` → `launchctl bootstrap gui/$(id -u) <plist>` |
+
 ### いま特に押さえておけばいい3つ
 
 1. **会話は mini に残る。切れるのは接続だけ。** 慌てて作り直さない
