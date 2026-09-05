@@ -72,6 +72,46 @@ Air から `ssh mini ~/dev/unsou-system/ops/mini/doctor.sh` で OK/NG 表を出�
 - **remote-control の出力先を `--debug-file` へ切替**（9/3 保留分）。再起動で iPhone 側が一度切れるので手が空いた時に1回だけ
 - **tmux `hibiki` を mini 起動時に自動作成**（launchd 1本追加）
 
+## 通信断への設計（Air はテザリング運用が多い前提）
+
+前提: **Air の回線は切れるもの**として設計する。目標は「切れないこと」ではなく「**切れても作業が止まらず、アーカイブもされないこと**」。
+
+### 経路ごとに「切れたら何が起きるか」
+
+| 作業の形 | Claude が動いている場所 | Air の回線が切れると | アーカイブ |
+|---|---|---|---|
+| Air ローカルの軽いプロジェクト（CLI Claude） | Air | いま送っていた1往復が失敗するだけ。回線が戻れば同じセッションで続き | されない |
+| `ssh mini` → tmux `hibiki` 内の CLI Claude | mini | ssh の表示が切れるだけ。Claude は mini の tmux で動き続ける。戻って `ssh mini -t tmux new -A -s hibiki` で同じ画面 | されない |
+| **mosh** で mini → tmux | mini | 表示すら切れない。回線が戻れば mosh が勝手につなぎ直す | されない |
+| iPhone / Air の Claude アプリ → remote-control | mini | **Air 側の断は無関係。** アーカイブされるのは **mini 側の回線**が claude.ai と切れた時 | mini 側が切れた時のみ |
+
+つまり **Air のテザリングが切れてアーカイブされる経路は、この構成には無い。** 9/3 のアーカイブは mini 側の remote-control が claude.ai と切れたことが原因。
+
+### 守ること
+
+1. **HIBIKI の Claude は必ず mini の tmux の中で動かす。** Air 上で HIBIKI の Claude を動かさない（Air の断がそのまま作業の断になる）
+2. **mini は自宅の固定回線に置き、テザリングに乗せない。** remote-control のアーカイブは mini 側の断で起きるので、ここが安定していれば起きない
+3. **Air からは mosh を既定にする**（`brew install mosh` を両機に。`mosh mini -- tmux new -A -s hibiki`）。回線切替・トンネル・電波の途切れで表示が死なない
+4. mosh が使えない時の ssh は keepalive 付きで（Air の `~/.ssh/config`）:
+   ```
+   Host mini
+     HostName blackice           # Tailscale の MagicDNS 名。IP 直書きより切替に強い
+     User <mini のユーザー名>
+     ServerAliveInterval 30
+     ServerAliveCountMax 3
+   ```
+   Tailscale は回線が替わっても同じ 100.x アドレスで届くので、短い断なら ssh もそのまま生き残ることが多い
+5. **抜ける時は必ずデタッチ（`Ctrl-b → d`）。** `exit` は机ごと消える
+6. remote-control 側の保険: `--debug-file` への切替後、`doctor.sh` で `Connected` を毎回確認してから iPhone で話しかける
+
+### 切れた後の戻り方（迷わないための1行）
+
+| どこで作業していたか | 戻るコマンド |
+|---|---|
+| mini の tmux | `mosh mini -- tmux new -A -s hibiki`（または ssh 版） |
+| Air ローカル | `cd <プロジェクト> && claude -c` |
+| iPhone アプリの会話が消えた | `RUNBOOK_セッション切断時の対処.md` 手順A（`recent-sessions.sh` → `claude -r <id>`） |
+
 ## 進め方
 
 | 段階 | 内容 | 目安 |
